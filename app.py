@@ -54,6 +54,8 @@ def init_db():
 
 app.teardown_appcontext(close_db)
 
+init_db()
+
 
 def apex_domain():
     host = request.host.split(":")[0]
