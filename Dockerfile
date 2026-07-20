@@ -9,4 +9,4 @@ COPY . .
 
 EXPOSE 7000
 
-CMD ["gunicorn", "app:app", "--bind", "0.0.0.0:7000", "--workers", "4", "--access-logfile", "-", "--error-logfile", "-"]
+CMD ["gunicorn", "app:app", "--bind", "0.0.0.0:7000", "--workers", "1", "--threads", "4", "--access-logfile", "-", "--error-logfile", "-"]
