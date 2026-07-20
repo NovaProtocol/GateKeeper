@@ -8,8 +8,7 @@
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #f5f5f5; padding: 2rem; }
   h1 { margin-bottom: 1rem; }
-  .new-code { background: #e4f0e4; border: 1px solid #4a4; padding: 1rem; border-radius: 4px; margin-bottom: 1rem; }
-  .new-code code { font-size: 1.25rem; font-weight: bold; }
+
   table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 4px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,.1); }
   th, td { padding: .5rem .75rem; text-align: left; border-bottom: 1px solid #eee; }
   th { background: #fafafa; font-weight: 600; }
@@ -42,35 +41,50 @@
 
 <section>
   <h2>Existing Codes</h2>
+  <label style="display:block;margin-bottom:.5rem;">
+    <input type="checkbox" id="hide-inactive" checked onchange="toggleInactive()">
+    Hide invalidated codes
+  </label>
   <table>
-    <thead>
-      <tr>
-        <th>Code</th>
-        <th>Label</th>
-        <th>Status</th>
-        <th>Created</th>
-        <th></th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for c in codes %}
-      <tr>
-        <td><code>{{ c.code }}</code></td>
-        <td>{{ c.label or '' }}</td>
-        <td>{{ 'Active' if c.active else 'Inactive' }}</td>
-        <td>{{ c.created_at }}</td>
-        <td>
-          {% if c.active %}
-          <form method="post" action="/manage/invalidate" class="inline">
-            <input type="hidden" name="id" value="{{ c.id }}">
-            <button type="submit" class="danger">Invalidate</button>
-          </form>
-          {% endif %}
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
+      <thead>
+        <tr>
+          <th>Code</th>
+          <th>Label</th>
+          <th>Status</th>
+          <th>Created</th>
+          <th>Last Accessed</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in codes %}
+        <tr class="{{ 'inactive' if not c.active }}">
+          <td><code>{{ c.code }}</code></td>
+          <td>{{ c.label or '' }}</td>
+          <td>{{ 'Active' if c.active else 'Inactive' }}</td>
+          <td>{{ c.created_at }}</td>
+          <td>{{ c.last_accessed or 'never' }}</td>
+          <td>
+            {% if c.active %}
+            <form method="post" action="/manage/invalidate" class="inline">
+              <input type="hidden" name="id" value="{{ c.id }}">
+              <button type="submit" class="danger" onclick="return confirm('Invalidate this code?')">Invalidate</button>
+            </form>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
   </table>
 </section>
+<script>
+function toggleInactive() {
+  var hide = document.getElementById('hide-inactive').checked;
+  document.querySelectorAll('tr.inactive').forEach(function(tr) {
+    tr.style.display = hide ? 'none' : '';
+  });
+}
+toggleInactive();
+</script>
 </body>
 </html>

@@ -36,8 +36,13 @@ def init_db():
         code TEXT UNIQUE NOT NULL,
         label TEXT,
         active INTEGER DEFAULT 1,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        last_accessed TIMESTAMP
     )""")
+    try:
+        db.execute("ALTER TABLE codes ADD COLUMN last_accessed TIMESTAMP")
+    except sqlite3.OperationalError:
+        pass
     backup = os.environ.get("BACKUP_CODE")
     if backup:
         existing = db.execute("SELECT 1 FROM codes WHERE code = ?", (backup,)).fetchone()
@@ -104,6 +109,8 @@ def login():
         db = get_db()
         row = db.execute("SELECT id FROM codes WHERE code = ? AND active = 1", (code,)).fetchone()
         if row:
+            db.execute("UPDATE codes SET last_accessed = CURRENT_TIMESTAMP WHERE id = ?", (row["id"],))
+            db.commit()
             resp = redirect(get_redirect_target())
             set_auth_cookie(resp, code)
             return resp
@@ -117,6 +124,8 @@ def login_post():
     db = get_db()
     row = db.execute("SELECT id FROM codes WHERE code = ? AND active = 1", (code,)).fetchone()
     if row:
+        db.execute("UPDATE codes SET last_accessed = CURRENT_TIMESTAMP WHERE id = ?", (row["id"],))
+        db.commit()
         resp = redirect(get_redirect_target())
         set_auth_cookie(resp, code)
         return resp
@@ -140,6 +149,9 @@ def api_verify():
     if not row:
         return jsonify({"valid": False})
 
+    db.execute("UPDATE codes SET last_accessed = CURRENT_TIMESTAMP WHERE id = ?", (row["id"],))
+    db.commit()
+
     import time
     ticket = ticket_serializer.dumps({"code_id": row["id"], "iat": int(time.time())})
     return jsonify({"valid": True, "ticket": ticket})
@@ -149,7 +161,7 @@ def api_verify():
 @require_manage_auth
 def manage():
     db = get_db()
-    codes = db.execute("SELECT id, code, label, active, created_at FROM codes ORDER BY created_at DESC").fetchall()
+    codes = db.execute("SELECT id, code, label, active, created_at, last_accessed FROM codes ORDER BY created_at DESC").fetchall()
     return render_template("manage.html", codes=codes)
 
 
