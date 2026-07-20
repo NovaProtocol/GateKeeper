@@ -165,9 +165,7 @@ def manage_create():
         db.commit()
     except sqlite3.IntegrityError:
         return "Code generation collision, try again", 500
-    return render_template("manage.html", new_code=new_code, codes=db.execute(
-        "SELECT id, code, label, active, created_at FROM codes ORDER BY created_at DESC"
-    ).fetchall())
+    return redirect("/manage")
 
 
 @app.route("/manage/invalidate", methods=["POST"])

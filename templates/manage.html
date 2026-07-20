@@ -29,13 +29,6 @@
 <body>
 <h1>Access Codes</h1>
 
-{% if new_code %}
-<div class="new-code">
-  <strong>New code created:</strong> <code>{{ new_code }}</code><br>
-  <span style="font-size:.875rem;color:#666;">This code will only be shown once. Copy it now.</span>
-</div>
-{% endif %}
-
 <section>
   <h2>Create Code</h2>
   <form method="post" action="/manage/create" class="create-form">
