@@ -1,5 +1,7 @@
 import os
+import secrets
 import sqlite3
+import time
 from functools import wraps
 from pathlib import Path
 
@@ -154,7 +156,6 @@ def api_verify():
     db.execute("UPDATE codes SET last_accessed = CURRENT_TIMESTAMP WHERE id = ?", (row["id"],))
     db.commit()
 
-    import time
     ticket = ticket_serializer.dumps({"code_id": row["id"], "iat": int(time.time())})
     return jsonify({"valid": True, "ticket": ticket})
 
@@ -170,7 +171,6 @@ def manage():
 @app.route("/manage/create", methods=["POST"])
 @require_manage_auth
 def manage_create():
-    import secrets
     new_code = secrets.token_hex(8)
     label = request.form.get("label", "").strip() or None
     db = get_db()
@@ -195,5 +195,4 @@ def manage_invalidate():
 
 
 if __name__ == "__main__":
-    init_db()
     app.run(host="0.0.0.0", port=7000)
