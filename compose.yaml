@@ -1,0 +1,15 @@
+services:
+  gatekeeper:
+    build: .
+    ports:
+      - "5000:5000"
+    environment:
+      - SECRET_KEY=${SECRET_KEY}
+      - MANAGE_PASSWORD=${MANAGE_PASSWORD}
+      - BACKUP_CODE=${BACKUP_CODE:-}
+    volumes:
+      - gatekeeper_data:/app/gatekeeper.db
+    restart: unless-stopped
+
+volumes:
+  gatekeeper_data:
