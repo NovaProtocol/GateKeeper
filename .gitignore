@@ -4,3 +4,4 @@ __pycache__/
 .env
 gatekeeper.db
 docs/
+.agents/
