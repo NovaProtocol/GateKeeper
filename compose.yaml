@@ -2,7 +2,7 @@ services:
   gatekeeper:
     build: .
     ports:
-      - "5000:5000"
+      - "7000:7000"
     environment:
       - SECRET_KEY=${SECRET_KEY}
       - MANAGE_PASSWORD=${MANAGE_PASSWORD}
