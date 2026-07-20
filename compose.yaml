@@ -8,9 +8,18 @@ services:
       - MANAGE_PASSWORD=${MANAGE_PASSWORD}
       - BACKUP_CODE=${BACKUP_CODE:-}
       - DB_DIR=/data
+    networks:
+      - default
+      - cloudflared-tunnel
     volumes:
       - gatekeeper_data:/data
     restart: unless-stopped
 
 volumes:
   gatekeeper_data:
+
+networks:
+  default:
+  cloudflared-tunnel:
+    external: true
+    name: cloudflared-tunnel_default
