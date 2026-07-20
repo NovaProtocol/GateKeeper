@@ -12,7 +12,7 @@ app.secret_key = os.environ["SECRET_KEY"]
 serializer = URLSafeSerializer(app.secret_key, salt="cookie")
 ticket_serializer = URLSafeTimedSerializer(app.secret_key, salt="ticket")
 
-DB_PATH = Path(__file__).parent / "gatekeeper.db"
+DB_PATH = Path(os.environ.get("DB_DIR", str(Path(__file__).parent))) / "gatekeeper.db"
 
 
 def get_db():

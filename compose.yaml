@@ -7,8 +7,9 @@ services:
       - SECRET_KEY=${SECRET_KEY}
       - MANAGE_PASSWORD=${MANAGE_PASSWORD}
       - BACKUP_CODE=${BACKUP_CODE:-}
+      - DB_DIR=/data
     volumes:
-      - gatekeeper_data:/app/gatekeeper.db
+      - gatekeeper_data:/data
     restart: unless-stopped
 
 volumes:
