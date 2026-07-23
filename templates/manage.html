@@ -3,80 +3,440 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Manage Access Codes</title>
+<title>GateKeeper · Manage</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: #f5f5f5; padding: 2rem; }
-  h1 { margin-bottom: 1rem; }
+  :root {
+    --bg-primary: #0a0a0f;
+    --bg-secondary: #12121a;
+    --bg-card: #1a1a28;
+    --border: #2a2a3e;
+    --text-primary: #e8e8f0;
+    --text-secondary: #8888a0;
+    --accent: #64ffda;
+    --accent-dim: rgba(100, 255, 218, 0.1);
+    --danger: #f87171;
+    --danger-dim: rgba(248, 113, 113, 0.1);
+  }
 
-  table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 4px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,.1); }
-  th, td { padding: .5rem .75rem; text-align: left; border-bottom: 1px solid #eee; }
-  th { background: #fafafa; font-weight: 600; }
-  form.inline { display: inline; }
-  button { padding: .25rem .5rem; font-size: .875rem; border: 1px solid #ccc; border-radius: 3px; cursor: pointer; background: #fff; }
-  button:hover { background: #f0f0f0; }
-  button.danger { color: #d00; border-color: #d00; }
-  button.danger:hover { background: #fee; }
-  section { margin-bottom: 2rem; }
-  label { display: block; margin-bottom: .25rem; font-weight: 600; }
-  input[type=text] { padding: .5rem; font-size: 1rem; border: 1px solid #ccc; border-radius: 4px; width: 300px; max-width: 100%; }
-  .create-form { display: flex; gap: .5rem; align-items: flex-end; flex-wrap: wrap; }
-  .create-form button { padding: .5rem 1rem; background: #333; color: #fff; border: none; }
-  .create-form button:hover { background: #555; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    min-height: 100vh;
+  }
+
+  .header {
+    background: rgba(10, 10, 15, 0.85);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+    padding: 1rem 2rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+
+  .header-title {
+    font-size: 1.25rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+  }
+
+  .header-title span {
+    color: var(--accent);
+  }
+
+  .header-badge {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    background: var(--bg-card);
+    padding: 0.3rem 0.75rem;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+  }
+
+  .container {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 2rem;
+  }
+
+  .stats-row {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .stat-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.5rem;
+    transition: all 0.25s;
+  }
+
+  .stat-card:hover {
+    border-color: var(--accent);
+    transform: translateY(-2px);
+  }
+
+  .stat-number {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 2rem;
+    font-weight: 700;
+    color: var(--accent);
+    line-height: 1.2;
+  }
+
+  .stat-label {
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+    margin-top: 0.25rem;
+  }
+
+  .card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    margin-bottom: 1.5rem;
+  }
+
+  .card-header {
+    padding: 1.25rem 1.5rem;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .card-header h2 {
+    font-size: 1rem;
+    font-weight: 600;
+  }
+
+  .card-body {
+    padding: 1.5rem;
+  }
+
+  .create-form {
+    display: flex;
+    gap: 0.75rem;
+    align-items: flex-end;
+    flex-wrap: wrap;
+  }
+
+  .form-group label {
+    display: block;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 0.375rem;
+  }
+
+  .form-group input {
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.6rem 0.875rem;
+    font-family: 'Inter', sans-serif;
+    font-size: 0.9rem;
+    color: var(--text-primary);
+    outline: none;
+    width: 280px;
+    max-width: 100%;
+    transition: border-color 0.2s;
+  }
+
+  .form-group input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-dim);
+  }
+
+  .form-group input::placeholder {
+    color: var(--text-secondary);
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.55rem 1.25rem;
+    font-family: 'Inter', sans-serif;
+    font-size: 0.875rem;
+    font-weight: 600;
+    border-radius: 8px;
+    border: none;
+    cursor: pointer;
+    transition: all 0.2s;
+    line-height: 1;
+  }
+
+  .btn-accent {
+    background: var(--accent);
+    color: var(--bg-primary);
+  }
+
+  .btn-accent:hover {
+    opacity: 0.85;
+    transform: translateY(-1px);
+  }
+
+  .btn-outline-danger {
+    background: transparent;
+    color: var(--danger);
+    border: 1px solid var(--danger);
+    padding: 0.25rem 0.75rem;
+    font-size: 0.8rem;
+    border-radius: 6px;
+  }
+
+  .btn-outline-danger:hover {
+    background: var(--danger-dim);
+  }
+
+  .toggle-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+  }
+
+  .toggle {
+    position: relative;
+    width: 36px;
+    height: 20px;
+    cursor: pointer;
+  }
+
+  .toggle input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+  }
+
+  .toggle-slider {
+    position: absolute;
+    inset: 0;
+    background: var(--border);
+    border-radius: 10px;
+    transition: all 0.2s;
+  }
+
+  .toggle-slider::before {
+    content: '';
+    position: absolute;
+    width: 16px;
+    height: 16px;
+    left: 2px;
+    top: 2px;
+    background: var(--text-secondary);
+    border-radius: 50%;
+    transition: all 0.2s;
+  }
+
+  .toggle input:checked + .toggle-slider {
+    background: var(--accent-dim);
+  }
+
+  .toggle input:checked + .toggle-slider::before {
+    background: var(--accent);
+    transform: translateX(16px);
+  }
+
+  .codes-table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  .codes-table th {
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    text-align: left;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+
+  .codes-table td {
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.875rem;
+    vertical-align: middle;
+  }
+
+  .codes-table tr:last-child td {
+    border-bottom: none;
+  }
+
+  .codes-table tr:hover td {
+    background: rgba(255, 255, 255, 0.02);
+  }
+
+  .codes-table tr.inactive td {
+    opacity: 0.5;
+  }
+
+  .code-value {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.8rem;
+    background: var(--bg-primary);
+    padding: 0.2rem 0.5rem;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+  }
+
+  .label-value {
+    color: var(--text-secondary);
+  }
+
+  .label-value.empty {
+    font-style: italic;
+    opacity: 0.5;
+  }
+
+  .tag {
+    display: inline-block;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem;
+    font-weight: 500;
+    padding: 0.2rem 0.6rem;
+    border-radius: 4px;
+    transition: all 0.15s;
+  }
+
+  .tag-active {
+    background: var(--accent-dim);
+    color: var(--accent);
+  }
+
+  .tag-inactive {
+    background: rgba(136, 136, 160, 0.1);
+    color: var(--text-secondary);
+  }
+
+  .date-value {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    white-space: nowrap;
+  }
+
+  .actions-cell form {
+    display: inline;
+  }
+
+  @media (max-width: 768px) {
+    .stats-row { grid-template-columns: 1fr; }
+    .container { padding: 1rem; }
+    .header { padding: 0.75rem 1rem; }
+    .create-form { flex-direction: column; align-items: stretch; }
+    .form-group input { width: 100%; }
+    .codes-table th, .codes-table td { padding: 0.5rem 0.75rem; }
+  }
 </style>
 </head>
 <body>
-<h1>Access Codes</h1>
 
-<section>
-  <h2>Create Code</h2>
-  <form method="post" action="/manage/create" class="create-form">
-    <div>
-      <label for="label">Label (optional)</label>
-      <input type="text" name="label" id="label" placeholder="e.g. Alice's access">
+<header class="header">
+  <div class="header-title">~/<span>gatekeeper</span></div>
+  <span class="header-badge">manage</span>
+</header>
+
+<div class="container">
+
+  <div class="stats-row">
+    <div class="stat-card">
+      <div class="stat-number">{{ codes|length }}</div>
+      <div class="stat-label">Total Codes</div>
     </div>
-    <button type="submit">Create</button>
-  </form>
-</section>
+    <div class="stat-card">
+      <div class="stat-number">{{ codes|selectattr('active')|list|length }}</div>
+      <div class="stat-label">Active</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-number">{{ codes|rejectattr('active')|list|length }}</div>
+      <div class="stat-label">Inactive</div>
+    </div>
+  </div>
 
-<section>
-  <h2>Existing Codes</h2>
-  <label style="display:block;margin-bottom:.5rem;">
-    <input type="checkbox" id="hide-inactive" checked onchange="toggleInactive()">
-    Hide invalidated codes
-  </label>
-  <table>
-      <thead>
-        <tr>
-          <th>Code</th>
-          <th>Label</th>
-          <th>Status</th>
-          <th>Created</th>
-          <th>Last Accessed</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for c in codes %}
-        <tr class="{{ 'inactive' if not c.active }}">
-          <td><code>{{ c.code }}</code></td>
-          <td>{{ c.label or '' }}</td>
-          <td>{{ 'Active' if c.active else 'Inactive' }}</td>
-          <td>{{ c.created_at }}</td>
-          <td>{{ c.last_accessed or 'never' }}</td>
-          <td>
-            {% if c.active %}
-            <form method="post" action="/manage/invalidate" class="inline">
-              <input type="hidden" name="id" value="{{ c.id }}">
-              <button type="submit" class="danger" onclick="return confirm('Invalidate this code?')">Invalidate</button>
-            </form>
-            {% endif %}
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-  </table>
-</section>
+  <div class="card">
+    <div class="card-header">
+      <h2>Create Code</h2>
+    </div>
+    <div class="card-body">
+      <form method="post" action="/manage/create" class="create-form">
+        <div class="form-group">
+          <label for="label">Label</label>
+          <input type="text" name="label" id="label" placeholder="e.g. Alice's access">
+        </div>
+        <button type="submit" class="btn btn-accent">Create</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <h2>Existing Codes</h2>
+      <label class="toggle-wrapper">
+        <span>Hide inactive</span>
+        <label class="toggle">
+          <input type="checkbox" id="hide-inactive" checked onchange="toggleInactive()">
+          <span class="toggle-slider"></span>
+        </label>
+      </label>
+    </div>
+    <div class="card-body" style="padding:0">
+      <table class="codes-table">
+        <thead>
+          <tr>
+            <th>Code</th>
+            <th>Label</th>
+            <th>Status</th>
+            <th>Created</th>
+            <th>Last Accessed</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for c in codes %}
+          <tr class="{{ 'inactive' if not c.active }}">
+            <td><span class="code-value">{{ c.code }}</span></td>
+            <td><span class="label-value{% if not c.label %} empty{% endif %}">{{ c.label or 'no label' }}</span></td>
+            <td><span class="tag {{ 'tag-active' if c.active else 'tag-inactive' }}">{{ 'Active' if c.active else 'Inactive' }}</span></td>
+            <td class="date-value">{{ c.created_at }}</td>
+            <td class="date-value">{{ c.last_accessed or 'never' }}</td>
+            <td class="actions-cell">
+              {% if c.active %}
+              <form method="post" action="/manage/invalidate">
+                <input type="hidden" name="id" value="{{ c.id }}">
+                <button type="submit" class="btn btn-outline-danger" onclick="return confirm('Invalidate this code?')">Invalidate</button>
+              </form>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
 <script>
 function toggleInactive() {
   var hide = document.getElementById('hide-inactive').checked;
