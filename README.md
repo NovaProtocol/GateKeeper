@@ -1,30 +1,8 @@
 # GateKeeper
 
-Lightweight Flask auth service that protects access to other web apps (e.g., a portfolio site) by requiring a valid access code. Issues short-lived tickets so protected apps can cache auth state without calling GateKeeper on every request.
+Lightweight Flask auth service that protects web apps through a reverse-proxy gate. A signed, non-expiring access-code cookie (`gatekeeper_token`) on the apex domain is the only credential; Caddy `forward_auth` checks it before any request reaches a protected app.
 
 ## How it works
-
-```
-User → Protected App → [check cookie for ticket (in-memory cache, 5 min TTL)]
-                          ↓ no valid ticket / expired
-                    GateKeeper /api/verify?token=<signed_code>
-                          ↓ valid
-                    Returns signed ticket (5-min TTL)
-                          ↓
-                    Protected app caches ticket, serves page
-
-User → Protected App → [no cookie at all]
-                          ↓
-                    Redirect → gatekeeper.<apex>/?redirect=<current_url>
-                          ↓
-                    GateKeeper shows login form
-                    Valid code → cookie set
-                    Redirect back
-```
-
-## Forward Auth (Caddy)
-
-GateKeeper can act as the auth gateway for a reverse proxy (core Caddy `forward_auth`, since v2.5.1). Caddy forwards every request to `GET /api/authz/forward-auth`; GateKeeper answers and Caddy relays the response to the client:
 
 ```
 Request → Caddy forward_auth → GateKeeper /api/authz/forward-auth
@@ -38,6 +16,8 @@ Request → Caddy forward_auth → GateKeeper /api/authz/forward-auth
 ```
 
 Any URL on a gated domain can carry `?access_code=<code>` as a shareable magic link — no cookie needed, the code is stripped from the URL immediately after use.
+
+The forward-auth endpoint is the **only** auth path. The old app-level flow (`/api/verify`, short-lived tickets) was removed — apps must not attempt their own GateKeeper checks.
 
 Caddyfile example:
 
@@ -67,7 +47,7 @@ Visit `http://localhost:7000` to access the login page, or `http://localhost:700
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `SECRET_KEY` | Yes | Flask secret key for signing cookies/tickets |
+| `SECRET_KEY` | Yes | Flask secret key for signing the auth cookie |
 | `MANAGE_PASSWORD` | Yes | Password for the `/manage` admin panel |
 | `BACKUP_CODE` | No | Falls back to this code if no codes exist |
 
@@ -77,7 +57,6 @@ Visit `http://localhost:7000` to access the login page, or `http://localhost:700
 |-------|--------|-------------|
 | `GET /` | Public | Login page. Valid code sets cookie, redirects. |
 | `POST /` | Public | Validate submitted code, set cookie, redirect. |
-| `GET /api/verify?token=` | Public | Verify a signed code, return ticket. |
 | `GET /api/authz/forward-auth` | Public | Caddy forward-auth endpoint. `200` = pass, `302` = set cookie from `?access_code=` or redirect to login. |
 | `GET /manage` | Protected | Management UI — lists all codes. |
 | `POST /manage/create` | Protected | Generate a new access code. |
