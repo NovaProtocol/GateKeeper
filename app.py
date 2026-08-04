@@ -1,19 +1,17 @@
 import os
 import secrets
 import sqlite3
-import time
 from functools import wraps
 from pathlib import Path
 from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
-from flask import Flask, request, redirect, render_template, jsonify, g
-from itsdangerous import URLSafeSerializer, URLSafeTimedSerializer
+from flask import Flask, request, redirect, render_template, g
+from itsdangerous import URLSafeSerializer
 
 app = Flask(__name__)
 app.secret_key = os.environ["SECRET_KEY"]
 
 serializer = URLSafeSerializer(app.secret_key, salt="cookie")
-ticket_serializer = URLSafeTimedSerializer(app.secret_key, salt="ticket")
 
 DB_PATH = Path(os.environ.get("DB_DIR", str(Path(__file__).parent))) / "gatekeeper.db"
 
@@ -136,29 +134,6 @@ def login_post():
         return resp
 
     return render_template("login.html", error="Invalid code")
-
-
-@app.route("/api/verify", methods=["GET"])
-def api_verify():
-    token = request.args.get("token", "").strip()
-    if not token:
-        return jsonify({"valid": False})
-
-    try:
-        code = serializer.loads(token)
-    except Exception:
-        return jsonify({"valid": False})
-
-    db = get_db()
-    row = db.execute("SELECT id FROM codes WHERE code = ? AND active = 1", (code,)).fetchone()
-    if not row:
-        return jsonify({"valid": False})
-
-    db.execute("UPDATE codes SET last_accessed = CURRENT_TIMESTAMP WHERE id = ?", (row["id"],))
-    db.commit()
-
-    ticket = ticket_serializer.dumps({"code_id": row["id"], "iat": int(time.time())})
-    return jsonify({"valid": True, "ticket": ticket})
 
 
 @app.route("/api/authz/forward-auth", methods=["GET"])
