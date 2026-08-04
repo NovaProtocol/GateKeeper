@@ -4,6 +4,7 @@ import sqlite3
 import time
 from functools import wraps
 from pathlib import Path
+from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
 from flask import Flask, request, redirect, render_template, jsonify, g
 from itsdangerous import URLSafeSerializer, URLSafeTimedSerializer
@@ -158,6 +159,43 @@ def api_verify():
 
     ticket = ticket_serializer.dumps({"code_id": row["id"], "iat": int(time.time())})
     return jsonify({"valid": True, "ticket": ticket})
+
+
+@app.route("/api/authz/forward-auth", methods=["GET"])
+def authz_forward_auth():
+    token = request.cookies.get("gatekeeper_token")
+    if token:
+        try:
+            code = serializer.loads(token)
+        except Exception:
+            code = None
+        if code:
+            db = get_db()
+            row = db.execute("SELECT id FROM codes WHERE code = ? AND active = 1", (code,)).fetchone()
+            if row:
+                db.execute("UPDATE codes SET last_accessed = CURRENT_TIMESTAMP WHERE id = ?", (row["id"],))
+                db.commit()
+                return "", 200
+
+    original_uri = request.headers.get("X-Forwarded-Uri", "")
+    parts = urlsplit(original_uri)
+    query = parse_qsl(parts.query)
+    code_param = next((v for k, v in query if k == "access_code"), "")
+    if code_param:
+        db = get_db()
+        row = db.execute("SELECT id FROM codes WHERE code = ? AND active = 1", (code_param,)).fetchone()
+        if row:
+            db.execute("UPDATE codes SET last_accessed = CURRENT_TIMESTAMP WHERE id = ?", (row["id"],))
+            db.commit()
+            clean_query = urlencode([(k, v) for k, v in query if k != "access_code"])
+            resp = redirect(urlunsplit(("", "", parts.path, clean_query, parts.fragment)))
+            set_auth_cookie(resp, code_param)
+            return resp
+
+    proto = request.headers.get("X-Forwarded-Proto", request.scheme)
+    host = request.headers.get("X-Forwarded-Host", request.host)
+    target = quote(f"{proto}://{host}{original_uri}", safe="")
+    return redirect(f"https://gatekeeper.{apex_domain()}/?redirect={target}")
 
 
 @app.route("/manage")
