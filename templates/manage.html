@@ -380,7 +380,7 @@
       <h2>Create Code</h2>
     </div>
     <div class="card-body">
-      <form method="post" action="/manage/create" class="create-form">
+      <form method="post" action="{{ url_for('manage_create') }}" class="create-form">
         <div class="form-group">
           <label for="label">Label</label>
           <input type="text" name="label" id="label" placeholder="e.g. Alice's access">
@@ -423,7 +423,7 @@
             <td class="date-value">{{ c.last_accessed or 'never' }}</td>
             <td class="actions-cell">
               {% if c.active %}
-              <form method="post" action="/manage/invalidate">
+              <form method="post" action="{{ url_for('manage_invalidate') }}">
                 <input type="hidden" name="id" value="{{ c.id }}">
                 <button type="submit" class="btn btn-outline-danger" onclick="return confirm('Invalidate this code?')">Invalidate</button>
               </form>
