@@ -14,8 +14,10 @@ RUN useradd -m appuser \
     && mkdir -p /data \
     && chown -R appuser:appuser /app /data
 
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
 EXPOSE 7000
 
-USER appuser
-
+ENTRYPOINT ["/entrypoint.sh"]
 CMD ["gunicorn", "app:app", "--bind", "0.0.0.0:7000", "--workers", "1", "--threads", "4", "--access-logfile", "-", "--error-logfile", "-"]

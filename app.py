@@ -43,7 +43,6 @@ def ensure_db():
     global _db_initialized
     if _db_initialized:
         return
-    _db_initialized = True
     db = get_db()
     db.execute("""CREATE TABLE IF NOT EXISTS codes (
         id INTEGER PRIMARY KEY,
@@ -63,6 +62,7 @@ def ensure_db():
         if not existing:
             db.execute("INSERT INTO codes (code, label) VALUES (?, ?)", (backup, "backup"))
     db.commit()
+    _db_initialized = True
 
 
 def init_db():
