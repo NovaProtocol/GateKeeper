@@ -5,7 +5,7 @@ services:
     container_name: gatekeeper_main
     build: .
     ports:
-      - "7000:7000"
+      - "127.0.0.1:7000:7000"
     environment:
       - SECRET_KEY=${SECRET_KEY:?SECRET_KEY is required}
       - MANAGE_PASSWORD=${MANAGE_PASSWORD:?MANAGE_PASSWORD is required}
