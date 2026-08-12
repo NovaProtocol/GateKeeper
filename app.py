@@ -64,6 +64,18 @@ def apex_domain():
     return ".".join(parts[-2:])
 
 
+def same_origin():
+    """CSRF guard for state-changing requests: the Origin (or Referer) must
+    belong to this deployment's own apex domain."""
+    origin = request.headers.get("Origin")
+    if origin is None:
+        origin = request.headers.get("Referer")
+    if not origin:
+        return False
+    origin_host = urlsplit(origin).hostname or ""
+    return origin_host == request.host.split(":")[0] or origin_host.endswith("." + apex_domain()) or origin_host == apex_domain()
+
+
 def require_manage_auth(f):
     @wraps(f)
     def decorated(*args, **kwargs):
@@ -73,6 +85,8 @@ def require_manage_auth(f):
             return "MANAGE_PASSWORD not configured", 500
         if not auth or auth.password != manage_pw:
             return ("Unauthorized", 401, {"WWW-Authenticate": 'Basic realm="GateKeeper Manage"'})
+        if request.method == "POST" and not same_origin():
+            return ("Cross-site request rejected", 403)
         return f(*args, **kwargs)
     return decorated
 
