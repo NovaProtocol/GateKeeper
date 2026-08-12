@@ -35,7 +35,7 @@ The original request URL arrives in the `X-Forwarded-Uri` header (set by Caddy);
 ## Quick Start
 
 There is no `.env` file — values come from compose interpolation or exported
-shell vars (house rule; full inventory in `~/Projects/agent_stuff/env.md`).
+shell vars (compose interpolation; see `.env.example`).
 
 ```bash
 export SECRET_KEY=$(python3 -c "import secrets; print(secrets.token_hex(32))")
