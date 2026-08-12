@@ -75,6 +75,14 @@ pip install -r requirements.txt
 SECRET_KEY=dev MANAGE_PASSWORD=dev python app.py
 ```
 
+## Ports
+
+| Port | Service |
+|------|---------|
+| 7000 | GateKeeper (gunicorn, loopback-bound — tunnel only) |
+
+Ports are allotted in groups of 10 per project (GateKeeper owns the 7000 block).
+
 ## Domain Adaptation
 
 No hardcoded domains. The cookie domain is dynamically extracted from `request.host`. If no `?redirect=` parameter is provided, the fallback redirect goes to `portfolio.<apex_domain>`.
