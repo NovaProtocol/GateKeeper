@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 import secrets
 import sqlite3
@@ -108,6 +110,7 @@ def set_auth_cookie(response, code):
         path="/",
         httponly=True,
         samesite="Lax",
+        secure=True,
     )
 
 
