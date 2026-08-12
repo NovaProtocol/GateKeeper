@@ -93,9 +93,22 @@ def require_manage_auth(f):
     return decorated
 
 
+def _safe_redirect_target(target: str) -> bool:
+    """Only allow same-host paths or https URLs on this deployment's own
+    apex domain (the family of gated apps). Kills the open redirect."""
+    apex = apex_domain()
+    parts = urlsplit(target)
+    if not parts.scheme and not parts.netloc:
+        return target.startswith("/")
+    if parts.scheme in ("http", "https") and parts.netloc:
+        host = parts.netloc.split(":")[0].lower()
+        return host == apex or host.endswith("." + apex)
+    return False
+
+
 def get_redirect_target():
     target = request.args.get("redirect", "").strip()
-    if target:
+    if target and _safe_redirect_target(target):
         return target
     apex = apex_domain()
     return f"https://portfolio.{apex}"
@@ -186,6 +199,10 @@ def authz_forward_auth():
 
     proto = request.headers.get("X-Forwarded-Proto", request.scheme)
     host = request.headers.get("X-Forwarded-Host", request.host)
+    host = host.split(":")[0].lower()
+    apex = apex_domain()
+    if host != apex and not host.endswith("." + apex):
+        host = apex
     target = quote(f"{proto}://{host}{original_uri}", safe="")
     return redirect(f"https://gatekeeper.{apex_domain()}/?redirect={target}")
 
