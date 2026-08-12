@@ -6,3 +6,6 @@ __pycache__/
 .env
 gatekeeper.db
 docs/
+
+# AI scratch — never commit
+.agents/
