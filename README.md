@@ -34,9 +34,12 @@ The original request URL arrives in the `X-Forwarded-Uri` header (set by Caddy);
 
 ## Quick Start
 
+There is no `.env` file — values come from compose interpolation or exported
+shell vars (house rule; full inventory in `~/Projects/agent_stuff/env.md`).
+
 ```bash
-cp .env.example .env
-# edit .env with your SECRET_KEY and MANAGE_PASSWORD
+export SECRET_KEY=$(python3 -c "import secrets; print(secrets.token_hex(32))")
+export MANAGE_PASSWORD=$(python3 -c "import secrets; print(secrets.token_hex(32))")
 
 docker compose up -d
 ```
@@ -49,7 +52,8 @@ Visit `http://localhost:7000` to access the login page, or `http://localhost:700
 |----------|----------|-------------|
 | `SECRET_KEY` | Yes | Flask secret key for signing the auth cookie |
 | `MANAGE_PASSWORD` | Yes | Password for the `/manage` admin panel |
-| `BACKUP_CODE` | No | Falls back to this code if no codes exist |
+| `BACKUP_CODE` | No | Seeds the "backup" access-code row whenever that row is missing from the codes table |
+| `DB_DIR` | No | Where the SQLite DB lives; compose sets it to `/data` (default: app directory) |
 
 ## Routes
 
