@@ -32,34 +32,18 @@ def close_db(e=None):
         db.close()
 
 
-def init_db():
-    db = sqlite3.connect(DB_PATH)
-    db.execute("""CREATE TABLE IF NOT EXISTS codes (
-        id INTEGER PRIMARY KEY,
-        code TEXT UNIQUE NOT NULL,
-        label TEXT,
-        active INTEGER DEFAULT 1,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        last_accessed TIMESTAMP
-    )""")
-    try:
-        db.execute("ALTER TABLE codes ADD COLUMN last_accessed TIMESTAMP")
-    except sqlite3.OperationalError:
-        pass
-    backup = os.environ.get("BACKUP_CODE")
-    if backup:
-        existing = db.execute("SELECT 1 FROM codes WHERE code = ?", (backup,)).fetchone()
-        if not existing:
-            db.execute("INSERT INTO codes (code, label) VALUES (?, ?)", (backup, "backup"))
-    db.commit()
-    db.close()
-
-
 app.teardown_appcontext(close_db)
+
+
+_db_initialized = False
 
 
 @app.before_request
 def ensure_db():
+    global _db_initialized
+    if _db_initialized:
+        return
+    _db_initialized = True
     db = get_db()
     db.execute("""CREATE TABLE IF NOT EXISTS codes (
         id INTEGER PRIMARY KEY,
