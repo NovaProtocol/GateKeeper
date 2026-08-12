@@ -83,7 +83,7 @@ def require_manage_auth(f):
         manage_pw = os.environ.get("MANAGE_PASSWORD")
         if not manage_pw:
             return "MANAGE_PASSWORD not configured", 500
-        if not auth or auth.password != manage_pw:
+        if not auth or not secrets.compare_digest(auth.password, manage_pw):
             return ("Unauthorized", 401, {"WWW-Authenticate": 'Basic realm="GateKeeper Manage"'})
         if request.method == "POST" and not same_origin():
             return ("Cross-site request rejected", 403)
