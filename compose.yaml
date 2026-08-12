@@ -1,11 +1,14 @@
+name: gatekeeper
+
 services:
   gatekeeper:
+    container_name: gatekeeper_main
     build: .
     ports:
       - "7000:7000"
     environment:
-      - SECRET_KEY=${SECRET_KEY}
-      - MANAGE_PASSWORD=${MANAGE_PASSWORD}
+      - SECRET_KEY=${SECRET_KEY:?SECRET_KEY is required}
+      - MANAGE_PASSWORD=${MANAGE_PASSWORD:?MANAGE_PASSWORD is required}
       - BACKUP_CODE=${BACKUP_CODE:-}
       - DB_DIR=/data
     networks:
