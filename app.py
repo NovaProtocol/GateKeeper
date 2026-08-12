@@ -57,7 +57,34 @@ def init_db():
 
 app.teardown_appcontext(close_db)
 
-init_db()
+
+@app.before_request
+def ensure_db():
+    db = get_db()
+    db.execute("""CREATE TABLE IF NOT EXISTS codes (
+        id INTEGER PRIMARY KEY,
+        code TEXT UNIQUE NOT NULL,
+        label TEXT,
+        active INTEGER DEFAULT 1,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        last_accessed TIMESTAMP
+    )""")
+    try:
+        db.execute("ALTER TABLE codes ADD COLUMN last_accessed TIMESTAMP")
+    except sqlite3.OperationalError:
+        pass
+    backup = os.environ.get("BACKUP_CODE")
+    if backup:
+        existing = db.execute("SELECT 1 FROM codes WHERE code = ?", (backup,)).fetchone()
+        if not existing:
+            db.execute("INSERT INTO codes (code, label) VALUES (?, ?)", (backup, "backup"))
+    db.commit()
+
+
+def init_db():
+    """Idempotent schema + backup-code setup. Run explicitly for CLI/tools."""
+    with app.test_request_context('/'):
+        ensure_db()
 
 
 def apex_domain():
