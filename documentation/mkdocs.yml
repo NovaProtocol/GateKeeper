@@ -1,0 +1,71 @@
+site_name: GateKeeper · Documentation
+site_description: Documentation for GateKeeper — lightweight Flask auth gate with signed cookie and Caddy forward_auth
+site_author: NovaProtocol
+repo_url: https://github.com/NovaProtocol/GateKeeper
+repo_name: NovaProtocol/GateKeeper
+edit_uri: edit/main/documentation/docs/
+
+theme:
+  name: material
+  palette:
+    primary: custom
+    accent: custom
+  icon:
+    repo: fontawesome/brands/github
+  font:
+    text: Segoe UI
+    code: Cascadia Code
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - navigation.indexes
+    - search.highlight
+    - search.share
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+
+extra:
+  generator: false
+
+extra_css:
+  - assets/extra.css
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.keys
+  - pymdownx.snippets
+  - pymdownx.emoji
+  - tables
+  - toc:
+      permalink: true
+
+plugins:
+  - search
+  - glightbox
+
+extra_javascript:
+  - https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js
+
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - Architecture: architecture.md
+  - Auth Flow: auth-flow.md
+  - Cookie Contract: cookie-contract.md
+  - Manage Panel: manage-panel.md
+  - Caddy Integration: caddy-integration.md
+  - Docker: docker.md
+  - Why No gRPC: why-no-grpc.md

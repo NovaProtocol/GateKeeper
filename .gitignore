@@ -16,7 +16,8 @@ gatekeeper.db
 .idea/
 *.code-workspace
 .DS_Store
-docs/
+/docs/
+documentation/site/
 
 # AI scratch — never commit
 .agents/

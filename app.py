@@ -7,7 +7,7 @@ from functools import wraps
 from pathlib import Path
 from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
-from flask import Flask, request, redirect, render_template, g
+from flask import Flask, g, redirect, render_template, request
 from itsdangerous import URLSafeSerializer
 
 app = Flask(__name__)
@@ -52,7 +52,7 @@ def ensure_db():
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         last_accessed TIMESTAMP
     )""")
-    try:
+    try:  # noqa: SIM105
         db.execute("ALTER TABLE codes ADD COLUMN last_accessed TIMESTAMP")
     except sqlite3.OperationalError:
         pass
@@ -67,7 +67,7 @@ def ensure_db():
 
 def init_db():
     """Idempotent schema + backup-code setup. Run explicitly for CLI/tools."""
-    with app.test_request_context('/'):
+    with app.test_request_context("/"):
         ensure_db()
 
 
@@ -86,7 +86,11 @@ def same_origin():
     if not origin:
         return False
     origin_host = urlsplit(origin).hostname or ""
-    return origin_host == request.host.split(":")[0] or origin_host.endswith("." + apex_domain()) or origin_host == apex_domain()
+    return (
+        origin_host == request.host.split(":")[0]
+        or origin_host.endswith("." + apex_domain())
+        or origin_host == apex_domain()
+    )
 
 
 def require_manage_auth(f):
@@ -101,6 +105,7 @@ def require_manage_auth(f):
         if request.method == "POST" and not same_origin():
             return ("Cross-site request rejected", 403)
         return f(*args, **kwargs)
+
     return decorated
 
 
@@ -159,7 +164,9 @@ def login():
         db = get_db()
         row = db.execute("SELECT id FROM codes WHERE code = ? AND active = 1", (code,)).fetchone()
         if row:
-            db.execute("UPDATE codes SET last_accessed = CURRENT_TIMESTAMP WHERE id = ?", (row["id"],))
+            db.execute(
+                "UPDATE codes SET last_accessed = CURRENT_TIMESTAMP WHERE id = ?", (row["id"],)
+            )
             db.commit()
             resp = redirect(get_redirect_target())
             set_auth_cookie(resp, code)
@@ -193,9 +200,13 @@ def authz_forward_auth():
             code = None
         if code:
             db = get_db()
-            row = db.execute("SELECT id FROM codes WHERE code = ? AND active = 1", (code,)).fetchone()
+            row = db.execute(
+                "SELECT id FROM codes WHERE code = ? AND active = 1", (code,)
+            ).fetchone()
             if row:
-                db.execute("UPDATE codes SET last_accessed = CURRENT_TIMESTAMP WHERE id = ?", (row["id"],))
+                db.execute(
+                    "UPDATE codes SET last_accessed = CURRENT_TIMESTAMP WHERE id = ?", (row["id"],)
+                )
                 db.commit()
                 return "", 200
 
@@ -205,9 +216,13 @@ def authz_forward_auth():
     code_param = next((v for k, v in query if k == "access_code"), "")
     if code_param:
         db = get_db()
-        row = db.execute("SELECT id FROM codes WHERE code = ? AND active = 1", (code_param,)).fetchone()
+        row = db.execute(
+            "SELECT id FROM codes WHERE code = ? AND active = 1", (code_param,)
+        ).fetchone()
         if row:
-            db.execute("UPDATE codes SET last_accessed = CURRENT_TIMESTAMP WHERE id = ?", (row["id"],))
+            db.execute(
+                "UPDATE codes SET last_accessed = CURRENT_TIMESTAMP WHERE id = ?", (row["id"],)
+            )
             db.commit()
             clean_query = urlencode([(k, v) for k, v in query if k != "access_code"])
             resp = redirect(urlunsplit(("", "", parts.path, clean_query, parts.fragment)))
@@ -228,7 +243,10 @@ def authz_forward_auth():
 @require_manage_auth
 def manage():
     db = get_db()
-    codes = db.execute("SELECT id, code, label, active, created_at, last_accessed FROM codes ORDER BY created_at DESC").fetchall()
+    codes = db.execute(
+        "SELECT id, code, label, active, created_at, last_accessed "
+        "FROM codes ORDER BY created_at DESC"
+    ).fetchall()
     return render_template("manage.html", codes=codes)
 
 

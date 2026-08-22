@@ -11,7 +11,8 @@ __pycache__/
 *.db-shm
 .mypy_cache/
 .pytest_cache/
-docs/
+/docs/
+documentation/site/
 .agents/
 .superpowers/
 .opencode/
