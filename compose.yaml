@@ -7,12 +7,19 @@ services:
     ports:
       - "127.0.0.1:7000:7000"
     environment:
-      - SECRET_KEY=${SECRET_KEY:?SECRET_KEY is required}
-      - MANAGE_PASSWORD=${MANAGE_PASSWORD:?MANAGE_PASSWORD is required}
-      - BACKUP_CODE=${BACKUP_CODE:-}
-      - DB_DIR=/data
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
+      MANAGE_PASSWORD: ${MANAGE_PASSWORD:?MANAGE_PASSWORD is required}
+      BACKUP_CODE: ${BACKUP_CODE:-}
+      DB_DIR: /data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:7000/health', timeout=5)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     networks:
       - default
+      - gatekeeper
       - cloudflared-tunnel
     volumes:
       - gatekeeper_data:/data
@@ -23,6 +30,9 @@ volumes:
 
 networks:
   default:
+  gatekeeper:
+    external: true
+    name: gatekeeper_default
   cloudflared-tunnel:
     external: true
     name: cloudflared-tunnel_default

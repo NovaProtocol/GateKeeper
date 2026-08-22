@@ -1,4 +1,4 @@
-FROM python3146t
+FROM python:3.14-slim
 
 WORKDIR /app
 
@@ -6,11 +6,13 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
 COPY requirements.txt .
-RUN pip3 install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-RUN useradd -m appuser \
+RUN python3 -m compileall -q /app 2>/dev/null || true
+
+RUN useradd --create-home --uid 10001 appuser \
     && mkdir -p /data \
     && chown -R appuser:appuser /app /data
 
@@ -21,3 +23,5 @@ EXPOSE 7000
 
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["gunicorn", "app:app", "--bind", "0.0.0.0:7000", "--workers", "1", "--threads", "4", "--access-logfile", "-", "--error-logfile", "-"]
+
+USER appuser

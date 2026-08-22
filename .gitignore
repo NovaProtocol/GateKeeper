@@ -1,11 +1,34 @@
 .venv/
+venv/
 __pycache__/
 *.pyc
+*.pyo
 .pytest_cache/
 .mypy_cache/
 .env
+.env.*
+*.db
+*.sqlite3
 gatekeeper.db
+*.db-wal
+*.db-shm
+.vscode/
+.idea/
+*.code-workspace
+.DS_Store
 docs/
 
 # AI scratch — never commit
 .agents/
+.superpowers/
+.opencode/
+.claude/
+.cursor/
+.continue/
+AGENTS.md
+CLAUDE.md
+GEMINI.md
+scratch/
+*.tmp
+*.bak
+*.swp
