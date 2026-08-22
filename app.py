@@ -138,6 +138,12 @@ def set_auth_cookie(response, code):
     )
 
 
+@app.get("/health")
+def health():
+    """Health probe."""
+    return {"status": "ok"}
+
+
 @app.route("/", methods=["GET"])
 def login():
     token = request.cookies.get("gatekeeper_token")
