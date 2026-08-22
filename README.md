@@ -4,7 +4,7 @@ Lightweight Flask auth service that protects web apps through a reverse-proxy ga
 
 ## How it works
 
-```
+```text
 Request → Caddy forward_auth → GateKeeper /api/authz/forward-auth
                                ↓ valid gatekeeper_token cookie
                          200  → Caddy proxies to the app

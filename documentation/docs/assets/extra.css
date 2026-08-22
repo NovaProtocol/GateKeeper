@@ -1,0 +1,74 @@
+:root {
+  --md-primary-fg-color: #1a1a2e;
+  --md-primary-fg-color--light: #2d2d44;
+  --md-primary-fg-color--dark: #0d0d17;
+  --md-primary-bg-color: #ffffff;
+
+  --md-accent-fg-color: #e94560;
+  --md-accent-fg-color--transparent: rgba(233, 69, 96, 0.1);
+
+  --md-typeset-color: #1a1a2e;
+  --md-default-bg-color: #f8f9fa;
+  --md-default-fg-color--light: #6c757d;
+  --md-default-fg-color--lighter: #adb5bd;
+
+  --md-typeset-a-color: #e94560;
+  --md-footer-bg-color: #1a1a2e;
+  --md-footer-bg-color--dark: #0d0d17;
+
+  --md-typeset-font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --md-code-font-family: 'Cascadia Code', 'Fira Code', 'Consolas', 'Courier New', monospace;
+}
+
+.md-header {
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+}
+
+.md-tabs {
+  background: #15152a;
+}
+
+.md-typeset .md-button {
+  border-radius: 50px;
+  font-weight: 600;
+  font-size: 0.85rem;
+  padding: 0.5rem 1.5rem;
+  transition: all 0.2s;
+}
+
+.md-typeset .md-button--primary {
+  background: #e94560;
+  border-color: #e94560;
+}
+
+.md-typeset .md-button--primary:hover {
+  background: #d63851;
+  border-color: #d63851;
+}
+
+.md-nav__item .md-nav__link--active {
+  color: #e94560;
+}
+
+.md-search-result__link:hover,
+.md-search-result__link:focus {
+  background: rgba(233, 69, 96, 0.08);
+}
+
+.md-search-result__more summary {
+  color: #e94560;
+}
+
+.md-typeset table:not([class]) {
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+
+.md-typeset .admonition {
+  border-radius: 10px;
+}
+
+.md-clipboard:focus,
+.md-clipboard:hover {
+  color: #e94560;
+}

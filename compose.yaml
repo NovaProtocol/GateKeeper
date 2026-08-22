@@ -25,6 +25,23 @@ services:
       - gatekeeper_data:/data
     restart: unless-stopped
 
+  documentation:
+    build:
+      context: .
+      dockerfile: documentation/Dockerfile
+    container_name: gatekeeper_documentation
+    restart: unless-stopped
+    expose:
+      - "8005"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8005/health', timeout=5)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - default
+
 volumes:
   gatekeeper_data:
 
