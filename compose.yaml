@@ -47,7 +47,8 @@ volumes:
 
 networks:
   default:
-    name: gatekeeper_internal
+    external: true
+    name: gatekeeper_default
   gatekeeper:
     external: true
     name: gatekeeper_default
