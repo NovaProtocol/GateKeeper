@@ -24,4 +24,3 @@ EXPOSE 7000
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["gunicorn", "app:app", "--bind", "0.0.0.0:7000", "--workers", "1", "--threads", "4", "--access-logfile", "-", "--error-logfile", "-"]
 
-USER appuser
