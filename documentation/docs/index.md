@@ -47,7 +47,6 @@ Request → Caddy forward_auth → GateKeeper /api/authz/forward-auth
 | [Manage Panel](manage-panel.md) | /manage Basic-auth, create/invalidate, last_accessed |
 | [Caddy Integration](caddy-integration.md) | How any new project gates behind GateKeeper |
 | [Docker](docker.md) | Dockerfile (python:3.14-slim, appuser), compose, healthchecks |
-| [Why No gRPC](why-no-grpc.md) | Why this single-service gate has no gRPC |
 
 ## Relationship to House Reference
 
@@ -57,6 +56,5 @@ This project follows `~/Projects/agent_stuff/reference/`:
 - **Docker** (`reference/docker/dockerfile.md`, `reference/docker/compose.md`) — `python:3.14-slim`, `PYTHONDONTWRITEBYTECODE=1`, `pip --no-cache-dir`, `compileall`, `appuser` uid `10001`, loopback-only publish, external `gatekeeper_default` + `cloudflared-tunnel` networks, `urllib` healthcheck.
 - **GateKeeper** (`reference/gatekeeper/*`) — single cookie, only `GET /api/authz/forward-auth`, apex-domain deduction, no hardcoded domains.
 - **Documentation** (`reference/conventions/docs-readme.md`) — tracked `documentation/` MkDocs Material (`mkdocs==1.6.1`), FastAPI on `8005`, `USER appuser`, granian.
-- **No gRPC** (`reference/fastapi/grpc.md`) — single service, no container-to-container calls, so no `api:50051`.
 
 No `.github/workflows` — strict local `pre-commit` only per `reference/conventions/precommit.md`.

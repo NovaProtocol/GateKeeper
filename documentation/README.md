@@ -14,7 +14,6 @@ Full project documentation for GateKeeper, built with [MkDocs](https://www.mkdoc
 | [Manage Panel](./docs/manage-panel.md) | /manage Basic-auth, create/invalidate |
 | [Caddy Integration](./docs/caddy-integration.md) | How apps gate behind forward_auth |
 | [Docker](./docs/docker.md) | Dockerfile, compose, healthchecks |
-| [Why No gRPC](./docs/why-no-grpc.md) | Why this single-service gate has no gRPC |
 
 ## Building Locally
 
