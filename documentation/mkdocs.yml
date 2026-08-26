@@ -68,4 +68,3 @@ nav:
   - Manage Panel: manage-panel.md
   - Caddy Integration: caddy-integration.md
   - Docker: docker.md
-  - Why No gRPC: why-no-grpc.md
