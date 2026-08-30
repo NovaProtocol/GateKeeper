@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}GateKeeper · Manage{% endblock %}
+{% block content %}
+<div class="container" style="padding:2rem;max-width:1100px">
+  <div class="stats-row" style="display:grid;grid-template-columns:repeat(4,1fr);gap:1rem;margin-bottom:1.5rem">
+    <div class="stat-card"><div class="stat-number">{{ stats.routes }}</div><div class="stat-label">Routes</div></div>
+    <div class="stat-card"><div class="stat-number">{{ stats.groups }}</div><div class="stat-label">Rule Groups</div></div>
+    <div class="stat-card"><div class="stat-number">{{ stats.codes }}</div><div class="stat-label">Codes</div></div>
+    <div class="stat-card"><div class="stat-number">{{ stats.keys }}</div><div class="stat-label">API Keys</div></div>
+  </div>
+  <div class="card">
+    <div class="card-header"><h2>Dashboard</h2><span class="header-badge" style="font-family:'JetBrains Mono',monospace">~/manage</span></div>
+    <div class="card-body">
+      <p style="color:var(--text-secondary);font-size:.9rem">Manage categories: Access, Monitoring, System. Use the sidebar to navigate.</p>
+      <div style="display:flex;gap:.75rem;flex-wrap:wrap;margin-top:1rem">
+        <a href="/manage/routing" class="btn btn-accent"><i class="fa-solid fa-route"></i> Routing</a>
+        <a href="/manage/rules" class="btn" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary)">Rules</a>
+        <a href="/manage/logs" class="btn" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary)">Logs</a>
+      </div>
+    </div>
+  </div>
+  {% if warnings and warnings.groups is defined %}
+  {% if warnings.groups or warnings.rules %}
+  <div class="card" style="border-color:var(--danger)">
+    <div class="card-header"><h2 style="color:var(--danger)"><i class="fa-solid fa-triangle-exclamation"></i> Shadowed</h2></div>
+    <div class="card-body" style="font-family:'JetBrains Mono',monospace;font-size:.8rem;color:var(--text-secondary)">{{ warnings.groups|length }} groups · {{ warnings.rules|length }} rules shadowed</div>
+  </div>
+  {% endif %}
+  {% endif %}
+</div>
+{% endblock %}

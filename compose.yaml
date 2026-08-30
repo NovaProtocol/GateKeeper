@@ -1,29 +1,151 @@
 name: gatekeeper
 
 services:
-  gatekeeper:
-    container_name: gatekeeper_main
-    build: .
+  caddy:
+    build: ./caddy
+    container_name: gatekeeper_caddy
+    restart: unless-stopped
     ports:
       - "127.0.0.1:7000:7000"
+    networks:
+      default:
+      gatekeeper:
+        aliases:
+          - gatekeeper
+      cloudflared-tunnel:
+        aliases:
+          - gatekeeper
+      gatekeeper_dynamic:
+      net-data:
+    depends_on:
+      auth-gateway:
+        condition: service_healthy
+
+  auth-gateway:
+    build:
+      context: .
+      dockerfile: auth-gateway/Dockerfile
+    container_name: gatekeeper_auth
+    restart: unless-stopped
+    expose:
+      - "8001"
     environment:
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
       MANAGE_PASSWORD: ${MANAGE_PASSWORD:?MANAGE_PASSWORD is required}
       BACKUP_CODE: ${BACKUP_CODE:-}
       DB_DIR: /data
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-}
+      DEPLOYMENT_TYPE: ${DEPLOYMENT_TYPE:?DEPLOYMENT_TYPE is required}
+    volumes:
+      - gatekeeper_data:/data
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:7000/health', timeout=5)"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=5)"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 10s
     networks:
       - default
-      - gatekeeper
-      - cloudflared-tunnel
+      - net-api
+      - gatekeeper_dynamic
+    depends_on:
+      api:
+        condition: service_healthy
+
+  api:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+    container_name: gatekeeper_api
+    restart: unless-stopped
+    expose:
+      - "8002"
+      - "50051"
+    environment:
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
+      MANAGE_PASSWORD: ${MANAGE_PASSWORD:?MANAGE_PASSWORD is required}
+      BACKUP_CODE: ${BACKUP_CODE:-}
+      DB_DIR: /data
+      DATABASE_URL: ${DATABASE_URL:-}
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-}
+      DEPLOYMENT_TYPE: ${DEPLOYMENT_TYPE:?DEPLOYMENT_TYPE is required}
     volumes:
       - gatekeeper_data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8002/health', timeout=5)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - net-api
+      - net-data
+      - gatekeeper_dynamic
+
+  management:
+    build:
+      context: .
+      dockerfile: management/Dockerfile
+    container_name: gatekeeper_management
     restart: unless-stopped
+    expose:
+      - "8003"
+    environment:
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
+      MANAGE_PASSWORD: ${MANAGE_PASSWORD:?MANAGE_PASSWORD is required}
+      BACKUP_CODE: ${BACKUP_CODE:-}
+      DB_DIR: /data
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-}
+      DEPLOYMENT_TYPE: ${DEPLOYMENT_TYPE:?DEPLOYMENT_TYPE is required}
+      API_GRPC_ADDR: "api:50051"
+    volumes:
+      - gatekeeper_data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8003/health', timeout=5)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - default
+      - net-api
+    depends_on:
+      api:
+        condition: service_healthy
+
+  mysql-db:
+    image: mysql:8.4
+    container_name: gatekeeper_db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_PASS:-gatekeeperpass}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-gatekeeper}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    command: --max_connections=200
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - net-data
+
+  phpmyadmin:
+    image: phpmyadmin:5.2
+    container_name: gatekeeper_phpmyadmin
+    restart: unless-stopped
+    expose:
+      - "80"
+    environment:
+      PMA_HOST: mysql-db
+      PMA_PORT: 3306
+      UPLOAD_LIMIT: 50M
+    depends_on:
+      mysql-db:
+        condition: service_healthy
+    networks:
+      - net-data
 
   documentation:
     build:
@@ -44,11 +166,16 @@ services:
 
 volumes:
   gatekeeper_data:
+  mysql_data:
 
 networks:
   default:
-    external: true
-    name: gatekeeper_default
+  net-api:
+    internal: true
+  net-data:
+    internal: true
+  gatekeeper_dynamic:
+    name: gatekeeper_dynamic
   gatekeeper:
     external: true
     name: gatekeeper_default

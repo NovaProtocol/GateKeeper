@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% block title %}Codes · GateKeeper{% endblock %}
+{% block content %}
+<div class="container" style="padding:2rem;max-width:1100px">
+  <div class="stats-row" style="display:grid;grid-template-columns:repeat(3,1fr);gap:1rem;margin-bottom:1.5rem">
+    <div class="stat-card"><div class="stat-number">{{ codes|length }}</div><div class="stat-label">Total Codes</div></div>
+    <div class="stat-card"><div class="stat-number">{{ codes|selectattr('active')|list|length }}</div><div class="stat-label">Active</div></div>
+    <div class="stat-card"><div class="stat-number">{{ codes|rejectattr('active')|list|length }}</div><div class="stat-label">Inactive</div></div>
+  </div>
+  <div class="card">
+    <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+      <h2>Access Codes</h2>
+      <button class="btn btn-accent" data-toggle="modal" data-target="#addCodeModal"><i class="fa-solid fa-plus"></i> Add Code</button>
+    </div>
+    <div class="card-body" style="padding:0">
+      <table class="codes-table">
+        <thead><tr><th>Code</th><th>Label</th><th>Status</th><th>Created</th><th>Last Accessed</th><th></th></tr></thead>
+        <tbody>
+        {% for c in codes %}
+        <tr>
+          <td><span class="code-value">{{ c.code }}</span></td>
+          <td><span class="label-value{% if not c.label and not c.display_name %} empty{% endif %}">{{ c.display_name or c.label or '—' }}</span></td>
+          <td><span class="tag {{ 'tag-active' if c.active else 'tag-inactive' }}">{{ 'Active' if c.active else 'Inactive' }}</span></td>
+          <td class="date-value">{{ c.created_at }}</td>
+          <td class="date-value">{{ c.last_accessed or 'never' }}</td>
+          <td style="text-align:right;padding-right:1rem;display:flex;gap:.4rem;justify-content:flex-end;align-items:center">
+            <button class="btn" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary);padding:.3rem .6rem;font-size:.75rem" onclick="openEditCode({{ c.id }}, '{{ c.label or '' }}', '{{ c.display_name or c.label or '' }}', '{{ c.code }}')" title="Edit"><i class="fa-solid fa-pen"></i></button>
+            {% if c.active %}
+            <form method="post" action="/manage/codes/{{ c.id }}/revoke" style="display:inline">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <button type="submit" class="btn btn-outline-danger" style="padding:.3rem .6rem;font-size:.75rem" onclick="return confirm('Revoke this code?')">Revoke</button>
+            </form>
+            {% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" style="text-align:center;color:var(--text-secondary);padding:1.5rem">No codes</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="modal fade" id="addCodeModal" tabindex="-1" role="dialog" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered" role="document">
+    <div class="modal-content" style="background:var(--bg-card);border:1px solid var(--border);border-radius:8px">
+      <form method="post" action="/manage/codes">
+        <div class="modal-header" style="border-bottom:1px solid var(--border)">
+          <h5 class="modal-title" style="color:var(--text-primary)">Add Access Code</h5>
+          <button type="button" class="close" data-dismiss="modal" aria-label="Close" style="color:var(--text-secondary)"><span aria-hidden="true">&times;</span></button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <div class="form-group">
+            <label for="code-label" style="color:var(--text-secondary);font-size:.85rem">Label <span style="color:var(--text-secondary);font-weight:400">(optional, defaults to blank)</span></label>
+            <input type="text" class="form-control" id="code-label" name="label" placeholder="e.g. Alice">
+          </div>
+          <div class="form-group">
+            <label for="code-value" style="color:var(--text-secondary);font-size:.85rem">Access Code <span style="color:var(--danger)">*</span></label>
+            <div class="input-group">
+              <input type="text" class="form-control" id="code-value" name="code" placeholder="my-code-123" required>
+              <div class="input-group-append">
+                <button type="button" class="btn btn-outline-secondary" onclick="genDice()" title="Generate random 8 chars"><i class="fa-solid fa-dice"></i></button>
+              </div>
+            </div>
+            <small style="color:var(--text-secondary)">Manual code can be anything (letters, numbers, dashes). Dice generates 8 random chars.</small>
+          </div>
+        </div>
+        <div class="modal-footer" style="border-top:1px solid var(--border)">
+          <button type="button" class="btn btn-secondary" data-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-accent">Create</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<div class="modal fade" id="editCodeModal" tabindex="-1" role="dialog" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered" role="document">
+    <div class="modal-content" style="background:var(--bg-card);border:1px solid var(--border);border-radius:8px">
+      <form method="post" id="editCodeForm">
+        <div class="modal-header" style="border-bottom:1px solid var(--border)">
+          <h5 class="modal-title" style="color:var(--text-primary)">Edit Code</h5>
+          <button type="button" class="close" data-dismiss="modal" aria-label="Close" style="color:var(--text-secondary)"><span aria-hidden="true">&times;</span></button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <div class="form-group">
+            <label style="color:var(--text-secondary);font-size:.85rem">Label</label>
+            <input type="text" class="form-control" id="edit-label" name="label" placeholder="e.g. Alice">
+          </div>
+          <div class="form-group">
+            <label style="color:var(--text-secondary);font-size:.85rem">Access Code <span style="color:var(--text-secondary);font-weight:400">(leave blank to keep)</span></label>
+            <input type="text" class="form-control" id="edit-code" name="code" placeholder="my-code-123">
+          </div>
+        </div>
+        <div class="modal-footer" style="border-top:1px solid var(--border)">
+          <button type="button" class="btn btn-secondary" data-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-accent">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script>
+function genDice(){
+  const chars='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  let v='';
+  for(let i=0;i<8;i++) v+=chars[Math.floor(Math.random()*chars.length)];
+  document.getElementById('code-value').value=v;
+}
+function openEditCode(id, label, display, code){
+  document.getElementById('edit-label').value=display||label||'';
+  document.getElementById('edit-code').value=code||'';
+  document.getElementById('editCodeForm').action='/manage/codes/'+id+'/edit';
+  $('#editCodeModal').modal('show');
+}
+</script>
+{% endblock %}

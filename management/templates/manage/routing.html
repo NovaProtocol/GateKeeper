@@ -1,0 +1,199 @@
+{% extends "base.html" %}
+{% block title %}Routing · GateKeeper{% endblock %}
+{% block head_extra %}
+<style>
+.route-form-row{display:flex;gap:.75rem;align-items:flex-end;flex-wrap:wrap}
+.route-form-row .form-group{flex:1;min-width:140px}
+.split-input{display:flex;align-items:center;gap:0}
+.split-input input{flex:1}
+.split-input .colon{padding:0 .4rem;color:var(--text-secondary);font-weight:700;font-size:1.1rem;user-select:none}
+</style>
+{% endblock %}
+{% block content %}
+<div class="container" style="padding:2rem;max-width:1200px">
+  <div class="card">
+    <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.75rem"><h2><i class="fa-solid fa-route"></i> Routing</h2><div style="display:flex;gap:.5rem"><button class="btn btn-accent" data-toggle="modal" data-target="#addProxyModal"><i class="fa-solid fa-plus"></i> Add Proxy Route</button><button class="btn" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary)" data-toggle="modal" data-target="#addRedirectModal"><i class="fa-solid fa-right-left"></i> Add Redirect Route</button></div></div>
+    <div class="card-body" style="padding:0">
+      <table class="codes-table" id="routesTable">
+        <thead><tr><th>Host</th><th>Path</th><th>Type</th><th>Target</th><th>Status</th><th>Actions</th></tr></thead>
+        <tbody>
+        {% for r in routes %}
+        <tr data-rid="{{ r.id }}" data-host="{{ r.host }}" data-path="{{ r.path or '/' }}" data-type="{{ r.route_type or 'proxy' }}" data-upstream="{{ r.upstream or '' }}" data-port="{{ r.port or '' }}" data-redirect="{{ r.redirect_target or '' }}" data-code="{{ r.redirect_code or 302 }}">
+          <td><span class="code-value">{{ r.host }}</span></td>
+          <td style="font-family:'JetBrains Mono',monospace;font-size:.8rem">{{ r.path or '/' }}</td>
+          <td><span class="tag {% if (r.route_type or 'proxy')=='redirect' %}tag-inactive{% else %}tag-active{% endif %}" style="{% if (r.route_type or 'proxy')=='redirect' %}background:var(--accent-dim);color:var(--accent){% endif %}">{{ r.route_type or 'proxy' }}</span></td>
+          <td style="font-family:'JetBrains Mono',monospace;font-size:.8rem;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{% if (r.route_type or 'proxy')=='redirect' %}{{ r.redirect_target }}{% else %}{{ r.upstream }}:{{ r.port }}{% endif %}">{% if (r.route_type or 'proxy')=='redirect' %}{{ r.redirect_target }} <span style="color:var(--text-secondary)">({{ r.redirect_code or 302 }})</span>{% else %}{{ r.upstream }}:{{ r.port }}{% endif %}</td>
+          <td><span class="tag" id="status-{{ r.id }}" style="background:var(--border);color:var(--text-secondary)">checking</span></td>
+          <td class="actions-cell" style="display:flex;gap:.4rem;align-items:center;flex-wrap:wrap">
+            <button class="btn btn-sm" style="background:var(--bg-secondary);border:1px solid var(--border);color:var(--text-secondary);padding:.25rem .5rem" onclick="testOne({{ r.id }})" title="Test"><i class="fa-solid fa-plug"></i></button>
+            <button class="btn btn-sm" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary);padding:.25rem .5rem" onclick="openEdit({{ r.id }})" title="Edit"><i class="fa-solid fa-pen"></i></button>
+            <form method="post" action="/manage/routing/{{ r.id }}/delete" onsubmit="return confirm('Delete route?')" style="display:inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn btn-sm btn-outline-danger" style="padding:.25rem .5rem">Delete</button></form>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" style="text-align:center;color:var(--text-secondary);padding:1.5rem">No routes</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <script>
+  const _csrf="{{ csrf_token }}";
+  const _apex=(location.hostname.split('.').slice(-2).join('.')||'projectnova.download');
+  const _existingHosts=new Set([{% for r in routes %}"{{ r.host }}{{ r.path or '/' }}"{% if not loop.last %},{% endif %}{% endfor %}]);
+  async function testOne(rid){
+    const row=document.querySelector(`tr[data-rid="${rid}"]`);
+    const badge=document.getElementById(`status-${rid}`);
+    if(!row||!badge) return;
+    try{
+      const r=await fetch(`/manage/routing/${rid}/test`,{method:'POST',headers:{'X-CSRF-Token':_csrf,'Accept':'application/json'},body:new URLSearchParams({csrf_token:_csrf})});
+      const j=await r.json().catch(()=>({ok:r.ok}));
+      const ok=j.ok===true || j.ok===undefined && r.ok;
+      if(!ok){row.style.background='var(--danger-dim)';row.style.borderLeft='3px solid var(--danger)';badge.textContent='fail';badge.style.background='var(--danger-dim)';badge.style.color='var(--danger)';badge.className='tag tag-inactive';}
+      else {badge.textContent='success';badge.style.background='var(--accent-dim)';badge.style.color='var(--accent)';badge.className='tag tag-active'; row.style.background='';row.style.borderLeft='';}
+    }catch(e){row.style.background='var(--danger-dim)';row.style.borderLeft='3px solid var(--danger)';badge.textContent='fail';badge.style.background='var(--danger-dim)';badge.style.color='var(--danger)';badge.className='tag tag-inactive';}
+  }
+  document.addEventListener('DOMContentLoaded',()=>{
+    document.querySelectorAll('tr[data-rid]').forEach(tr=>testOne(tr.getAttribute('data-rid')));
+    const d=document.getElementById('proxy-domain'); if(d) d.value=_apex;
+    const rd=document.getElementById('redirect-domain'); if(rd) rd.value=_apex;
+    const ed=document.getElementById('edit-domain'); if(ed && !ed.value) ed.value=_apex;
+    const erd=document.getElementById('edit-redirect-domain'); if(erd && !erd.value) erd.value=_apex;
+  });
+  function checkDuplicate(sub,dom,path){
+    const host=(sub?sub+'.':'')+dom;
+    const key=host+(path||'/');
+    return _existingHosts.has(key);
+  }
+  document.getElementById('proxyForm')?.addEventListener('submit',function(e){
+    const sub=document.getElementById('proxy-sub').value.trim().toLowerCase();
+    const dom=document.getElementById('proxy-domain').value.trim().toLowerCase();
+    const path=document.getElementById('proxy-path').value.trim()||'/';
+    const up=document.getElementById('proxy-upstream').value.trim();
+    const port=document.getElementById('proxy-port').value.trim()||'8080';
+    if(!dom){alert('Domain required');e.preventDefault();return;}
+    if(!up){alert('Container name required');e.preventDefault();return;}
+    if(!/^\d+$/.test(port)||+port<1||+port>65535){alert('Port must be 1-65535');e.preventDefault();return;}
+    if(checkDuplicate(sub,dom,path)){alert('Host+path already exists');e.preventDefault();return;}
+    document.getElementById('proxy-host').value=(sub?sub+'.':'')+dom;
+    document.getElementById('proxy-port-hidden').value=port;
+  });
+  document.getElementById('redirectForm')?.addEventListener('submit',function(e){
+    const sub=document.getElementById('redirect-sub').value.trim().toLowerCase();
+    const dom=document.getElementById('redirect-domain').value.trim().toLowerCase();
+    const path=document.getElementById('redirect-path').value.trim()||'/';
+    const target=document.getElementById('redirect-target').value.trim();
+    if(!dom){alert('Domain required');e.preventDefault();return;}
+    if(!target){alert('Redirect target required');e.preventDefault();return;}
+    if(checkDuplicate(sub,dom,path)){alert('Host+path already exists');e.preventDefault();return;}
+    document.getElementById('redirect-host').value=(sub?sub+'.':'')+dom;
+  });
+  function openEdit(rid){
+    const tr=document.querySelector(`tr[data-rid="${rid}"]`);
+    if(!tr) return;
+    const host=tr.getAttribute('data-host'); const path=tr.getAttribute('data-path'); const type=tr.getAttribute('data-type');
+    const up=tr.getAttribute('data-upstream'); const port=tr.getAttribute('data-port');
+    const target=tr.getAttribute('data-redirect'); const code=tr.getAttribute('data-code');
+    document.getElementById('edit-rid').value=rid;
+    document.getElementById('edit-type').value=type;
+    // split host into sub/domain
+    const parts=host.split('.'); let sub='', dom=host;
+    if(parts.length>2){sub=parts.slice(0,-2).join('.'); dom=parts.slice(-2).join('.');}
+    else if(parts.length===2){sub=''; dom=host;}
+    if(type==='proxy'){
+      document.getElementById('edit-proxy-group').style.display='';
+      document.getElementById('edit-redirect-group').style.display='none';
+      document.getElementById('edit-sub').value=sub; document.getElementById('edit-domain').value=dom;
+      document.getElementById('edit-path').value=path;
+      document.getElementById('edit-upstream').value=up; document.getElementById('edit-port').value=port||'8080';
+    } else {
+      document.getElementById('edit-proxy-group').style.display='none';
+      document.getElementById('edit-redirect-group').style.display='';
+      document.getElementById('edit-redirect-sub').value=sub; document.getElementById('edit-redirect-domain').value=dom;
+      document.getElementById('edit-redirect-path').value=path;
+      document.getElementById('edit-redirect-target').value=target; document.getElementById('edit-redirect-code').value=code||'302';
+    }
+    $('#editRouteModal').modal('show');
+  }
+  document.getElementById('editForm')?.addEventListener('submit',function(e){
+    const type=document.getElementById('edit-type').value;
+    if(type==='proxy'){
+      const sub=document.getElementById('edit-sub').value.trim().toLowerCase();
+      const dom=document.getElementById('edit-domain').value.trim().toLowerCase();
+      const port=document.getElementById('edit-port').value.trim()||'8080';
+      if(!/^\d+$/.test(port)){alert('Port must be number');e.preventDefault();return;}
+      document.getElementById('edit-host').value=(sub?sub+'.':'')+dom;
+      document.getElementById('edit-port-hidden').value=port;
+    } else {
+      const sub=document.getElementById('edit-redirect-sub').value.trim().toLowerCase();
+      const dom=document.getElementById('edit-redirect-domain').value.trim().toLowerCase();
+      document.getElementById('edit-redirect-host').value=(sub?sub+'.':'')+dom;
+    }
+  });
+  </script>
+</div>
+
+<div class="modal fade" id="addProxyModal" tabindex="-1"><div class="modal-dialog"><div class="modal-content" style="background:var(--bg-card);border:1px solid var(--border);color:var(--text-primary)">
+  <div class="modal-header" style="border-color:var(--border)"><h5 class="modal-title" style="font-weight:700">Add Proxy Route</h5><button type="button" class="close" data-dismiss="modal" style="color:var(--text-primary)"><span>&times;</span></button></div>
+  <form method="post" action="/manage/routing" id="proxyForm">
+    <div class="modal-body">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="host" id="proxy-host">
+      <input type="hidden" name="port" id="proxy-port-hidden">
+      <input type="hidden" name="route_type" value="proxy">
+      <div class="form-group"><label>Host</label><div style="display:flex;gap:.5rem"><input id="proxy-sub" name="subdomain" placeholder="subdomain (optional)" style="flex:1;background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:.6rem .875rem;color:var(--text-primary)"><input id="proxy-domain" name="domain" placeholder="projectnova.download" required style="flex:1;background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:.6rem .875rem;color:var(--text-primary)"></div><small style="color:var(--text-secondary)">Full host = subdomain.domain — checks duplicate Host+Path</small></div>
+      <div class="form-group"><label>Path <span style="color:var(--text-secondary);font-weight:400">(optional)</span></label><input id="proxy-path" name="path" placeholder="/" value="/" style="width:100%;background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:.6rem .875rem;color:var(--text-primary)"><small style="color:var(--text-secondary)">Leave "/" for catch-all, or "/api/*" for specific</small></div>
+      <div class="form-group"><label>Upstream</label><div class="split-input" style="display:flex;align-items:center;gap:0"><input id="proxy-upstream" name="upstream" placeholder="myapp" required style="flex:1;background:var(--bg-primary);border:1px solid var(--border);border-radius:8px 0 0 8px;padding:.6rem .875rem;color:var(--text-primary)"><span class="colon" style="background:var(--bg-primary);border:1px solid var(--border);border-left:none;border-right:none;padding:.6rem .4rem;color:var(--text-secondary)">:</span><input id="proxy-port" name="port_visible" placeholder="8080" inputmode="numeric" pattern="[0-9]*" style="width:90px;background:var(--bg-primary);border:1px solid var(--border);border-radius:0 8px 8px 0;padding:.6rem .5rem;color:var(--text-primary)"></div><small style="color:var(--text-secondary)">Container on <code>gatekeeper_dynamic</code> — defaults to 8080</small></div>
+    </div>
+    <div class="modal-footer" style="border-color:var(--border)"><button type="button" class="btn" data-dismiss="modal" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary)">Cancel</button><button type="submit" class="btn btn-accent">Add Proxy Route</button></div>
+  </form>
+</div></div></div>
+
+<div class="modal fade" id="addRedirectModal" tabindex="-1"><div class="modal-dialog"><div class="modal-content" style="background:var(--bg-card);border:1px solid var(--border);color:var(--text-primary)">
+  <div class="modal-header" style="border-color:var(--border)"><h5 class="modal-title" style="font-weight:700">Add Redirect Route</h5><button type="button" class="close" data-dismiss="modal" style="color:var(--text-primary)"><span>&times;</span></button></div>
+  <form method="post" action="/manage/routing" id="redirectForm">
+    <div class="modal-body">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="host" id="redirect-host">
+      <input type="hidden" name="route_type" value="redirect">
+      <div class="form-group"><label>Host</label><div style="display:flex;gap:.5rem"><input id="redirect-sub" name="subdomain" placeholder="subdomain (optional)" style="flex:1;background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:.6rem .875rem;color:var(--text-primary)"><input id="redirect-domain" name="domain" placeholder="projectnova.download" required style="flex:1;background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:.6rem .875rem;color:var(--text-primary)"></div></div>
+      <div class="form-group"><label>Path <span style="color:var(--text-secondary);font-weight:400">(optional)</span></label><input id="redirect-path" name="path" placeholder="/" value="/" style="width:100%;background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:.6rem .875rem;color:var(--text-primary)"></div>
+      <div class="form-group"><label>Redirect Target</label><input name="redirect_target" id="redirect-target" placeholder="https://portfolio.projectnova.download or /newpath" required style="width:100%;background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:.6rem .875rem;color:var(--text-primary)"><small style="color:var(--text-secondary)">Full URL or path — e.g. projectnova.download → portfolio...</small></div>
+      <div class="form-group"><label>Redirect Code</label><select name="redirect_code" style="width:100%;background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:.6rem .875rem;color:var(--text-primary)"><option value="302" selected>302 Found</option><option value="301">301 Moved Permanently</option><option value="307">307 Temporary</option><option value="308">308 Permanent</option></select></div>
+    </div>
+    <div class="modal-footer" style="border-color:var(--border)"><button type="button" class="btn" data-dismiss="modal" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary)">Cancel</button><button type="submit" class="btn btn-accent">Add Redirect Route</button></div>
+  </form>
+</div></div></div>
+
+<div class="modal fade" id="editRouteModal" tabindex="-1"><div class="modal-dialog"><div class="modal-content" style="background:var(--bg-card);border:1px solid var(--border);color:var(--text-primary)">
+  <div class="modal-header" style="border-color:var(--border)"><h5 class="modal-title" style="font-weight:700">Edit Route</h5><button type="button" class="close" data-dismiss="modal" style="color:var(--text-primary)"><span>&times;</span></button></div>
+  <form method="post" id="editForm">
+    <div class="modal-body">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="host" id="edit-host">
+      <input type="hidden" name="host" id="edit-redirect-host">
+      <input type="hidden" name="port" id="edit-port-hidden">
+      <input type="hidden" name="route_type" id="edit-type">
+      <input type="hidden" name="rid" id="edit-rid">
+      <div id="edit-proxy-group">
+        <div class="form-group"><label>Host</label><div style="display:flex;gap:.5rem"><input id="edit-sub" placeholder="subdomain" style="flex:1;background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:.6rem .875rem;color:var(--text-primary)"><input id="edit-domain" placeholder="projectnova.download" style="flex:1;background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:.6rem .875rem;color:var(--text-primary)"></div></div>
+        <div class="form-group"><label>Path</label><input id="edit-path" name="path" style="width:100%;background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:.6rem .875rem;color:var(--text-primary)"></div>
+        <div class="form-group"><label>Upstream</label><div style="display:flex;align-items:center;gap:0"><input id="edit-upstream" name="upstream" style="flex:1;background:var(--bg-primary);border:1px solid var(--border);border-radius:8px 0 0 8px;padding:.6rem .875rem;color:var(--text-primary)"><span style="background:var(--bg-primary);border:1px solid var(--border);border-left:none;border-right:none;padding:.6rem .4rem;color:var(--text-secondary)">:</span><input id="edit-port" placeholder="8080" inputmode="numeric" pattern="[0-9]*" style="width:90px;background:var(--bg-primary);border:1px solid var(--border);border-radius:0 8px 8px 0;padding:.6rem .5rem;color:var(--text-primary)"></div></div>
+      </div>
+      <div id="edit-redirect-group" style="display:none">
+        <div class="form-group"><label>Host</label><div style="display:flex;gap:.5rem"><input id="edit-redirect-sub" placeholder="subdomain" style="flex:1;background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:.6rem .875rem;color:var(--text-primary)"><input id="edit-redirect-domain" placeholder="projectnova.download" style="flex:1;background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:.6rem .875rem;color:var(--text-primary)"></div></div>
+        <div class="form-group"><label>Path</label><input id="edit-redirect-path" name="path" style="width:100%;background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:.6rem .875rem;color:var(--text-primary)"></div>
+        <div class="form-group"><label>Redirect Target</label><input name="redirect_target" id="edit-redirect-target" style="width:100%;background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:.6rem .875rem;color:var(--text-primary)"></div>
+        <div class="form-group"><label>Code</label><select name="redirect_code" id="edit-redirect-code" style="width:100%;background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:.6rem .875rem;color:var(--text-primary)"><option value="302">302</option><option value="301">301</option><option value="307">307</option><option value="308">308</option></select></div>
+      </div>
+    </div>
+    <div class="modal-footer" style="border-color:var(--border)"><button type="button" class="btn" data-dismiss="modal" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary)">Cancel</button><button type="submit" class="btn btn-accent">Save</button></div>
+  </form>
+</div></div></div>
+<script>
+  document.getElementById('editForm').addEventListener('submit',function(){
+    const rid=document.getElementById('edit-rid').value;
+    this.action='/manage/routing/'+rid+'/edit';
+  });
+</script>
+{% endblock %}

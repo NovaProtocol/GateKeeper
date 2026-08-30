@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}GateKeeper{% endblock %}</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/css/bootstrap.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ request.url_for('static', path='css/manage.css') }}">
+<style>
+.layout{display:flex;min-height:100vh}
+.sidebar{width:260px;background:var(--bg-secondary);border-right:1px solid var(--border);padding:1.5rem 0;flex-shrink:0;position:sticky;top:0;height:100vh;overflow-y:auto}
+.sidebar-brand{padding:0 1.5rem 1.5rem;font-family:'JetBrains Mono',monospace;font-size:.85rem;color:var(--text-secondary);border-bottom:1px solid var(--border);margin-bottom:1rem}
+.sidebar-brand span{color:var(--accent)}
+.sidebar-cat{font-size:.65rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--text-secondary);padding:.85rem 1.5rem .35rem}
+.sidebar a{display:flex;align-items:center;gap:.6rem;padding:.5rem 1.5rem;color:var(--text-secondary);font-size:.875rem;text-decoration:none;transition:all .15s}
+.sidebar a:hover{color:var(--text-primary);background:rgba(100,255,218,.06)}
+.sidebar a.active{color:var(--accent);background:var(--accent-dim);border-right:2px solid var(--accent)}
+.main{flex:1;min-width:0}
+@media(max-width:768px){.layout{flex-direction:column}.sidebar{width:100%;height:auto;position:relative}}
+</style>
+{% block head_extra %}{% endblock %}
+</head>
+<body>
+<header class="header">
+  <div class="header-title">~/<span>gatekeeper</span></div>
+  <span class="header-badge">projectnova.download</span>
+</header>
+<div class="layout">
+  {% block sidebar %}
+  <nav class="sidebar">
+    <div class="sidebar-brand"><i class="fa-solid fa-shield-halved"></i> ~/gatekeeper<span>.download</span></div>
+    {% block sidebar_items %}
+    <div class="sidebar-cat">Access</div>
+    <a href="/manage/rules"><i class="fa-solid fa-list"></i> Rules</a>
+    <a href="/manage/codes"><i class="fa-solid fa-key"></i> Codes</a>
+    <div class="sidebar-cat">Monitoring</div>
+    <a href="/manage/logs"><i class="fa-solid fa-chart-line"></i> Traffic Logs</a>
+    <a href="/manage/top-pages"><i class="fa-solid fa-chart-simple"></i> Top Pages</a>
+    <a href="/manage/warnings"><i class="fa-solid fa-triangle-exclamation"></i> Warnings</a>
+    <div class="sidebar-cat">System</div>
+    <a href="/manage/routing"><i class="fa-solid fa-route"></i> Routing</a>
+    <a href="/manage/settings"><i class="fa-solid fa-gear"></i> Settings</a>
+    <a href="/manage/backup"><i class="fa-solid fa-floppy-disk"></i> Backup</a>
+    {% endblock %}
+  </nav>
+  {% endblock %}
+  <div class="main">
+    {% block content %}{% endblock %}
+  </div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/jquery@3.5.1/dist/jquery.slim.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.2/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

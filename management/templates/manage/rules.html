@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Rule Groups · GateKeeper{% endblock %}
+{% block content %}
+<div class="container" style="padding:2rem;max-width:1100px">
+  <div class="card">
+    <div class="card-header" style="display:flex;justify-content:space-between;align-items:center"><h2>Rule Groups</h2><div style="display:flex;gap:.5rem;align-items:center"><span class="header-badge">{{ groups|length }} groups</span><button class="btn btn-accent" data-toggle="modal" data-target="#addGroupModal"><i class="fa-solid fa-plus"></i> Add Group</button></div></div>
+    <div class="card-body" style="padding:0">
+      <table class="codes-table">
+        <thead><tr><th>Order</th><th>Name</th><th>Domain</th><th>Rules</th><th></th></tr></thead>
+        <tbody>
+        {% for g in groups %}
+        <tr>
+          <td style="font-family:'JetBrains Mono',monospace">{{ g.display_order }}</td>
+          <td><a href="/manage/rules/{{ g.id }}" style="color:var(--accent)">{{ g.name }}</a>{% if g.is_default %} <span class="tag tag-inactive">default</span>{% endif %}</td>
+          <td style="font-family:'JetBrains Mono',monospace;font-size:.8rem">{{ g.domain }}</td>
+          <td><span class="tag tag-active">{{ g.rules_count }}</span></td>
+          <td style="display:flex;gap:.4rem;justify-content:flex-end;align-items:center">
+            <a href="/manage/rules/{{ g.id }}" class="btn" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary);padding:.25rem .5rem">View</a>
+            {% if not g.is_default %}
+            <form method="post" action="/manage/groups/{{ g.id }}/delete" onsubmit="return confirm('Delete group?')" style="display:inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn btn-outline-danger" style="padding:.25rem .5rem">Delete</button></form>
+            {% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5" style="text-align:center;color:var(--text-secondary);padding:1.5rem">No groups</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="modal fade" id="addGroupModal" tabindex="-1"><div class="modal-dialog"><div class="modal-content" style="background:var(--bg-card);border:1px solid var(--border);color:var(--text-primary)">
+  <div class="modal-header" style="border-color:var(--border)"><h5 class="modal-title" style="font-weight:700">Add Rule Group</h5><button type="button" class="close" data-dismiss="modal" style="color:var(--text-primary)"><span>&times;</span></button></div>
+  <form method="post" action="/manage/groups">
+    <div class="modal-body">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <div class="form-group"><label>Name</label><input name="name" placeholder="e.g. portfolio" required style="width:100%;background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:.6rem .875rem;color:var(--text-primary)"></div>
+      <div class="form-group"><label>Domain</label><input name="domain" placeholder="portfolio.projectnova.download or *.projectnova.download or *.*/*" required style="width:100%;background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:.6rem .875rem;color:var(--text-primary)"><small style="color:var(--text-secondary)">Use <code>*.*/*</code> for catch-all default, <code>*.example.com</code> for wildcard</small></div>
+    </div>
+    <div class="modal-footer" style="border-color:var(--border)"><button type="button" class="btn" data-dismiss="modal" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary)">Cancel</button><button type="submit" class="btn btn-accent">Add Group</button></div>
+  </form>
+</div></div></div>
+{% endblock %}

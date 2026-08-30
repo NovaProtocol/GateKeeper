@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}Traffic Logs · GateKeeper{% endblock %}
+{% block head_extra %}
+<style>
+.code-hover{position:relative;display:inline-block}
+.code-hover-card{display:none;position:absolute;top:calc(100% + 10px);left:50%;transform:translateX(-50%);background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:.85rem 1rem;min-width:240px;box-shadow:0 16px 40px rgba(0,0,0,0.6),0 0 0 1px rgba(255,255,255,0.04);z-index:100}
+.code-hover:hover .code-hover-card{display:block}
+.code-hover-card::before{content:"";position:absolute;top:-6px;left:50%;transform:translateX(-50%) rotate(45deg);width:12px;height:12px;background:var(--bg-card);border-left:1px solid var(--border);border-top:1px solid var(--border)}
+.code-hover-label{font-family:'JetBrains Mono',monospace;font-size:.8rem;cursor:help;border-bottom:1px dotted var(--text-secondary)}
+</style>
+{% endblock %}
+{% block content %}
+<div class="container" style="padding:2rem;max-width:1400px">
+  <div class="card" style="max-width:100%;overflow:visible;position:relative;z-index:1">
+    <div class="card-header"><h2><i class="fa-solid fa-chart-line"></i> Traffic Logs</h2><span class="header-badge" style="font-family:'JetBrains Mono',monospace">all ingress</span></div>
+    <div class="card-body" style="padding:1.25rem;overflow:visible;position:relative">
+      <form method="get" style="display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:1rem">
+        <input name="ip" value="{{ filters.ip or '' }}" placeholder="IP" style="background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:.5rem .75rem;color:var(--text-primary);font-family:'JetBrains Mono',monospace;font-size:.85rem">
+        <input name="endpoint" value="{{ filters.endpoint or '' }}" placeholder="endpoint wildcard e.g. *.example.com/*" style="flex:1;min-width:220px;background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:.5rem .75rem;color:var(--text-primary);font-family:'JetBrains Mono',monospace;font-size:.85rem">
+        <input name="from" value="{{ filters.from or '' }}" placeholder="from YYYY-MM-DD" style="background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:.5rem .75rem;color:var(--text-primary);font-size:.85rem">
+        <input name="to" value="{{ filters.to or '' }}" placeholder="to YYYY-MM-DD" style="background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:.5rem .75rem;color:var(--text-primary);font-size:.85rem">
+        <button class="btn btn-accent" type="submit">Filter</button>
+      </form>
+      <table class="codes-table" style="table-layout:auto;width:100%">
+        <thead><tr><th>Time</th><th>IP</th><th>Host</th><th>Path</th><th>Access Code</th><th>Action</th><th>Req ID</th></tr></thead>
+        <tbody>
+        {% for l in logs %}
+        <tr>
+          <td class="date-value" style="white-space:nowrap">{{ l.ts }}</td>
+          <td style="font-family:'JetBrains Mono',monospace;font-size:.8rem;white-space:nowrap">{{ l.ip }}</td>
+          <td style="font-family:'JetBrains Mono',monospace;font-size:.8rem;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{{ l.host }}">{{ l.host }}</td>
+          <td style="font-family:'JetBrains Mono',monospace;font-size:.8rem;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{{ l.path }}">{{ l.path }}</td>
+          <td style="font-size:.8rem">
+            {% if l.code_label %}
+              <div class="code-hover">
+                <span class="code-hover-label">{{ l.code_label }}</span>
+                <div class="code-hover-card">
+                  <div style="font-size:.7rem;font-weight:600;color:var(--text-secondary);letter-spacing:.06em;text-transform:uppercase;margin-bottom:.35rem">access code</div>
+                  <div style="font-family:'JetBrains Mono',monospace;font-size:.85rem;color:var(--text-primary);background:var(--bg-primary);border:1px solid var(--border);border-radius:6px;padding:.4rem .6rem;margin-bottom:.6rem;word-break:break-all">{{ l.code_value }}</div>
+                  <div style="display:flex;align-items:center;gap:.5rem;font-size:.75rem">
+                    <span style="color:var(--text-secondary)">status</span>
+                    <span class="tag {% if l.code_active %}tag-active{% else %}tag-inactive{% endif %}" style="font-size:.7rem">{{ "Active" if l.code_active else "Inactive" }}</span>
+                  </div>
+                </div>
+              </div>
+            {% elif l.api_key_label %}
+              <div class="code-hover">
+                <span class="code-hover-label">{{ l.api_key_label }} <span style="color:var(--text-secondary);font-size:.7rem">(API)</span></span>
+                <div class="code-hover-card">
+                  <div style="font-size:.7rem;font-weight:600;color:var(--text-secondary);letter-spacing:.06em;text-transform:uppercase;margin-bottom:.35rem">api key</div>
+                  <div style="font-family:'JetBrains Mono',monospace;font-size:.85rem;color:var(--text-primary);margin-bottom:.5rem">{{ l.api_key_label }}</div>
+                  <div style="display:flex;align-items:center;gap:.5rem;font-size:.75rem">
+                    <span style="color:var(--text-secondary)">status</span>
+                    <span class="tag {% if l.api_key_active %}tag-active{% else %}tag-inactive{% endif %}" style="font-size:.7rem">{{ "Active" if l.api_key_active else "Inactive" }}</span>
+                  </div>
+                </div>
+              </div>
+            {% elif l.code_value %}
+              <div class="code-hover">
+                <span class="code-hover-label">{{ l.code_value[:8] }}…</span>
+                <div class="code-hover-card">
+                  <div style="font-size:.7rem;font-weight:600;color:var(--text-secondary);letter-spacing:.06em;text-transform:uppercase;margin-bottom:.35rem">access code</div>
+                  <div style="font-family:'JetBrains Mono',monospace;font-size:.85rem;color:var(--text-primary);background:var(--bg-primary);border:1px solid var(--border);border-radius:6px;padding:.4rem .6rem;word-break:break-all">{{ l.code_value }}</div>
+                </div>
+              </div>
+            {% else %}
+              <span style="color:var(--text-secondary)">—</span>
+            {% endif %}
+          </td>
+          <td><span class="tag tag-active">{{ l.action }}</span></td>
+          <td style="font-family:'JetBrains Mono',monospace;font-size:.7rem;color:var(--text-secondary);max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{{ l.request_id or '' }}">{{ l.request_id or '' }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="7" style="text-align:center;color:var(--text-secondary);padding:1.5rem">No logs</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

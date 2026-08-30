@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}Rules · GateKeeper{% endblock %}
+{% block content %}
+<div class="container" style="padding:2rem;max-width:1100px">
+  <div class="card">
+    <div class="card-header" style="display:flex;justify-content:space-between;align-items:center"><h2>{% if group %}{{ group.name }} · {{ group.domain }}{% else %}Rules #{{ gid }}{% endif %}</h2><div style="display:flex;gap:.5rem"><button class="btn btn-accent" data-toggle="modal" data-target="#addRuleModal"><i class="fa-solid fa-plus"></i> Add Rule</button><a href="/manage/rules" class="btn" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary)">Back</a></div></div>
+    <div class="card-body" style="padding:0">
+      <table class="codes-table">
+        <thead><tr><th>Order</th><th>Path</th><th>Action</th><th>Rate</th><th></th></tr></thead>
+        <tbody>
+        {% for r in rules %}
+        <tr>
+          <td style="font-family:'JetBrains Mono',monospace">{{ r.display_order }}</td>
+          <td style="font-family:'JetBrains Mono',monospace">{{ r.path }}</td>
+          <td><span class="tag {% if r.action=='deny' %}tag-inactive{% else %}tag-active{% endif %}" style="{% if r.action=='deny' %}background:var(--danger-dim);color:var(--danger){% endif %}">{{ r.action }}</span></td>
+          <td style="font-size:.8rem;color:var(--text-secondary)">{{ r.rate_limit or '-' }}</td>
+          <td style="display:flex;gap:.4rem;justify-content:flex-end;align-items:center">
+            <button class="btn" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary);padding:.25rem .5rem;font-size:.75rem" onclick="openEditRule({{ r.id }}, '{{ r.path }}', '{{ r.action }}')"><i class="fa-solid fa-pen"></i></button>
+            <form method="post" action="/manage/rules/{{ r.id }}/delete" onsubmit="return confirm('Delete rule?')" style="display:inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn btn-outline-danger" style="padding:.25rem .5rem;font-size:.75rem">Delete</button></form>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5" style="text-align:center;color:var(--text-secondary);padding:1.5rem">No rules in this group</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="modal fade" id="addRuleModal" tabindex="-1"><div class="modal-dialog"><div class="modal-content" style="background:var(--bg-card);border:1px solid var(--border);color:var(--text-primary)">
+  <div class="modal-header" style="border-color:var(--border)"><h5 class="modal-title" style="font-weight:700">Add Rule to {{ group.name if group else gid }}</h5><button type="button" class="close" data-dismiss="modal" style="color:var(--text-primary)"><span>&times;</span></button></div>
+  <form method="post" action="/manage/groups/{{ gid }}/rules">
+    <div class="modal-body">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <div class="form-group"><label>Path</label><input name="path" placeholder="/ or /api/* or /projects/*" required style="width:100%;background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:.6rem .875rem;color:var(--text-primary)"></div>
+      <div class="form-group"><label>Action</label><select name="action" id="rule-action" style="width:100%;background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:.6rem .875rem;color:var(--text-primary)"><option value="access_code">access_code</option><option value="none">none (public)</option><option value="deny">deny (403)</option><option value="custom_password">custom_password</option></select></div>
+      <div class="form-group" id="custom-pwd-group" style="display:none"><label>Custom Password</label><input name="custom_password" placeholder="password" style="width:100%;background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:.6rem .875rem;color:var(--text-primary)"></div>
+    </div>
+    <div class="modal-footer" style="border-color:var(--border)"><button type="button" class="btn" data-dismiss="modal" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary)">Cancel</button><button type="submit" class="btn btn-accent">Add Rule</button></div>
+  </form>
+</div></div></div>
+
+<div class="modal fade" id="editRuleModal" tabindex="-1"><div class="modal-dialog"><div class="modal-content" style="background:var(--bg-card);border:1px solid var(--border);color:var(--text-primary)">
+  <div class="modal-header" style="border-color:var(--border)"><h5 class="modal-title" style="font-weight:700">Edit Rule</h5><button type="button" class="close" data-dismiss="modal" style="color:var(--text-primary)"><span>&times;</span></button></div>
+  <form method="post" id="editRuleForm">
+    <div class="modal-body">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <div class="form-group"><label>Path</label><input name="path" id="edit-rule-path" required style="width:100%;background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:.6rem .875rem;color:var(--text-primary)"></div>
+      <div class="form-group"><label>Action</label><select name="action" id="edit-rule-action" style="width:100%;background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:.6rem .875rem;color:var(--text-primary)"><option value="access_code">access_code</option><option value="none">none (public)</option><option value="deny">deny (403)</option><option value="custom_password">custom_password</option></select></div>
+      <div class="form-group" id="edit-custom-pwd-group" style="display:none"><label>Custom Password <span style="color:var(--text-secondary);font-weight:400">(leave blank to keep)</span></label><input name="custom_password" id="edit-rule-pwd" placeholder="new password" style="width:100%;background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:.6rem .875rem;color:var(--text-primary)"></div>
+    </div>
+    <div class="modal-footer" style="border-color:var(--border)"><button type="button" class="btn" data-dismiss="modal" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary)">Cancel</button><button type="submit" class="btn btn-accent">Save</button></div>
+  </form>
+</div></div></div>
+<script>
+document.getElementById('rule-action')?.addEventListener('change',function(){document.getElementById('custom-pwd-group').style.display=this.value==='custom_password'?'':'none';});
+document.getElementById('edit-rule-action')?.addEventListener('change',function(){document.getElementById('edit-custom-pwd-group').style.display=this.value==='custom_password'?'':'none';});
+function openEditRule(id, path, action){
+  document.getElementById('edit-rule-path').value=path;
+  document.getElementById('edit-rule-action').value=action;
+  document.getElementById('edit-custom-pwd-group').style.display=action==='custom_password'?'':'none';
+  document.getElementById('edit-rule-pwd').value='';
+  document.getElementById('editRuleForm').action='/manage/rules/'+id+'/edit';
+  $('#editRuleModal').modal('show');
+}
+</script>
+{% endblock %}
