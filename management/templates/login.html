@@ -7,7 +7,7 @@
     <div style="padding:2rem">
       <div style="font-family:'JetBrains Mono',monospace;font-size:.7rem;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);margin-bottom:.6rem"><i class="fa-solid fa-terminal"></i> gatekeeper auth</div>
       <h1 style="font-size:1.35rem;font-weight:700;margin-bottom:.35rem">{% if is_custom %}Password Required{% else %}Access Required{% endif %}</h1>
-      <p style="color:var(--text-secondary);font-size:.9rem;margin-bottom:1.25rem">{% if is_custom %}Enter the password to continue to <span style="color:var(--accent);font-family:'JetBrains Mono',monospace">{{ custom_host or 'projectnova.download' }}</span>{% else %}Enter your access code to continue to <span style="color:var(--accent);font-family:'JetBrains Mono',monospace">projectnova.download</span>{% endif %}</p>
+      <p style="color:var(--text-secondary);font-size:.9rem;margin-bottom:1.25rem">{% if is_custom %}Enter the password to continue to <span style="color:var(--accent);font-family:'JetBrains Mono',monospace">{{ custom_host or 'projectnova.download' }}</span>{% else %}Enter your access code to continue to <span style="color:var(--accent);font-family:'JetBrains Mono',monospace">{{ login_host or 'projectnova.download' }}</span>{% endif %}</p>
       {% if error %}<div style="background:var(--danger-dim);border:1px solid var(--danger);color:var(--danger);padding:.6rem .85rem;border-radius:8px;margin-bottom:1rem;font-size:.875rem">{{ error }}</div>{% endif %}
       <form method="post" action="/?redirect={{ redirect }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
