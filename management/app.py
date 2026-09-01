@@ -21,6 +21,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from shared.config import get_config
 from shared.db import get_sessionmaker
 from shared.models import ApiKey, Code, Route, RuleGroup
+from shared.error_pages import render_error_html, wants_html
 from shared.security import apex_domain as shared_apex, mask_code
 
 try:
@@ -91,6 +92,17 @@ def _apex_from_request(request: Request) -> str:
     host = request.headers.get("X-Forwarded-Host") or request.headers.get("Host", "")
     host = host.split(",")[0].strip().split(":")[0].lower()
     return shared_apex(host) if host else "projectnova.download"
+
+
+def _derive_login_host(redirect_target: str, apex: str) -> str:
+    """Hostname only, no path — validated against apex to avoid display injection."""
+    try:
+        th = (urlsplit(redirect_target).hostname or "").lower()
+        if th and (th == apex or th.endswith("." + apex)):
+            return th
+    except Exception:
+        pass
+    return apex
 
 
 def _safe_redirect_target(target: str, apex: str) -> bool:
@@ -274,6 +286,103 @@ def create_app() -> FastAPI:
         async def _rate_handler(request: Request, exc: RateLimitExceeded):  # type: ignore[no-untyped-def]
             return JSONResponse(status_code=429, content={"detail": "rate limited"})
 
+    def _mgmt_error_response(  # type: ignore[no-untyped-def]
+        request: Request,
+        status: int,
+        title: str,
+        message: str,
+        detail: str | None,
+        host: str | None,
+        path: str | None,
+        request_id: str | None,
+        apex: str,
+    ) -> Response:
+        from fastapi.responses import HTMLResponse as _HR, JSONResponse as _JR
+
+        if wants_html(request):
+            html = render_error_html(
+                status=status,
+                title=title,
+                message=message,
+                detail=detail,
+                host=host,
+                path=path,
+                request_id=request_id,
+                apex=apex,
+            )
+            return _HR(content=html, status_code=status, headers={"Content-Type": "text/html; charset=utf-8"})
+        accept = (request.headers.get("accept") or "").lower()
+        if "application/json" in accept:
+            return _JR(status_code=status, content={"detail": detail or message})
+        return _JR(status_code=status, content={"detail": detail or message})
+
+    @app.exception_handler(HTTPException)  # type: ignore[arg-type]
+    async def _mgmt_http_exc(request: Request, exc: HTTPException):  # type: ignore[no-untyped-def]
+        status = getattr(exc, "status_code", 500)
+        detail = getattr(exc, "detail", str(exc))
+        if status in (403, 404):
+            title = "Access denied" if status == 403 else "End of the road"
+            message = (
+                "This page is denied by gateway rules. If you believe this is an error, contact the admin or return to the gateway."
+                if status == 403
+                else "You've reached the end of the road. This page doesn't exist on gatekeeper. Check the URL or return to the gateway."
+            )
+            host = request.headers.get("X-Forwarded-Host") or request.headers.get("Host", "")
+            host = host.split(",")[0].strip().split(":")[0].lower()
+            path = request.url.path
+            try:
+                apex = shared_apex(host) if host else _apex_from_request(request)
+            except Exception:
+                apex = "projectnova.download"
+            req_id = getattr(getattr(request, "state", object()), "request_id", None) or request.headers.get("X-Request-ID") or ""
+            return _mgmt_error_response(request, status, title, message, str(detail), host, path, req_id, apex)
+        return JSONResponse(status_code=status, content={"detail": str(detail)})
+
+    @app.exception_handler(404)  # type: ignore[arg-type]
+    async def _mgmt_not_found(request: Request, exc: Exception):  # type: ignore[no-untyped-def]
+        host = request.headers.get("X-Forwarded-Host") or request.headers.get("Host", "")
+        host = host.split(",")[0].strip().split(":")[0].lower()
+        path = request.url.path
+        try:
+            apex = shared_apex(host) if host else _apex_from_request(request)
+        except Exception:
+            apex = "projectnova.download"
+        req_id = getattr(getattr(request, "state", object()), "request_id", None) or request.headers.get("X-Request-ID") or ""
+        return _mgmt_error_response(
+            request,
+            404,
+            "End of the road",
+            "You've reached the end of the road. This page doesn't exist on gatekeeper. Check the URL or return to the gateway.",
+            "not found",
+            host,
+            path,
+            req_id,
+            apex,
+        )
+
+    @app.exception_handler(403)  # type: ignore[arg-type]
+    async def _mgmt_forbidden(request: Request, exc: Exception):  # type: ignore[no-untyped-def]
+        host = request.headers.get("X-Forwarded-Host") or request.headers.get("Host", "")
+        host = host.split(",")[0].strip().split(":")[0].lower()
+        path = request.url.path
+        try:
+            apex = shared_apex(host) if host else _apex_from_request(request)
+        except Exception:
+            apex = "projectnova.download"
+        req_id = getattr(getattr(request, "state", object()), "request_id", None) or request.headers.get("X-Request-ID") or ""
+        detail = getattr(exc, "detail", "forbidden") if hasattr(exc, "detail") else "forbidden"
+        return _mgmt_error_response(
+            request,
+            403,
+            "Access denied",
+            "This page is denied by gateway rules. If you believe this is an error, contact the admin or return to the gateway.",
+            str(detail),
+            host,
+            path,
+            req_id,
+            apex,
+        )
+
     templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
     if STATIC_DIR.exists():
         app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
@@ -338,7 +447,10 @@ def create_app() -> FastAPI:
                         break
         except Exception:
             pass
-        resp = templates.TemplateResponse(request, "login.html", {"request": request, "error": None, "redirect": redirect_target, "csrf_token": csrf, "is_custom": is_custom, "custom_host": custom_host})
+        # derive login_host for non-custom case (hostname only, no path)
+        _apex_for_host = _apex_from_request(request)
+        login_host = _derive_login_host(redirect_target, _apex_for_host)
+        resp = templates.TemplateResponse(request, "login.html", {"request": request, "error": None, "redirect": redirect_target, "csrf_token": csrf, "is_custom": is_custom, "custom_host": custom_host, "login_host": login_host})
         if not request.cookies.get("csrf_token"):
             resp.set_cookie(key="csrf_token", value=csrf, path="/", samesite="lax", secure=True)
         return resp
@@ -349,14 +461,16 @@ def create_app() -> FastAPI:
         redirect_target = str(form.get("redirect") or request.query_params.get("redirect") or "/")
         csrf_token = str(form.get("csrf_token") or "")
         apex = _apex_from_request(request)
+        # host for error renders (hostname only, validated against apex)
+        login_host_err = _derive_login_host(redirect_target, apex)
         if not same_origin(request, apex):
             csrf_ok = _verify_csrf(request, csrf_token)
             if not csrf_ok:
-                return templates.TemplateResponse(request, "login.html", {"request": request, "error": "Cross-site request rejected", "redirect": redirect_target, "csrf_token": _get_csrf_token(request)}, status_code=403)
+                return templates.TemplateResponse(request, "login.html", {"request": request, "error": "Cross-site request rejected", "redirect": redirect_target, "csrf_token": _get_csrf_token(request), "is_custom": False, "custom_host": "", "login_host": login_host_err}, status_code=403)
         if not _verify_csrf(request, csrf_token):
-            return templates.TemplateResponse(request, "login.html", {"request": request, "error": "Invalid CSRF token", "redirect": redirect_target, "csrf_token": _get_csrf_token(request)}, status_code=403)
+            return templates.TemplateResponse(request, "login.html", {"request": request, "error": "Invalid CSRF token", "redirect": redirect_target, "csrf_token": _get_csrf_token(request), "is_custom": False, "custom_host": "", "login_host": login_host_err}, status_code=403)
         if not code_val:
-            return templates.TemplateResponse(request, "login.html", {"request": request, "error": "Access code required", "redirect": redirect_target, "csrf_token": _get_csrf_token(request)}, status_code=400)
+            return templates.TemplateResponse(request, "login.html", {"request": request, "error": "Access code required", "redirect": redirect_target, "csrf_token": _get_csrf_token(request), "is_custom": False, "custom_host": "", "login_host": login_host_err}, status_code=400)
         row = await _verify_code_value(code_val)
         if row:
             if not _safe_redirect_target(redirect_target, apex):
@@ -394,7 +508,7 @@ def create_app() -> FastAPI:
                                 return resp
         except Exception:
             pass
-        return templates.TemplateResponse(request, "login.html", {"request": request, "error": "Invalid code", "redirect": redirect_target, "csrf_token": _get_csrf_token(request)}, status_code=401)
+        return templates.TemplateResponse(request, "login.html", {"request": request, "error": "Invalid code", "redirect": redirect_target, "csrf_token": _get_csrf_token(request), "is_custom": False, "custom_host": "", "login_host": _derive_login_host(redirect_target, apex)}, status_code=401)
 
     @app.post("/", response_class=HTMLResponse)
     @limiter.limit("5/minute")

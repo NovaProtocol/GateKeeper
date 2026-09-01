@@ -10,9 +10,11 @@ from typing import Any
 from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
 import httpx
-from fastapi import BackgroundTasks, FastAPI, Request, Response
-from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from itsdangerous import BadSignature, URLSafeSerializer
+
+from shared.error_pages import render_error_html, wants_html
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -109,6 +111,47 @@ class ProxyFixMiddleware(BaseHTTPMiddleware):
             request.headers.__dict__.get("_list", [])
             request.scope["server"] = (h.split(":")[0], 443 if request.scope.get("scheme") == "https" else 80)
         return await call_next(request)
+
+
+class CSPMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):  # type: ignore[no-untyped-def]
+        resp = await call_next(request)
+        resp.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://stackpath.bootstrapcdn.com https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://stackpath.bootstrapcdn.com https://fonts.googleapis.com https://cdnjs.cloudflare.com; font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com; img-src 'self' data:; connect-src 'self'"
+        resp.headers["X-Frame-Options"] = "DENY"
+        resp.headers["X-Content-Type-Options"] = "nosniff"
+        resp.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        return resp
+
+
+def _error_response(  # type: ignore[no-untyped-def]
+    request: Request,
+    status: int,
+    title: str,
+    message: str,
+    detail: str | None,
+    host: str | None,
+    path: str | None,
+    request_id: str | None,
+    apex: str,
+) -> Response:
+    from fastapi.responses import HTMLResponse as _HR, JSONResponse as _JR
+
+    if wants_html(request):
+        html = render_error_html(
+            status=status,
+            title=title,
+            message=message,
+            detail=detail,
+            host=host,
+            path=path,
+            request_id=request_id,
+            apex=apex,
+        )
+        return _HR(content=html, status_code=status, headers={"Content-Type": "text/html; charset=utf-8"})
+    accept = (request.headers.get("accept") or "").lower()
+    if "application/json" in accept:
+        return _JR(status_code=status, content={"detail": detail or message})
+    return Response(status_code=status, content=detail or message)
 
 
 def _apex_from_host(host: str) -> str:
@@ -568,6 +611,7 @@ def create_app() -> FastAPI:
     app = FastAPI(lifespan=lifespan)
     app.add_middleware(RequestIDMiddleware)  # type: ignore[arg-type]
     app.add_middleware(ProxyFixMiddleware)  # type: ignore[arg-type]
+    app.add_middleware(CSPMiddleware)  # type: ignore[arg-type]
 
     if _has_slowapi and SlowAPIMiddleware is not None:
         app.state.limiter = limiter
@@ -576,6 +620,70 @@ def create_app() -> FastAPI:
         @app.exception_handler(RateLimitExceeded)  # type: ignore[arg-type]
         async def _rate_handler(request: Request, exc: RateLimitExceeded):  # type: ignore[no-untyped-def]
             return JSONResponse(status_code=429, content={"detail": "rate limited"})
+
+    @app.exception_handler(HTTPException)  # type: ignore[arg-type]
+    async def _http_exc_handler(request: Request, exc: HTTPException):  # type: ignore[no-untyped-def]
+        status = getattr(exc, "status_code", 500)
+        detail = getattr(exc, "detail", str(exc))
+        if status in (403, 404):
+            title = "Access denied" if status == 403 else "End of the road"
+            message = (
+                "This page is denied by gateway rules. If you believe this is an error, contact the admin or return to the gateway."
+                if status == 403
+                else "You've reached the end of the road. This page doesn't exist on gatekeeper. Check the URL or return to the gateway."
+            )
+            host = _get_forwarded_host(request) or request.headers.get("Host", "").split(":")[0].lower()
+            path = request.url.path
+            try:
+                apex = _apex_from_host(host) if host else _apex_from_host(request.headers.get("Host", ""))
+            except Exception:
+                apex = "projectnova.download"
+            req_id = getattr(getattr(request, "state", object()), "request_id", None) or request.headers.get("X-Request-ID") or ""
+            return _error_response(request, status, title, message, str(detail), host, path, req_id, apex)
+        return JSONResponse(status_code=status, content={"detail": str(detail)})
+
+    @app.exception_handler(404)  # type: ignore[arg-type]
+    async def _not_found_handler(request: Request, exc: Exception):  # type: ignore[no-untyped-def]
+        host = _get_forwarded_host(request) or request.headers.get("Host", "").split(":")[0].lower()
+        path = request.url.path
+        try:
+            apex = _apex_from_host(host) if host else _apex_from_host(request.headers.get("Host", ""))
+        except Exception:
+            apex = "projectnova.download"
+        req_id = getattr(getattr(request, "state", object()), "request_id", None) or request.headers.get("X-Request-ID") or ""
+        return _error_response(
+            request,
+            404,
+            "End of the road",
+            "You've reached the end of the road. This page doesn't exist on gatekeeper. Check the URL or return to the gateway.",
+            "not found",
+            host,
+            path,
+            req_id,
+            apex,
+        )
+
+    @app.exception_handler(403)  # type: ignore[arg-type]
+    async def _forbidden_handler(request: Request, exc: Exception):  # type: ignore[no-untyped-def]
+        host = _get_forwarded_host(request) or request.headers.get("Host", "").split(":")[0].lower()
+        path = request.url.path
+        try:
+            apex = _apex_from_host(host) if host else _apex_from_host(request.headers.get("Host", ""))
+        except Exception:
+            apex = "projectnova.download"
+        req_id = getattr(getattr(request, "state", object()), "request_id", None) or request.headers.get("X-Request-ID") or ""
+        detail = getattr(exc, "detail", "forbidden") if hasattr(exc, "detail") else "forbidden"
+        return _error_response(
+            request,
+            403,
+            "Access denied",
+            "This page is denied by gateway rules. If you believe this is an error, contact the admin or return to the gateway.",
+            str(detail),
+            host,
+            path,
+            req_id,
+            apex,
+        )
 
     @app.get("/health")
     async def health() -> dict[str, str]:
@@ -619,7 +727,17 @@ def create_app() -> FastAPI:
 
         if rule and rule.action == "deny":
             await _log("deny")
-            return Response(status_code=403, content="denied by rule")
+            return _error_response(
+                request,
+                403,
+                "Access denied",
+                "This page is denied by gateway rules. If you believe this is an error, contact the admin or return to the gateway.",
+                "denied by rule",
+                host,
+                path,
+                req_id,
+                apex,
+            )
         if rule and rule.action == "none":
             await _log("none_gate")
             return Response(status_code=200)
@@ -676,7 +794,17 @@ def create_app() -> FastAPI:
                     await _log("api_key_success", api_key_id=k.id)
                     return Response(status_code=200)
                 await _log("api_key_blacklisted", api_key_id=k.id)
-                return Response(status_code=403, content="api key not allowed for this endpoint")
+                return _error_response(
+                    request,
+                    403,
+                    "Access denied",
+                    "This page is denied by gateway rules. If you believe this is an error, contact the admin or return to the gateway.",
+                    "api key not allowed for this endpoint",
+                    host,
+                    path,
+                    req_id,
+                    apex,
+                )
 
         await _log("no_cookie_redirect")
         target = quote(f"https://{host}{uri}", safe="")
@@ -733,7 +861,17 @@ def create_app() -> FastAPI:
 
         if rule and rule.action == "deny":
             await _log("deny")
-            return Response(status_code=403, content="denied")
+            return _error_response(
+                request,
+                403,
+                "Access denied",
+                "This page is denied by gateway rules. If you believe this is an error, contact the admin or return to the gateway.",
+                "denied",
+                host,
+                raw_path,
+                req_id,
+                apex,
+            )
         if rule and rule.action == "none":
             pass
         elif rule and rule.action == "custom_password":
@@ -799,7 +937,17 @@ def create_app() -> FastAPI:
                         api_key_id = k.id
                     elif k:
                         await _log("api_key_blacklisted", api_key_id=k.id)
-                        return Response(status_code=403, content="api key not allowed")
+                        return _error_response(
+                            request,
+                            403,
+                            "Access denied",
+                            "This page is denied by gateway rules. If you believe this is an error, contact the admin or return to the gateway.",
+                            "api key not allowed",
+                            host,
+                            raw_path,
+                            req_id,
+                            apex,
+                        )
             if not authed:
                 if rule is None:
                     pass
@@ -817,7 +965,17 @@ def create_app() -> FastAPI:
             route = Route(host=host, path="/", route_type="proxy", upstream="gatekeeper_management", port=8003)
         if not route:
             await _log("route_not_found")
-            return JSONResponse(status_code=404, content={"detail": "no route for host"})
+            return _error_response(
+                request,
+                404,
+                "End of the road",
+                "You've reached the end of the road. This host isn't routed on the gateway. Check the subdomain or go back.",
+                "no route for host",
+                host,
+                raw_path,
+                req_id,
+                apex,
+            )
         if (route.route_type or "proxy") == "redirect":
             target = (route.redirect_target or "/").strip()
             code = route.redirect_code or 302
@@ -898,7 +1056,24 @@ def create_app() -> FastAPI:
     @limiter.limit("100/minute")
     async def wildcard(request: Request, full_path: str, background_tasks: BackgroundTasks) -> Response:  # type: ignore[no-untyped-def]
         if request.url.path == "/health" or request.url.path == "/api/authz/forward-auth":
-            return JSONResponse(status_code=404, content={"detail": "not found"})
+            host = _get_forwarded_host(request) or request.headers.get("Host", "").split(":")[0].lower()
+            path = request.url.path
+            try:
+                apex = _apex_from_host(host) if host else _apex_from_host(request.headers.get("Host", ""))
+            except Exception:
+                apex = "projectnova.download"
+            req_id = getattr(getattr(request, "state", object()), "request_id", None) or request.headers.get("X-Request-ID") or ""
+            return _error_response(
+                request,
+                404,
+                "End of the road",
+                "You've reached the end of the road. This page doesn't exist on gatekeeper. Check the URL or return to the gateway.",
+                "not found",
+                host,
+                path,
+                req_id,
+                apex,
+            )
         return await _proxy_to_upstream(request, background_tasks)
 
     return app
