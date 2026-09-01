@@ -1,174 +1,95 @@
 # Architecture
 
-## Stack at a Glance
+## Stack
 
 | Layer | Choice |
 |-------|--------|
-| Runtime | Python 3.14-slim, Gunicorn `gthread` (prod) — Flask dev server only locally |
-| Framework | Flask single-file monolith `app.py` |
-| Cookie signing | `itsdangerous.URLSafeSerializer(secret_key, salt="cookie")` |
-| DB | `sqlite3` stdlib, WAL mode, file `gatekeeper.db` (`DB_DIR` env, default app dir, `/data` in container) |
-| WSGI | Gunicorn `1 worker / 4 threads` |
-| Docs | MkDocs Material (`mkdocs==1.6.1`) on `:8005`, FastAPI + granian, `USER appuser` |
-| Proxy | No Caddy in this repo — GateKeeper *is* the gate. Other projects' Caddy `forward_auth` calls it on `gatekeeper_default` |
+| Runtime | Python 3.14-slim, Granian (ASGI) |
+| Framework | FastAPI modular — `shared/` + 3 services, not a Flask monolith |
+| Cookie | `itsdangerous.URLSafeSerializer(secret, salt="cookie")` |
+| DB | SQLAlchemy 2 async — `aiosqlite` (SQLite WAL) or `aiomysql` (MySQL 8.4). File `gatekeeper.db` at `DB_DIR=/data` |
+| Docs | MkDocs Material 1.6.1 on `:8005`, FastAPI + granian, USER appuser |
+| Proxy | Caddy 2 on `:7000` — wildcard `*.projectnova.download` → `forward_auth gatekeeper_auth:8001` → DB Route lookup |
 
----
+## 7-Service Topology
 
-## Monolith Topology — Intentionally Single-File
-
-This is a **monolith by design** (`reference/flask/structure.md`) — one purpose (auth gate), 2 pages + one API, single SQLite table. Splitting into blueprints would add files without reducing complexity.
-
-```text
+```
 project/
-├── app.py                      # app = Flask(__name__), all routes + helpers
-├── templates/
-│   ├── base.html               # minimal base
-│   ├── login.html              # access code form
-│   └── manage.html             # code table + create/invalidate
-├── static/css/manage.css       # dark portfolio theme for /manage
-├── requirements.txt            # flask>=3.0, itsdangerous>=2.0, gunicorn>=23.0
-├── requirements-dev.txt        # pytest>=8,<10
-├── Dockerfile                  # python:3.14-slim, compileall, USER appuser 10001, gunicorn :7000
-├── compose.yaml                # gatekeeper + documentation services
-├── entrypoint.sh               # chown /data at startup (volume retains root ownership)
-├── documentation/              # MkDocs site (this site)
-│   ├── mkdocs.yml
-│   ├── requirements.txt        # mkdocs 1.6.1 + material 9.7.6 etc
-│   ├── Dockerfile              # python:3.14-slim, mkdocs build, granian :8005
-│   ├── app.py                  # FastAPI serving site/ + /health
-│   └── docs/                   # index, getting-started, architecture, auth-flow, ...
-├── tests/
-│   ├── conftest.py             # SECRET_KEY/MANAGE_PASSWORD/DB_DIR tmp_path fixture
-│   └── test_smoke.py           # forward_auth + manage auth
-└── .env.example                # docs-only, no .env loaded ever
+├── caddy/Caddyfile                 # :7000 wildcard, handle /health, /phpmyadmin/*, /documentation/*, catch-all
+├── caddy/Dockerfile                # caddy:2-alpine
+├── shared/
+│   ├── config.py                   # pydantic-settings: SECRET_KEY, MANAGE_PASSWORD, DATABASE_URL, INTERNAL_API_KEY, DEPLOYMENT_TYPE, BACKUP_CODE
+│   ├── db.py                       # create_async_engine, async_sessionmaker, get_db()
+│   ├── models.py                   # 7 tables: routes, rule_groups, rules, codes, api_keys, audit_logs
+│   ├── security.py                 # pbkdf2_hmac sha512 100k, host_matches, path_matches, mask_code, apex_domain
+│   └── error_pages.py              # wants_html, render_error_html (dark theme)
+├── auth-gateway/app.py             # :8001 — RequestID, ProxyFix, CSP, slowapi, forward_auth + wildcard proxy
+├── api/app.py                      # :8002 + :50051 gRPC — lifespan create_all + migrations + seed
+├── management/app.py               # :8003 — Jinja2 + StaticFiles, /manage/* UI
+├── documentation/                  # MkDocs site (this site)
+└── compose.yaml                    # 7 services, gatekeeper_data + mysql_data, 4 networks
 ```
 
-### DB Initialization — No Import Side Effects
+### Compose Services
 
-```python
-# app.py — canonical shape
-_db_initialized = False
+| Service | Build | Expose | Networks |
+|---------|-------|--------|----------|
+| caddy | `caddy/Dockerfile` | `127.0.0.1:7000:7000` | default, gatekeeper, cloudflared-tunnel, gatekeeper_dynamic, net-data |
+| auth-gateway | `auth-gateway/Dockerfile` | 8001 | default, net-api, gatekeeper_dynamic |
+| api | `api/Dockerfile` | 8002, 50051 | net-api, net-data |
+| management | `management/Dockerfile` | 8003 | default, net-api |
+| mysql-db | `mysql:8.4` | 3306 | net-data |
+| phpmyadmin | `phpmyadmin:5.2` | 80 | net-data |
+| documentation | `documentation/Dockerfile` | 8005 | default |
 
-@app.before_request
-def ensure_db():
-    global _db_initialized
-    if _db_initialized:
-        return
-    db = get_db()
-    db.execute("""CREATE TABLE IF NOT EXISTS codes (...)""")
-    try:
-        db.execute("ALTER TABLE codes ADD COLUMN last_accessed TIMESTAMP")
-    except sqlite3.OperationalError:
-        pass
-    backup = os.environ.get("BACKUP_CODE")
-    if backup:
-        # seed if missing
-        ...
-    db.commit()
-    _db_initialized = True
-```text
+All healthchecks: `python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:<port>/health')"`.
 
-- Factory-free monolith still avoids import-time DB hits — work happens on the first request.
-- `get_db()` uses `g` + `PRAGMA journal_mode=WAL`; `close_db` on `teardown_appcontext`.
-- `init_db()` exists for CLI/tools and reuses `ensure_db()` under `test_request_context`.
+## Data Model (7 tables)
 
----
+| Table | Key columns |
+|-------|-------------|
+| `routes` | `host, path, route_type(proxy|redirect), upstream, port, redirect_target, redirect_code` |
+| `rule_groups` | `name unique, domain, display_order, is_default` |
+| `rules` | `group_id, path, action(access_code|none|custom_password|deny), custom_password_hash/salt, allow_ip, allow_time, rate_limit, display_order` |
+| `codes` | `code unique, label, display_name, active, last_accessed` |
+| `api_keys` | `key_hash unique, key_prefix, salt, label, mode(none|whitelist|blacklist), whitelist/blacklist JSON, expires_at, last_used` |
+| `audit_logs` | `ts, ip, host, path, action, code_id, api_key_id, rule_group_id, rule_id, latency_ms, request_id` |
 
-## Request & Auth Flow
+`allow_ip / allow_time / rate_limit` on `rules` are **reserved** (stored, not enforced on hot path).
 
-```mermaid
-graph TB
-    REQ["Browser Request<br/>https://staff.example.com/page?access_code=abc"] --> CADDY["Other Project<br/>Caddy :PORT<br/>forward_auth gatekeeper:7000"]
-    CADDY -->|"GET /api/authz/forward-auth<br/>X-Forwarded-Uri, X-Forwarded-Host, X-Forwarded-Proto"| GK["GateKeeper :7000<br/>app.py"]
+### DB Init
 
-    GK -->|"valid gatekeeper_token cookie"| OK["200 → Caddy reverse_proxy → App<br/>(no auth in app)"]
-    GK -->|"valid ?access_code= param"| SET["302 + Set-Cookie apex<br/>redirect stripped URL<br/>browser follows"]
-    SET --> OK
-    GK -->|"neither valid"| REDIR["302 → https://gatekeeper.<apex>/?redirect=<original><br/>login form"]
-    REDIR --> LOGIN["GET / (login.html)<br/>POST / with code"]
-    LOGIN --> COOKIE["Set gatekeeper_token + redirect"]
-    COOKIE --> OK
+`api/app.py:lifespan` runs `create_all`, then `ALTER TABLE` migrations (try/except), seeds default `*.*/*` group (`/* → access_code`), public groups `gatekeeper.projectnova.download` + `projectnova.download` (`/* → none`), and `BACKUP_CODE` if set. Reseats `display_order` so `*.*/*` stays bottom.
+
+## Auth Flow (summary)
+
+```
+Browser → Caddy :7000 → Auth Gateway :8001 /api/authz/forward-auth
+  ├─ Rule lookup: RuleGroups ASC display_order → host_matches → Rules ASC → path_matches → first wins
+  ├─ 200 / 302 / 403 per rule action
+  └─ on pass: longest-path Route match → proxy to upstream or redirect
 ```
 
-### Caddy Calls GateKeeper Over Docker DNS
+Cache: in-memory `RuleGroup+Route` polled every `CACHE_TTL=5s` under `asyncio.Lock`. Audit via `BackgroundTasks → POST http://api:8002/api/logs` (X-Internal-Api-Key) with direct DB fallback.
 
-```text
-Cloudflare Tunnel → Caddy (joins gatekeeper_default) → GateKeeper :7000
-                         ├─ forward_auth check (200/302)
-                         └─ then reverse_proxy → app container (never sees unauthenticated traffic)
+## Networks
+
+```
+default, net-api (internal), net-data (internal),
+gatekeeper_dynamic (external gatekeeper_dynamic),
+gatekeeper (external gatekeeper_default),
+cloudflared-tunnel (external cloudflared-tunnel_default)
 ```
 
-- GateKeeper publishes `127.0.0.1:7000:7000` for local/tunnel; other projects reach it as `gatekeeper:7000` on `gatekeeper_default`.
-- Caddy sends `X-Forwarded-Uri` (original path+query), `X-Forwarded-Host`, `X-Forwarded-Proto`; GateKeeper reconstructs redirect targets from all three.
-
----
-
-## Networks & Caddy Decision
-
-```text
-networks:
-  default: {}
-  gatekeeper:
-    external: true
-    name: gatekeeper_default
-  cloudflared-tunnel:
-    external: true
-    name: cloudflared-tunnel_default
-```
-
-**Why no Caddy in this repo:** GateKeeper is the gate itself. Gating GateKeeper with `forward_auth gatekeeper:7000` would be a self-loop. House `reference/gatekeeper/*` still applies — other projects' Caddy instances join `gatekeeper_default` and call `gatekeeper:7000`. Docs are therefore **not gated** and intentionally not exposed via Caddy here.
-
-**Documentation exposure:** The `documentation` service is **internal-only** — `expose: ["8005"]`, healthcheck via `python -c urllib`, `networks: [default]`, no `ports:`. Reach it as `http://gatekeeper_documentation:8005` from sibling containers. For a future Caddy, the correct public route would be:
-
-```caddy
-handle_path /documentation/* {
-    reverse_proxy gatekeeper_documentation:8005
-}
-# no forward_auth — docs are public, GateKeeper is the gate
-```text
-
-No `/documentation/*` gate, no auth on docs.
-
----
-
-## Data Model
-
-Single table `codes` in `gatekeeper.db`:
-
-```sql
-CREATE TABLE codes (
-    id INTEGER PRIMARY KEY,
-    code TEXT UNIQUE NOT NULL,
-    label TEXT,
-    active INTEGER DEFAULT 1,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    last_accessed TIMESTAMP
-);
-```
-
-- `code` is 16-hex (`secrets.token_hex(8)`), plaintext in SQLite.
-- `BACKUP_CODE` env seeds a row `label="backup"` when missing.
-- `active=0` (invalidate) is instant global kill — next `forward_auth` fails.
-- `last_accessed` is updated on every successful auth (`SELECT ... AND active=1` → `UPDATE ... SET last_accessed = CURRENT_TIMESTAMP`); migration self-heals via `ALTER TABLE ... ADD COLUMN` in try/except.
-
----
+Caddy terminates TLS at Cloudflare Tunnel; after tunnel, traffic is plain HTTP on `cloudflared-tunnel_default`. Only Caddy joins the public networks; apps stay internal.
 
 ## Ports
 
-| Port | Service | Notes |
-|------|---------|-------|
-| 7000 | GateKeeper (gunicorn) | loopback-bound, external tunnel may expose login; docs of other projects call `gatekeeper:7000` internally |
-| 8005 | Documentation (granian) | internal-only, `expose`, not published |
-
-GateKeeper owns the **7000 block** (house rule: ports allotted in groups of 10).
-
-## Deployment Notes
-
-- **No caddy container** — this is the exception. If a caddy is added later, it must proxy to `gatekeeper_main:7000` (unique `container_name`, never generic `app`) and must NOT gate `/documentation/*`.
-- Entrypoint fixes named-volume ownership (`chown -R appuser:appuser /data`) because pre-non-root volumes retain `root` ownership.
-- Build caching: `COPY requirements.txt` + `pip install` before `COPY . .`; `compileall -q /app` catches syntax errors at build time.
-
-## History
-
-- Initial version: app-level middleware `gatekeeper_check()` + `/api/verify` tickets (5-min TTL). Every app embedded auth.
-- Rewrite `b4d54d7`: **forward_auth only**, all app-level code removed. Apps are now naked behind the gate — do not reintroduce `/api/verify` or `GATEKEEPER_INTERNAL`.
+| Port | Service |
+|------|---------|
+| 7000 | Caddy (only published, loopback) |
+| 8001 | Auth Gateway |
+| 8002 | API (REST) + 50051 gRPC |
+| 8003 | Management UI |
+| 8005 | Docs |
+| 3306 | MySQL (internal) |

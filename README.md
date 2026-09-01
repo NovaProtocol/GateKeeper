@@ -1,90 +1,67 @@
 # GateKeeper
 
-Lightweight Flask auth service that protects web apps through a reverse-proxy gate. A signed, non-expiring access-code cookie (`gatekeeper_token`) on the apex domain is the only credential; Caddy `forward_auth` checks it before any request reaches a protected app.
+FastAPI gateway that protects web apps through a reverse-proxy gate. A signed, non-expiring access-code cookie (`gatekeeper_token`) on the apex domain is the primary credential; per-rule custom passwords and API keys cover special cases. All traffic enters via Caddy `:7000` (wildcard `*.projectnova.download`).
 
 ## How it works
 
-```text
-Request → Caddy forward_auth → GateKeeper /api/authz/forward-auth
-                               ↓ valid gatekeeper_token cookie
-                         200  → Caddy proxies to the app
-                               ↓ no cookie, but valid ?access_code= param
-                         302  → Caddy relays: Set-Cookie (apex, no expiry)
-                                 + redirect to the same URL, param stripped
-                               ↓ neither valid
-                         302  → redirect to gatekeeper.<apex>/?redirect=<original URL>
+```
+Request → Caddy :7000 → Auth Gateway :8001 /api/authz/forward-auth
+                          ├─ valid gatekeeper_token        → 200 → proxy to Route upstream
+                          ├─ valid ?access_code=           → 302 + Set-Cookie (stripped)
+                          ├─ valid custom_password/API key → 200
+                          └─ neither                       → 302 → https://gatekeeper.<apex>/login?redirect=<original>
 ```
 
-Any URL on a gated domain can carry `?access_code=<code>` as a shareable magic link — no cookie needed, the code is stripped from the URL immediately after use.
+Any gated URL can carry `?access_code=<code>` as a magic link — stripped after setting the cookie.
 
-The forward-auth endpoint is the **only** auth path. The old app-level flow (`/api/verify`, short-lived tickets) was removed — apps must not attempt their own GateKeeper checks.
+**Stack:** Python 3.14 · FastAPI + Granian · SQLAlchemy 2 (async) · MySQL 8.4 / SQLite · Caddy 2 · itsdangerous
 
-Caddyfile example:
+## Services
 
-```caddy
-example.com {
-    forward_auth gatekeeper:7000 {
-        uri /api/authz/forward-auth
-    }
-    reverse_proxy app:8080
-}
-```
-
-The original request URL arrives in the `X-Forwarded-Uri` header (set by Caddy); `X-Forwarded-Proto` and `X-Forwarded-Host` are used to reconstruct absolute redirect targets.
+| Service | Port | Purpose |
+|---------|------|---------|
+| Caddy | 7000 | Wildcard ingress, forward_auth |
+| Auth Gateway | 8001 | forward_auth + wildcard proxy |
+| API | 8002 + 50051 (gRPC) | DB owner, CRUD, LogAuth |
+| Management | 8003 | Admin UI |
+| MySQL | 3306 | Store |
+| phpMyAdmin | 80 | DB UI (gated) |
+| Documentation | 8005 | MkDocs |
 
 ## Quick Start
-
-There is no `.env` file — values come from compose interpolation or exported
-shell vars (compose interpolation; see `.env.example`).
 
 ```bash
 export SECRET_KEY=$(python3 -c "import secrets; print(secrets.token_hex(32))")
 export MANAGE_PASSWORD=$(python3 -c "import secrets; print(secrets.token_hex(32))")
-
+export DEPLOYMENT_TYPE=production
 docker compose up -d
 ```
 
-Visit `http://localhost:7000` to access the login page, or `http://localhost:7000/manage` to create access codes.
+Visit `https://gatekeeper.projectnova.download/` (login) or `/manage/login` for admin.
 
-## Environment Variables
+## Environment
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `SECRET_KEY` | Yes | Flask secret key for signing the auth cookie |
-| `MANAGE_PASSWORD` | Yes | Password for the `/manage` admin panel |
-| `BACKUP_CODE` | No | Seeds the "backup" access-code row whenever that row is missing from the codes table |
-| `DB_DIR` | No | Where the SQLite DB lives; compose sets it to `/data` (default: app directory) |
+| `SECRET_KEY` | yes | Signing key |
+| `MANAGE_PASSWORD` | yes | `/manage/login` password |
+| `DEPLOYMENT_TYPE` | yes | `debug` or `production` |
+| `INTERNAL_API_KEY` | no | Protects `POST /api/*` |
+| `DATABASE_URL` | no | `mysql+aiomysql://` or `sqlite+aiosqlite://` |
+| `BACKUP_CODE` | no | Seeded backup code |
+| `DB_DIR` | no | `/data` in container |
 
 ## Routes
 
-| Route | Method | Description |
-|-------|--------|-------------|
-| `GET /` | Public | Login page. Valid code sets cookie, redirects. |
-| `POST /` | Public | Validate submitted code, set cookie, redirect. |
-| `GET /api/authz/forward-auth` | Public | Caddy forward-auth endpoint. `200` = pass, `302` = set cookie from `?access_code=` or redirect to login. |
-| `GET /manage` | Protected | Management UI — lists all codes. |
-| `POST /manage/create` | Protected | Generate a new access code. |
-| `POST /manage/invalidate` | Protected | Invalidate an existing code. |
-
-## Development
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-SECRET_KEY=dev MANAGE_PASSWORD=dev python app.py
-```
-
-## Ports
-
-| Port | Service |
-|------|---------|
-| 7000 | GateKeeper (gunicorn, loopback-bound — tunnel only) |
-
-Ports are allotted in groups of 10 per project (GateKeeper owns the 7000 block).
+| Route | Auth | Purpose |
+|-------|------|---------|
+| `GET /`, `POST /`, `GET /login`, `POST /login` | — | Login (sets `gatekeeper_token`) |
+| `GET /api/authz/forward-auth` | — | Caddy forward_auth (200/302/403) |
+| `GET /manage/login`, `POST /manage/login` | — | Management login (sets `manage_session`) |
+| `GET /manage/logout` | manage | Clear session |
+| `GET /manage`, `/routing`, `/rules`, `/codes`, `/logs`, `/top-pages`, `/warnings` | manage | Admin pages |
+| `GET /api/routes`, `/groups`, `/rules`, `/codes`, `/keys`, `/logs` | internal/api key | REST API |
 
 ## Domain Adaptation
 
-No hardcoded domains. The cookie domain is dynamically extracted from `request.host`. If no `?redirect=` parameter is provided, the fallback redirect goes to `portfolio.<apex_domain>`.
-
-404s on protected apps are handled by the apps themselves — GateKeeper never serves app content, only `200` pass responses or redirects.
+No hardcoded domains. Cookie domain is last two labels of host (`.example.com`). Fallback is `portfolio.<apex>`. `?redirect=` hosts validated against apex.
