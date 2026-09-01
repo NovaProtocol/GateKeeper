@@ -1,5 +1,5 @@
 site_name: GateKeeper · Documentation
-site_description: Documentation for GateKeeper — lightweight Flask auth gate with signed cookie and Caddy forward_auth
+site_description: Documentation for GateKeeper — FastAPI gateway with signed-cookie, DB-driven routing, and rule-group dispatch
 site_author: NovaProtocol
 repo_url: https://github.com/NovaProtocol/GateKeeper
 repo_name: NovaProtocol/GateKeeper
@@ -65,6 +65,10 @@ nav:
   - Architecture: architecture.md
   - Auth Flow: auth-flow.md
   - Cookie Contract: cookie-contract.md
-  - Manage Panel: manage-panel.md
+  - Management UI: manage-panel.md
   - Caddy Integration: caddy-integration.md
   - Docker: docker.md
+  - Routes: routes.md
+  - Rules & Rule Groups: rules.md
+  - API Keys: api-keys.md
+  - Logs & Warnings: logs.md
