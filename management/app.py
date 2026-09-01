@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import base64
 import logging
 import secrets
 import uuid
@@ -10,7 +9,7 @@ from typing import Any
 from urllib.parse import quote, urlsplit
 
 import httpx
-from fastapi import Depends, FastAPI, Form, HTTPException, Request, Response, status
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -20,7 +19,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from shared.config import get_config
 from shared.db import get_sessionmaker
-from shared.models import ApiKey, Code, Route, RuleGroup
+from shared.models import Code
 from shared.error_pages import render_error_html, wants_html
 from shared.security import apex_domain as shared_apex, mask_code
 
@@ -206,8 +205,7 @@ class ProxyFixMiddleware(BaseHTTPMiddleware):
 class CSPMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):  # type: ignore[no-untyped-def]
         resp = await call_next(request)
-        resp.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://stackpath.bootstrapcdn.com https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://stackpath.bootstrapcdn.com https://fonts.googleapis.com https://cdnjs.cloudflare.com; font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com; img-src 'self' data:; connect-src 'self'"
-        resp.headers["X-Frame-Options"] = "DENY"
+        resp.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://stackpath.bootstrapcdn.com https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://stackpath.bootstrapcdn.com https://fonts.googleapis.com https://cdnjs.cloudflare.com; font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'self' https://portfolio.projectnova.download https://*.projectnova.download"
         resp.headers["X-Content-Type-Options"] = "nosniff"
         resp.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         return resp
@@ -224,6 +222,8 @@ async def _require_manage_auth(request: Request) -> Response | None:
         return _manage_auth_redirect(request)
     try:
         val = _cookie_serializer().loads(token)
+        if not secrets.compare_digest(str(val), "manage-ok"):
+            return _manage_auth_redirect(request)
     except (BadSignature, Exception):
         return _manage_auth_redirect(request)
     if request.method == "POST" and not same_origin(request):
@@ -590,7 +590,9 @@ def create_app() -> FastAPI:
 
     @app.get("/manage", response_class=HTMLResponse)
     async def manage_dashboard(request: Request) -> Response:
-        await _require_manage_auth(request)
+        _auth = await _require_manage_auth(request)
+        if _auth is not None:
+            return _auth
         routes = await _api_proxy_get("/api/routes")
         groups = await _api_proxy_get("/api/groups")
         codes = await _api_proxy_get("/api/codes")
@@ -601,7 +603,9 @@ def create_app() -> FastAPI:
 
     @app.get("/manage/routing", response_class=HTMLResponse)
     async def manage_routing(request: Request) -> Response:
-        await _require_manage_auth(request)
+        _auth = await _require_manage_auth(request)
+        if _auth is not None:
+            return _auth
         routes = await _api_proxy_get("/api/routes")
         if not isinstance(routes, list):
             routes = []
@@ -609,7 +613,9 @@ def create_app() -> FastAPI:
 
     @app.post("/manage/routing", response_class=HTMLResponse)
     async def manage_routing_create(request: Request) -> Response:
-        await _require_manage_auth(request)
+        _auth = await _require_manage_auth(request)
+        if _auth is not None:
+            return _auth
         form = await request.form()
         if not _verify_csrf(request, str(form.get("csrf_token") or "")):
             raise HTTPException(status_code=403, detail="Invalid CSRF")
@@ -649,7 +655,9 @@ def create_app() -> FastAPI:
 
     @app.post("/manage/routing/{rid}/edit", response_class=HTMLResponse)
     async def manage_routing_edit(request: Request, rid: int) -> Response:
-        await _require_manage_auth(request)
+        _auth = await _require_manage_auth(request)
+        if _auth is not None:
+            return _auth
         form = await request.form()
         if not _verify_csrf(request, str(form.get("csrf_token") or "")):
             raise HTTPException(status_code=403, detail="Invalid CSRF")
@@ -687,7 +695,9 @@ def create_app() -> FastAPI:
 
     @app.post("/manage/routing/{rid}/delete", response_class=HTMLResponse)
     async def manage_routing_delete(request: Request, rid: int) -> Response:
-        await _require_manage_auth(request)
+        _auth = await _require_manage_auth(request)
+        if _auth is not None:
+            return _auth
         form = await request.form()
         if not _verify_csrf(request, str(form.get("csrf_token") or "")):
             raise HTTPException(status_code=403, detail="Invalid CSRF")
@@ -700,7 +710,9 @@ def create_app() -> FastAPI:
 
     @app.post("/manage/routing/{rid}/test")
     async def manage_routing_test(request: Request, rid: int) -> Response:
-        await _require_manage_auth(request)
+        _auth = await _require_manage_auth(request)
+        if _auth is not None:
+            return _auth
         form = await request.form()
         token = str(form.get("csrf_token") or request.headers.get("X-CSRF-Token") or "")
         if not _verify_csrf(request, token):
@@ -719,7 +731,9 @@ def create_app() -> FastAPI:
 
     @app.get("/manage/rules", response_class=HTMLResponse)
     async def manage_rules(request: Request) -> Response:
-        await _require_manage_auth(request)
+        _auth = await _require_manage_auth(request)
+        if _auth is not None:
+            return _auth
         groups = await _api_proxy_get("/api/groups")
         if not isinstance(groups, list):
             groups = []
@@ -727,7 +741,9 @@ def create_app() -> FastAPI:
 
     @app.post("/manage/groups", response_class=HTMLResponse)
     async def manage_groups_create(request: Request) -> Response:
-        await _require_manage_auth(request)
+        _auth = await _require_manage_auth(request)
+        if _auth is not None:
+            return _auth
         form = await request.form()
         if not _verify_csrf(request, str(form.get("csrf_token") or "")):
             raise HTTPException(status_code=403, detail="Invalid CSRF")
@@ -744,7 +760,9 @@ def create_app() -> FastAPI:
 
     @app.post("/manage/groups/{gid}/delete", response_class=HTMLResponse)
     async def manage_groups_delete(request: Request, gid: int) -> Response:
-        await _require_manage_auth(request)
+        _auth = await _require_manage_auth(request)
+        if _auth is not None:
+            return _auth
         form = await request.form()
         if not _verify_csrf(request, str(form.get("csrf_token") or "")):
             raise HTTPException(status_code=403, detail="Invalid CSRF")
@@ -757,7 +775,9 @@ def create_app() -> FastAPI:
 
     @app.post("/manage/groups/{gid}/rules", response_class=HTMLResponse)
     async def manage_rules_create(request: Request, gid: int) -> Response:
-        await _require_manage_auth(request)
+        _auth = await _require_manage_auth(request)
+        if _auth is not None:
+            return _auth
         form = await request.form()
         if not _verify_csrf(request, str(form.get("csrf_token") or "")):
             raise HTTPException(status_code=403, detail="Invalid CSRF")
@@ -776,7 +796,9 @@ def create_app() -> FastAPI:
 
     @app.post("/manage/rules/{rid}/delete", response_class=HTMLResponse)
     async def manage_rules_delete(request: Request, rid: int) -> Response:
-        await _require_manage_auth(request)
+        _auth = await _require_manage_auth(request)
+        if _auth is not None:
+            return _auth
         form = await request.form()
         if not _verify_csrf(request, str(form.get("csrf_token") or "")):
             raise HTTPException(status_code=403, detail="Invalid CSRF")
@@ -790,7 +812,9 @@ def create_app() -> FastAPI:
 
     @app.post("/manage/rules/{rid}/edit", response_class=HTMLResponse)
     async def manage_rules_edit(request: Request, rid: int) -> Response:
-        await _require_manage_auth(request)
+        _auth = await _require_manage_auth(request)
+        if _auth is not None:
+            return _auth
         form = await request.form()
         if not _verify_csrf(request, str(form.get("csrf_token") or "")):
             raise HTTPException(status_code=403, detail="Invalid CSRF")
@@ -817,7 +841,9 @@ def create_app() -> FastAPI:
 
     @app.get("/manage/rules/{gid}", response_class=HTMLResponse)
     async def manage_rules_detail(request: Request, gid: int) -> Response:
-        await _require_manage_auth(request)
+        _auth = await _require_manage_auth(request)
+        if _auth is not None:
+            return _auth
         groups = await _api_proxy_get("/api/groups")
         rules = await _api_proxy_get(f"/api/groups/{gid}/rules")
         cur = next((g for g in groups if isinstance(groups, list) and g.get("id") == gid), None) if isinstance(groups, list) else None
@@ -825,7 +851,9 @@ def create_app() -> FastAPI:
 
     @app.get("/manage/codes", response_class=HTMLResponse)
     async def manage_codes(request: Request) -> Response:
-        await _require_manage_auth(request)
+        _auth = await _require_manage_auth(request)
+        if _auth is not None:
+            return _auth
         codes = await _api_proxy_get("/api/codes")
         if not isinstance(codes, list):
             codes = []
@@ -833,7 +861,9 @@ def create_app() -> FastAPI:
 
     @app.post("/manage/codes", response_class=HTMLResponse)
     async def manage_codes_create(request: Request) -> Response:
-        await _require_manage_auth(request)
+        _auth = await _require_manage_auth(request)
+        if _auth is not None:
+            return _auth
         form = await request.form()
         if not _verify_csrf(request, str(form.get("csrf_token") or "")):
             raise HTTPException(status_code=403, detail="Invalid CSRF")
@@ -860,7 +890,9 @@ def create_app() -> FastAPI:
 
     @app.post("/manage/codes/{cid}/revoke", response_class=HTMLResponse)
     async def manage_codes_revoke(request: Request, cid: int) -> Response:
-        await _require_manage_auth(request)
+        _auth = await _require_manage_auth(request)
+        if _auth is not None:
+            return _auth
         form = await request.form()
         if not _verify_csrf(request, str(form.get("csrf_token") or "")):
             raise HTTPException(status_code=403, detail="Invalid CSRF")
@@ -873,7 +905,9 @@ def create_app() -> FastAPI:
 
     @app.post("/manage/codes/{cid}/edit", response_class=HTMLResponse)
     async def manage_codes_edit(request: Request, cid: int) -> Response:
-        await _require_manage_auth(request)
+        _auth = await _require_manage_auth(request)
+        if _auth is not None:
+            return _auth
         form = await request.form()
         if not _verify_csrf(request, str(form.get("csrf_token") or "")):
             raise HTTPException(status_code=403, detail="Invalid CSRF")
@@ -897,7 +931,9 @@ def create_app() -> FastAPI:
 
     @app.get("/manage/logs", response_class=HTMLResponse)
     async def manage_logs(request: Request) -> Response:
-        await _require_manage_auth(request)
+        _auth = await _require_manage_auth(request)
+        if _auth is not None:
+            return _auth
         params: dict[str, Any] = {}
         for k in ("ip", "host", "action", "endpoint", "from", "to", "page", "per_page"):
             v = request.query_params.get(k)
@@ -910,7 +946,9 @@ def create_app() -> FastAPI:
 
     @app.get("/manage/top-pages", response_class=HTMLResponse)
     async def manage_top_pages(request: Request) -> Response:
-        await _require_manage_auth(request)
+        _auth = await _require_manage_auth(request)
+        if _auth is not None:
+            return _auth
         top = await _api_proxy_get("/api/logs/top", {"limit": 20})
         if not isinstance(top, list):
             top = []
@@ -921,7 +959,9 @@ def create_app() -> FastAPI:
 
     @app.get("/manage/warnings", response_class=HTMLResponse)
     async def manage_warnings(request: Request) -> Response:
-        await _require_manage_auth(request)
+        _auth = await _require_manage_auth(request)
+        if _auth is not None:
+            return _auth
         warnings = await _api_proxy_get("/api/warnings")
         if not isinstance(warnings, dict):
             warnings = {"groups": [], "rules": []}
@@ -929,12 +969,16 @@ def create_app() -> FastAPI:
 
     @app.get("/manage/settings", response_class=HTMLResponse)
     async def manage_settings(request: Request) -> Response:
-        await _require_manage_auth(request)
+        _auth = await _require_manage_auth(request)
+        if _auth is not None:
+            return _auth
         return await _render_manage(request, "manage/settings.html", {})
 
     @app.get("/manage/backup", response_class=HTMLResponse)
     async def manage_backup(request: Request) -> Response:
-        await _require_manage_auth(request)
+        _auth = await _require_manage_auth(request)
+        if _auth is not None:
+            return _auth
         return await _render_manage(request, "manage/backup.html", {})
 
     return app
