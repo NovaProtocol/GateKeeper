@@ -595,7 +595,8 @@ def create_app() -> FastAPI:
         groups = await _api_proxy_get("/api/groups")
         codes = await _api_proxy_get("/api/codes")
         warnings = await _api_proxy_get("/api/warnings")
-        stats = {"routes": len(routes) if isinstance(routes, list) else 0, "groups": len(groups) if isinstance(groups, list) else 0, "codes": len(codes) if isinstance(codes, list) else 0}
+        api_keys = await _api_proxy_get("/api/keys")
+        stats = {"routes": len(routes) if isinstance(routes, list) else 0, "groups": len(groups) if isinstance(groups, list) else 0, "codes": len(codes) if isinstance(codes, list) else 0, "api_keys": len(api_keys) if isinstance(api_keys, list) else 0}
         return await _render_manage(request, "manage/dashboard.html", {"stats": stats, "routes": routes if isinstance(routes, list) else [], "groups": groups if isinstance(groups, list) else [], "codes": codes if isinstance(codes, list) else [], "warnings": warnings})
 
     @app.get("/manage/routing", response_class=HTMLResponse)
