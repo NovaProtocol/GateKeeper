@@ -213,23 +213,31 @@ class CSPMiddleware(BaseHTTPMiddleware):
         return resp
 
 
-async def _require_manage_auth(request: Request) -> None:
+async def _require_manage_auth(request: Request) -> Response | None:
+    """Check manage_session cookie. Returns redirect Response if unauthenticated, None if OK."""
     cfg = get_config()
     pw = cfg.MANAGE_PASSWORD
     if not pw:
         raise HTTPException(status_code=500, detail="MANAGE_PASSWORD not configured")
-    auth = request.headers.get("Authorization", "")
-    if not auth.lower().startswith("basic "):
-        raise HTTPException(status_code=401, detail="Unauthorized", headers={"WWW-Authenticate": 'Basic realm="GateKeeper Manage"'})
+    token = request.cookies.get("manage_session")
+    if not token:
+        return _manage_auth_redirect(request)
     try:
-        decoded = base64.b64decode(auth[6:].strip()).decode()
-        _, password = decoded.split(":", 1)
-    except Exception:
-        raise HTTPException(status_code=401, detail="Unauthorized", headers={"WWW-Authenticate": 'Basic realm="GateKeeper Manage"'})
-    if not secrets.compare_digest(password, pw):
-        raise HTTPException(status_code=401, detail="Unauthorized", headers={"WWW-Authenticate": 'Basic realm="GateKeeper Manage"'})
+        val = _cookie_serializer().loads(token)
+    except (BadSignature, Exception):
+        return _manage_auth_redirect(request)
     if request.method == "POST" and not same_origin(request):
         raise HTTPException(status_code=403, detail="Cross-site request rejected")
+    return None
+
+
+def _manage_auth_redirect(request: Request) -> Response:
+    """Return a redirect to /manage/login or a 401 JSON for API callers."""
+    accept = (request.headers.get("accept") or "").lower()
+    if "application/json" in accept:
+        return JSONResponse(status_code=401, content={"detail": "Unauthorized"})
+    redirect_target = quote(request.url.path, safe="")
+    return RedirectResponse(url=f"/manage/login?redirect={redirect_target}", status_code=302)
 
 
 def _api_headers() -> dict[str, str]:
@@ -391,6 +399,53 @@ def create_app() -> FastAPI:
         token = _cookie_serializer().dumps(code_val)
         resp.set_cookie(key="gatekeeper_token", value=token, domain=f".{apex}", path="/", httponly=True, samesite="lax", secure=True)
 
+    def _set_manage_session_cookie(resp: Response) -> None:
+        token = _cookie_serializer().dumps("manage-ok")
+        resp.set_cookie(key="manage_session", value=token, path="/manage", httponly=True, samesite="lax", secure=True, max_age=8 * 3600)
+
+    def _clear_manage_session_cookie(resp: Response) -> None:
+        resp.delete_cookie(key="manage_session", path="/manage")
+
+    @app.get("/manage/login", response_class=HTMLResponse)
+    @limiter.limit("10/minute")
+    async def manage_login_get(request: Request) -> Response:
+        redirect_target = request.query_params.get("redirect", "/manage")
+        if not redirect_target.startswith("/manage"):
+            redirect_target = "/manage"
+        csrf = _get_csrf_token(request)
+        resp = templates.TemplateResponse(request, "manage_login.html", {"request": request, "redirect": redirect_target, "error": None, "csrf_token": csrf})
+        if not request.cookies.get("csrf_token"):
+            resp.set_cookie(key="csrf_token", value=csrf, path="/", samesite="lax", secure=True)
+        return resp
+
+    @app.post("/manage/login", response_class=HTMLResponse)
+    @limiter.limit("10/minute")
+    async def manage_login_post(request: Request) -> Response:
+        form = await request.form()
+        password = str(form.get("manage_password") or "").strip()
+        redirect_target = str(form.get("redirect") or "/manage")
+        csrf_token = str(form.get("csrf_token") or "")
+        if not redirect_target.startswith("/manage"):
+            redirect_target = "/manage"
+        if not same_origin(request):
+            csrf_ok = _verify_csrf(request, csrf_token)
+            if not csrf_ok:
+                return templates.TemplateResponse(request, "manage_login.html", {"request": request, "redirect": redirect_target, "error": "Cross-site request rejected", "csrf_token": _get_csrf_token(request)}, status_code=403)
+        if not _verify_csrf(request, csrf_token):
+            return templates.TemplateResponse(request, "manage_login.html", {"request": request, "redirect": redirect_target, "error": "Invalid CSRF token", "csrf_token": _get_csrf_token(request)}, status_code=403)
+        cfg = get_config()
+        if not password or not secrets.compare_digest(password, cfg.MANAGE_PASSWORD or ""):
+            return templates.TemplateResponse(request, "manage_login.html", {"request": request, "redirect": redirect_target, "error": "Invalid management password", "csrf_token": _get_csrf_token(request)}, status_code=401)
+        resp = RedirectResponse(url=redirect_target, status_code=302)
+        _set_manage_session_cookie(resp)
+        return resp
+
+    @app.get("/manage/logout")
+    async def manage_logout(request: Request) -> Response:
+        resp = RedirectResponse(url="/manage/login", status_code=302)
+        _clear_manage_session_cookie(resp)
+        return resp
+
     @app.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "ok"}
@@ -521,7 +576,9 @@ def create_app() -> FastAPI:
         return await _handle_login_post(request)
 
     async def _render_manage(request: Request, template: str, ctx: dict[str, Any] | None = None) -> Response:
-        await _require_manage_auth(request)
+        auth_resp = await _require_manage_auth(request)
+        if auth_resp is not None:
+            return auth_resp
         csrf = _get_csrf_token(request)
         base_ctx: dict[str, Any] = {"request": request, "csrf_token": csrf}
         if ctx:

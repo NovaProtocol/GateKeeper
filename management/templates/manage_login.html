@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Management Access · GateKeeper{% endblock %}
+{% block sidebar %}{% endblock %}
+{% block content %}
+<div style="min-height:calc(100vh - 60px);display:flex;align-items:center;justify-content:center;padding:2rem;background:var(--bg-primary)">
+  <div class="card" style="background:var(--bg-card);border:1px solid var(--border);border-radius:12px;max-width:420px;width:100%;overflow:hidden">
+    <div style="padding:2rem">
+      <div style="font-family:'JetBrains Mono',monospace;font-size:.7rem;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);margin-bottom:.6rem"><i class="fa-solid fa-lock"></i> gatekeeper management</div>
+      <h1 style="font-size:1.35rem;font-weight:700;margin-bottom:.35rem">Management Access</h1>
+      <p style="color:var(--text-secondary);font-size:.9rem;margin-bottom:1.25rem">Enter the management password to access the control panel.</p>
+      {% if error %}<div style="background:var(--danger-dim);border:1px solid var(--danger);color:var(--danger);padding:.6rem .85rem;border-radius:8px;margin-bottom:1rem;font-size:.875rem">{{ error }}</div>{% endif %}
+      <form method="post" action="/manage/login?redirect={{ redirect }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <input type="hidden" name="redirect" value="{{ redirect }}">
+        <div class="form-group">
+          <label style="font-size:.75rem;font-weight:600;color:var(--text-secondary);letter-spacing:.05em;text-transform:uppercase">Password</label>
+          <input type="password" name="manage_password" placeholder="••••••••" autofocus autocomplete="off" style="width:100%;background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:.7rem .9rem;color:var(--text-primary);font-family:'JetBrains Mono',monospace;outline:none">
+        </div>
+        <button type="submit" class="btn btn-accent" style="width:100%;background:var(--accent);color:var(--bg-primary);font-weight:700;border-radius:8px;padding:.65rem;margin-top:.5rem">Authenticate</button>
+      </form>
+      <div style="margin-top:1rem;text-align:center;font-family:'JetBrains Mono',monospace;font-size:.7rem;color:var(--text-secondary)">Protected by GateKeeper</div>
+    </div>
+  </div>
+</div>
+{% endblock %}
