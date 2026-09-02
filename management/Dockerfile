@@ -7,7 +7,7 @@ ENV PYTHONUNBUFFERED=1
 
 COPY requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt \
-    && pip install --no-cache-dir fastapi granian httpx itsdangerous sqlalchemy aiosqlite structlog slowapi pydantic-settings uvicorn jinja2 python-multipart || true
+    && pip install --no-cache-dir fastapi granian httpx itsdangerous PyJWT cryptography sqlalchemy aiosqlite structlog slowapi pydantic-settings uvicorn jinja2 python-multipart || true
 
 COPY shared ./shared
 COPY management ./management

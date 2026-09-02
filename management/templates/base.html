@@ -26,8 +26,19 @@
 </head>
 <body>
 <header class="header">
-  <div class="header-title">~/<span>gatekeeper</span></div>
-  <span class="header-badge">projectnova.download</span>
+  <div class="header-left" style="display:flex;align-items:center;gap:1rem">
+    <div class="header-title">~/<span>gatekeeper</span></div>
+    <span class="header-badge">projectnova.download</span>
+  </div>
+  <div class="header-actions">
+    {% if request.cookies.get("gatekeeper_token") %}
+    <a href="/manage" class="btn btn-accent btn-sm"><i class="fa-solid fa-screwdriver-wrench"></i> Manage</a>
+    <form method="post" action="/logout" style="display:inline;margin:0">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token if csrf_token is defined else request.cookies.get('csrf_token','') }}">
+      <button type="submit" class="btn btn-ghost btn-sm"><i class="fa-solid fa-right-from-bracket"></i> End session</button>
+    </form>
+    {% endif %}
+  </div>
 </header>
 <div class="layout">
   {% block sidebar %}

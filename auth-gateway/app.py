@@ -9,10 +9,12 @@ from contextlib import asynccontextmanager
 from typing import Any
 from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
+import secrets
+
 import httpx
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
-from itsdangerous import BadSignature, URLSafeSerializer
+from shared.jwt import create_access_token, create_custom_token, verify_access_token, verify_custom_token
 
 from shared.error_pages import render_error_html, wants_html
 from sqlalchemy import select
@@ -519,14 +521,8 @@ def _queue_audit(background_tasks: BackgroundTasks, **kw: Any) -> None:
     background_tasks.add_task(_audit_log_async, **kw)
 
 
-def _cookie_serializer() -> URLSafeSerializer:
-    cfg = get_config()
-    return URLSafeSerializer(cfg.SECRET_KEY, salt="cookie")
-
-
-def _set_auth_cookie(resp: Response, code_val: str, apex: str) -> None:
-    ser = _cookie_serializer()
-    token = ser.dumps(code_val)
+def _set_auth_cookie(resp: Response, code: Code, apex: str) -> None:
+    token = create_access_token(code.id, code.display_name or code.label or "User")
     resp.set_cookie(
         key="gatekeeper_token",
         value=token,
@@ -535,21 +531,44 @@ def _set_auth_cookie(resp: Response, code_val: str, apex: str) -> None:
         httponly=True,
         samesite="lax",
         secure=True,
+        max_age=43200,
     )
+
+
+def _clear_auth_cookie(resp: Response, apex: str) -> None:
+    resp.delete_cookie(key="gatekeeper_token", domain=f".{apex}", path="/")
+    # also clear without domain for host-only fallback
+    resp.delete_cookie(key="gatekeeper_token", path="/")
+
+
+async def _code_from_jwt(token: str) -> Code | None:
+    data = verify_access_token(token)
+    if not data:
+        return None
+    if data.get("fallback") and data.get("code"):
+        return await _verify_code_value(str(data["code"]))
+    cid = data.get("cid")
+    if cid is None:
+        return None
+    try:
+        sm = get_sessionmaker()
+        async with sm() as s:
+            res = await s.execute(select(Code).where(Code.id == int(cid), Code.active == True))  # noqa: E712
+            row = res.scalars().first()
+            if row:
+                try:
+                    row.last_accessed = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).replace(tzinfo=None)  # type: ignore[attr-defined]
+                    await s.commit()
+                except Exception:
+                    pass
+            return row
+    except Exception:
+        return None
 
 
 def _set_custom_cookie(resp: Response, rule_id: int, apex: str) -> None:
-    ser = URLSafeSerializer(get_config().SECRET_KEY, salt=f"custom-{rule_id}")
-    token = ser.dumps("ok")
-    resp.set_cookie(
-        key=f"gatekeeper_custom_{rule_id}",
-        value=token,
-        domain=f".{apex}",
-        path="/",
-        httponly=True,
-        samesite="lax",
-        secure=True,
-    )
+    token = create_custom_token(rule_id)
+    resp.set_cookie(key=f"gatekeeper_custom_{rule_id}", value=token, domain=f".{apex}", path="/", httponly=True, samesite="lax", secure=True, max_age=43200)
 
 
 def _has_valid_custom_cookie(request: Request, rule: Rule) -> bool:
@@ -562,18 +581,16 @@ def _has_valid_custom_cookie(request: Request, rule: Rule) -> bool:
             except Exception:
                 return False
         return False
-    try:
-        ser = URLSafeSerializer(get_config().SECRET_KEY, salt=f"custom-{rule.id}")
-        ser.loads(raw)
+    if verify_custom_token(raw, rule.id):
         return True
-    except Exception:
-        hdr = request.headers.get("X-Custom-Password", "")
-        if hdr and rule.custom_password_hash and rule.custom_password_salt:
-            try:
-                return verify_custom_password(hdr, rule.custom_password_hash, rule.custom_password_salt)
-            except Exception:
-                return False
-        return False
+    # header fallback already checked; allow X-Custom-Password header as password
+    hdr = request.headers.get("X-Custom-Password", "")
+    if hdr and rule.custom_password_hash and rule.custom_password_salt:
+        try:
+            return verify_custom_password(hdr, rule.custom_password_hash, rule.custom_password_salt)
+        except Exception:
+            return False
+    return False
 
 
 def _check_custom_password_param(request: Request, rule: Rule) -> bool:
@@ -688,6 +705,41 @@ def create_app() -> FastAPI:
     async def health() -> dict[str, str]:
         return {"status": "ok"}
 
+    def _clear_gatekeeper_cookie(resp: Response, apex: str) -> None:
+        resp.delete_cookie(key="gatekeeper_token", domain=f".{apex}", path="/")
+        resp.delete_cookie(key="gatekeeper_token", path="/")
+
+    @app.get("/logout")
+    async def logout_get(request: Request) -> Response:
+        host = _get_forwarded_host(request) or request.headers.get("Host", "").split(":")[0].lower()
+        apex = _apex_from_host(host) if host else _apex_from_host(request.headers.get("Host", ""))
+        referer = request.headers.get("Referer", "")
+        target = "/login"
+        if referer:
+            try:
+                rh = (urlsplit(referer).hostname or "").lower()
+                if rh == host or rh.endswith("." + apex):
+                    target = "/login?redirect=/"
+            except Exception:
+                pass
+        resp = RedirectResponse(url=target, status_code=302)
+        _clear_gatekeeper_cookie(resp, apex)
+        return resp
+
+    @app.post("/logout")
+    @limiter.limit("10/minute")
+    async def logout_post(request: Request) -> Response:
+        host = _get_forwarded_host(request) or request.headers.get("Host", "").split(":")[0].lower()
+        apex = _apex_from_host(host) if host else _apex_from_host(request.headers.get("Host", ""))
+        if request.method == "POST" and not same_origin(request, apex):
+            ct = (await request.form()).get("csrf_token") if request.headers.get("content-type", "").startswith("application/x-www-form") else None
+            if ct is None or not secrets.compare_digest(str(ct), request.cookies.get("csrf_token", "")):
+                # still clear but require origin — fail closed with 403
+                return JSONResponse(status_code=403, content={"detail": "Cross-site request rejected"})
+        resp = RedirectResponse(url="/login", status_code=302)
+        _clear_gatekeeper_cookie(resp, apex)
+        return resp
+
     @app.get("/api/authz/forward-auth")
     @limiter.limit("100/minute")
     async def forward_auth(request: Request, background_tasks: BackgroundTasks, response: Response) -> Response:
@@ -762,15 +814,10 @@ def create_app() -> FastAPI:
 
         token = request.cookies.get("gatekeeper_token")
         if token:
-            try:
-                ser = _cookie_serializer()
-                code_val = ser.loads(token)
-                cres = await _verify_code_value(code_val)
-                if cres:
-                    await _log("auth_success", code_id=cres.id)
-                    return Response(status_code=200)
-            except (BadSignature, Exception):
-                pass
+            cres = await _code_from_jwt(token)
+            if cres:
+                await _log("auth_success", code_id=cres.id)
+                return Response(status_code=200)
 
         access_code, _ac_path, _ac_qs = _get_access_code_param(request)
         if access_code:
@@ -781,7 +828,7 @@ def create_app() -> FastAPI:
                     clean = "/" + clean
                 loc = clean if clean else "/"
                 resp = RedirectResponse(url=loc, status_code=302)
-                _set_auth_cookie(resp, access_code, apex)
+                _set_auth_cookie(resp, cres, apex)
                 await _log("access_code_login", code_id=cres.id)
                 return resp
 
@@ -887,13 +934,9 @@ def create_app() -> FastAPI:
             if not ok:
                 token = request.cookies.get("gatekeeper_token")
                 if token:
-                    try:
-                        code_val = _cookie_serializer().loads(token)
-                        cres = await _verify_code_value(code_val)
-                        if cres:
-                            ok = True
-                    except Exception:
-                        pass
+                    cres = await _code_from_jwt(token)
+                    if cres:
+                        ok = True
             if not ok:
                 await _log("custom_password_required")
                 target = quote(f"https://{host}{full_uri}", safe="")
@@ -906,14 +949,10 @@ def create_app() -> FastAPI:
             api_key_id: int | None = None
             token = request.cookies.get("gatekeeper_token")
             if token:
-                try:
-                    code_val = _cookie_serializer().loads(token)
-                    cres = await _verify_code_value(code_val)
-                    if cres:
-                        authed = True
-                        code_id = cres.id
-                except Exception:
-                    pass
+                cres = await _code_from_jwt(token)
+                if cres:
+                    authed = True
+                    code_id = cres.id
             if not authed:
                 ac, _, _ = _get_access_code_param(request)
                 if ac:
@@ -924,7 +963,7 @@ def create_app() -> FastAPI:
                             clean = "/" + clean
                         loc = clean if clean else "/"
                         resp = RedirectResponse(url=loc, status_code=302)
-                        _set_auth_cookie(resp, ac, apex)
+                        _set_auth_cookie(resp, cres, apex)
                         await _log("access_code_login", code_id=cres.id)
                         return resp
             if not authed:
