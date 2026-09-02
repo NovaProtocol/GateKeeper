@@ -13,7 +13,8 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from itsdangerous import BadSignature, URLSafeSerializer
+import jwt
+from shared.jwt import create_access_token, create_custom_token, create_manage_token, decode_without_verify, verify_access_token, verify_custom_token, verify_manage_token
 from sqlalchemy import select
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -82,9 +83,8 @@ def _get_httpx() -> httpx.AsyncClient:
     return _httpx_client
 
 
-def _cookie_serializer() -> URLSafeSerializer:
-    cfg = get_config()
-    return URLSafeSerializer(cfg.SECRET_KEY, salt="cookie")
+def _jwt_secret() -> str:
+    return get_config().SECRET_KEY
 
 
 def _apex_from_request(request: Request) -> str:
@@ -165,11 +165,29 @@ async def _get_authenticated_code(request: Request) -> Code | None:
     token = request.cookies.get("gatekeeper_token")
     if not token:
         return None
-    try:
-        val = _cookie_serializer().loads(token)
-    except (BadSignature, Exception):
+    data = verify_access_token(token)
+    if not data:
         return None
-    return await _verify_code_value(val)
+    if data.get("fallback") and data.get("code"):
+        return await _verify_code_value(str(data["code"]))
+    cid = data.get("cid")
+    if cid is None:
+        return None
+    try:
+        sm = get_sessionmaker()
+        async with sm() as s:
+            res = await s.execute(select(Code).where(Code.id == int(cid), Code.active == True))  # noqa: E712
+            row = res.scalars().first()
+            if row:
+                try:
+                    import datetime as dt
+                    row.last_accessed = dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)  # type: ignore[attr-defined]
+                    await s.commit()
+                except Exception:
+                    pass
+            return row
+    except Exception:
+        return None
 
 
 def _display_name(code: Code) -> str:
@@ -212,7 +230,7 @@ class CSPMiddleware(BaseHTTPMiddleware):
 
 
 async def _require_manage_auth(request: Request) -> Response | None:
-    """Check manage_session cookie. Returns redirect Response if unauthenticated, None if OK."""
+    """Check manage_session JWT. Returns redirect Response if unauthenticated, None if OK."""
     cfg = get_config()
     pw = cfg.MANAGE_PASSWORD
     if not pw:
@@ -220,11 +238,8 @@ async def _require_manage_auth(request: Request) -> Response | None:
     token = request.cookies.get("manage_session")
     if not token:
         return _manage_auth_redirect(request)
-    try:
-        val = _cookie_serializer().loads(token)
-        if not secrets.compare_digest(str(val), "manage-ok"):
-            return _manage_auth_redirect(request)
-    except (BadSignature, Exception):
+    data = verify_manage_token(token)
+    if not data:
         return _manage_auth_redirect(request)
     if request.method == "POST" and not same_origin(request):
         raise HTTPException(status_code=403, detail="Cross-site request rejected")
@@ -395,13 +410,29 @@ def create_app() -> FastAPI:
     if STATIC_DIR.exists():
         app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
-    def _set_auth_cookie(resp: Response, code_val: str, apex: str) -> None:
-        token = _cookie_serializer().dumps(code_val)
-        resp.set_cookie(key="gatekeeper_token", value=token, domain=f".{apex}", path="/", httponly=True, samesite="lax", secure=True)
+    def _set_auth_cookie(resp: Response, code: Code, apex: str) -> None:
+        token = create_access_token(code.id, code.display_name or code.label or "User")
+        resp.set_cookie(key="gatekeeper_token", value=token, domain=f".{apex}", path="/", httponly=True, samesite="lax", secure=True, max_age=43200)
+
+    def _set_auth_cookie_raw(resp: Response, code_val: str, apex: str, code: Code | None = None) -> None:
+        if code is not None:
+            _set_auth_cookie(resp, code, apex)
+            return
+        # fallback for direct code string without row — should not happen
+        token = create_access_token(0, "User")
+        # reuse but encode code in fallback path via shared.jwt fallback helper not exposed; just call verify path
+        import datetime as dt, uuid, jwt as _jwt
+        payload = {"sub": code_val, "code": code_val, "cid": 0, "iss": "gatekeeper", "aud": "projectnova.download", "iat": dt.datetime.now(dt.timezone.utc), "exp": dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=12), "jti": uuid.uuid4().hex}
+        token = _jwt.encode(payload, get_config().SECRET_KEY, algorithm="HS256")
+        resp.set_cookie(key="gatekeeper_token", value=token, domain=f".{apex}", path="/", httponly=True, samesite="lax", secure=True, max_age=43200)
 
     def _set_manage_session_cookie(resp: Response) -> None:
-        token = _cookie_serializer().dumps("manage-ok")
+        token = create_manage_token()
         resp.set_cookie(key="manage_session", value=token, path="/manage", httponly=True, samesite="lax", secure=True, max_age=8 * 3600)
+
+    def _clear_auth_cookie(resp: Response, apex: str) -> None:
+        resp.delete_cookie(key="gatekeeper_token", domain=f".{apex}", path="/")
+        resp.delete_cookie(key="gatekeeper_token", path="/")
 
     def _clear_manage_session_cookie(resp: Response) -> None:
         resp.delete_cookie(key="manage_session", path="/manage")
@@ -446,6 +477,28 @@ def create_app() -> FastAPI:
         _clear_manage_session_cookie(resp)
         return resp
 
+    @app.get("/logout")
+    async def gate_logout_get(request: Request) -> Response:
+        apex = _apex_from_request(request)
+        resp = RedirectResponse(url="/login", status_code=302)
+        _clear_auth_cookie(resp, apex)
+        return resp
+
+    @app.post("/logout")
+    @limiter.limit("10/minute")
+    async def gate_logout_post(request: Request) -> Response:
+        apex = _apex_from_request(request)
+        form = await request.form() if request.headers.get("content-type", "").startswith("application/x-www-form") else {}
+        tok = str(form.get("csrf_token") if hasattr(form, "get") else "" or "")
+        if request.method == "POST" and not same_origin(request, apex):
+            if not _verify_csrf(request, tok):
+                return JSONResponse(status_code=403, content={"detail": "Cross-site request rejected"})
+        if tok and not _verify_csrf(request, tok):
+            return JSONResponse(status_code=403, content={"detail": "Invalid CSRF"})
+        resp = RedirectResponse(url="/login", status_code=302)
+        _clear_auth_cookie(resp, apex)
+        return resp
+
     @app.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "ok"}
@@ -459,7 +512,26 @@ def create_app() -> FastAPI:
         name = _display_name(code)
         masked = _masked(code.code)
         csrf = _get_csrf_token(request)
-        resp = templates.TemplateResponse(request, "landing.html", {"request": request, "name": name, "masked_code": masked, "code": code, "csrf_token": csrf})
+        # expiry hint for status card
+        exp_label = "12h"
+        try:
+            tok = request.cookies.get("gatekeeper_token", "")
+            payload = decode_without_verify(tok) if tok else None
+            exp = payload.get("exp") if payload else None
+            if exp:
+                import datetime as _dt
+                exp_dt = _dt.datetime.fromtimestamp(int(exp), tz=_dt.timezone.utc)
+                delta = exp_dt - _dt.datetime.now(_dt.timezone.utc)
+                hrs = max(0, int(delta.total_seconds() // 3600))
+                mins = max(0, int((delta.total_seconds() % 3600) // 60))
+                if hrs > 0:
+                    exp_label = f"{hrs}h {mins}m" if mins else f"{hrs}h"
+                else:
+                    exp_label = f"{mins}m"
+        except Exception:
+            pass
+        apex = _apex_from_request(request)
+        resp = templates.TemplateResponse(request, "landing.html", {"request": request, "name": name, "masked_code": masked, "code": code, "csrf_token": csrf, "exp_label": exp_label, "apex": apex})
         if not request.cookies.get("csrf_token"):
             resp.set_cookie(key="csrf_token", value=csrf, path="/", samesite="lax", secure=True)
         return resp
@@ -531,7 +603,7 @@ def create_app() -> FastAPI:
             if not _safe_redirect_target(redirect_target, apex):
                 redirect_target = "/"
             resp = RedirectResponse(url=redirect_target, status_code=302)
-            _set_auth_cookie(resp, code_val, apex)
+            _set_auth_cookie(resp, row, apex)
             return resp
         try:
             from urllib.parse import urlsplit as _urlsplit
@@ -553,13 +625,11 @@ def create_app() -> FastAPI:
                     for r in rres.scalars().all():
                         if r.action == "custom_password" and r.custom_password_hash and r.custom_password_salt and _pm(r.path, tpath):
                             if _vcp(code_val, r.custom_password_hash, r.custom_password_salt):
-                                from itsdangerous import URLSafeSerializer as _Ser
-                                ser = _Ser(get_config().SECRET_KEY, salt=f"custom-{r.id}")
-                                tok = ser.dumps("ok")
+                                tok = create_custom_token(r.id)
                                 if not _safe_redirect_target(redirect_target, apex):
                                     redirect_target = "/"
                                 resp = RedirectResponse(url=redirect_target, status_code=302)
-                                resp.set_cookie(key=f"gatekeeper_custom_{r.id}", value=tok, domain=f".{apex}", path="/", httponly=True, samesite="lax", secure=True)
+                                resp.set_cookie(key=f"gatekeeper_custom_{r.id}", value=tok, domain=f".{apex}", path="/", httponly=True, samesite="lax", secure=True, max_age=43200)
                                 return resp
         except Exception:
             pass
