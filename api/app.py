@@ -808,6 +808,133 @@ def create_app() -> FastAPI:
         await db.commit()
         return {"ok": True}
 
+    @app.post("/api/auth/verify-code", dependencies=[Depends(_require_internal)])
+    async def verify_code(payload: dict, db=Depends(get_db)):  # type: ignore[no-untyped-def]
+        code_val = str(payload.get("code") or "").strip()
+        if not code_val:
+            raise HTTPException(status_code=400, detail="code required")
+        res = await db.execute(select(Code).where(Code.code == code_val))
+        obj = res.scalars().first()
+        if not obj or not obj.active:
+            raise HTTPException(status_code=404, detail="not found or inactive")
+        try:
+            obj.last_accessed = dt.datetime.utcnow()  # type: ignore[attr-defined]
+            await db.commit()
+        except Exception:
+            pass
+        return {"ok": True, "code_id": obj.id, "label": obj.label, "display_name": obj.display_name, "code": obj.code}
+
+    @app.post("/api/auth/verify-code-id", dependencies=[Depends(_require_internal)])
+    async def verify_code_id(payload: dict, db=Depends(get_db)):  # type: ignore[no-untyped-def]
+        cid = payload.get("cid") or payload.get("code_id") or payload.get("id")
+        try:
+            cid_int = int(str(cid).strip())
+        except Exception:
+            raise HTTPException(status_code=400, detail="cid required")
+        res = await db.execute(select(Code).where(Code.id == cid_int))
+        obj = res.scalars().first()
+        if not obj or not obj.active:
+            raise HTTPException(status_code=404, detail="not found or inactive")
+        try:
+            obj.last_accessed = dt.datetime.utcnow()  # type: ignore[attr-defined]
+            await db.commit()
+        except Exception:
+            pass
+        return {"ok": True, "code_id": obj.id, "label": obj.label, "display_name": obj.display_name, "code": obj.code}
+
+    @app.post("/api/auth/verify-apikey", dependencies=[Depends(_require_internal)])
+    async def verify_apikey(payload: dict, db=Depends(get_db)):  # type: ignore[no-untyped-def]
+        key_val = str(payload.get("key") or "").strip()
+        host = str(payload.get("host") or "").strip().lower()
+        path = str(payload.get("path") or "/").strip() or "/"
+        if not key_val:
+            raise HTTPException(status_code=400, detail="key required")
+        res = await db.execute(select(ApiKey).where(ApiKey.active == True))  # noqa: E712
+        matched: ApiKey | None = None
+        for k in res.scalars().all():
+            exp = hash_api_key(key_val, k.salt)
+            import hmac as _hmac
+
+            if _hmac.compare_digest(exp, k.key_hash):
+                if k.expires_at is not None:
+                    ea = k.expires_at
+                    if ea.tzinfo is not None:
+                        ea = ea.replace(tzinfo=None)
+                    if ea < dt.datetime.utcnow():
+                        continue
+                matched = k
+                break
+        if not matched:
+            raise HTTPException(status_code=404, detail="not found")
+        # whitelist/blacklist via host_matches/path_matches
+        mode = (matched.mode or "none").lower()
+        if mode != "none" and host:
+
+            def _parse(raw: Any) -> list[str]:  # type: ignore[no-untyped-def]
+                if not raw:
+                    return []
+                if isinstance(raw, list):
+                    return [str(x).strip() for x in raw if str(x).strip()]
+                try:
+                    j = json.loads(raw)
+                    if isinstance(j, list):
+                        return [str(x).strip() for x in j if str(x).strip()]
+                except Exception:
+                    pass
+                return [s.strip() for s in str(raw).split(",") if s.strip()]
+
+            def _glob_match(pattern: str, target_host: str, target_path: str) -> bool:
+                if "/" in pattern:
+                    ph, pp = pattern.split("/", 1)
+                    pp = "/" + pp
+                else:
+                    ph, pp = pattern, "/*"
+                return host_matches(ph, target_host) and path_matches(pp, target_path)
+
+            if mode == "whitelist":
+                wl = _parse(matched.whitelist)
+                if not wl:
+                    raise HTTPException(status_code=403, detail="not allowed for this endpoint")
+                allowed = any(_glob_match(pat, host, path) for pat in wl)
+                if not allowed:
+                    raise HTTPException(status_code=403, detail="not allowed for this endpoint")
+            elif mode == "blacklist":
+                bl = _parse(matched.blacklist)
+                for pat in bl:
+                    if _glob_match(pat, host, path):
+                        raise HTTPException(status_code=403, detail="blocked for this endpoint")
+        try:
+            matched.last_used = dt.datetime.utcnow()  # type: ignore[attr-defined]
+            await db.commit()
+        except Exception:
+            pass
+        return {"ok": True, "api_key_id": matched.id, "label": matched.label, "mode": matched.mode, "key_prefix": matched.key_prefix}
+
+    @app.post("/api/auth/verify-custom", dependencies=[Depends(_require_internal)])
+    async def verify_custom(payload: dict, db=Depends(get_db)):  # type: ignore[no-untyped-def]
+        code_val = str(payload.get("code") or "").strip()
+        host = str(payload.get("host") or "").strip().lower()
+        path = str(payload.get("path") or "/").strip() or "/"
+        if not code_val or not host:
+            raise HTTPException(status_code=400, detail="code and host required")
+        res = await db.execute(select(RuleGroup).options(selectinload(RuleGroup.rules)).order_by(RuleGroup.display_order))
+        groups = res.scalars().all()
+        for g in sorted(groups, key=lambda x: x.display_order):
+            if not host_matches(g.domain, host):
+                continue
+            for r in sorted(g.rules, key=lambda x: x.display_order):
+                if not path_matches(r.path, path):
+                    continue
+                if r.action == "custom_password" and r.custom_password_hash and r.custom_password_salt:
+                    from shared.security import verify_custom_password
+
+                    if verify_custom_password(code_val, r.custom_password_hash, r.custom_password_salt):
+                        return {"ok": True, "rule_id": r.id, "group_id": g.id}
+                # only first matching rule matters
+                break
+            break
+        raise HTTPException(status_code=404, detail="no matching custom rule")
+
     @app.get("/api/warnings")
     async def warnings(db=Depends(get_db)):  # type: ignore[no-untyped-def]
         res = await db.execute(select(RuleGroup).options(selectinload(RuleGroup.rules)).order_by(RuleGroup.display_order))

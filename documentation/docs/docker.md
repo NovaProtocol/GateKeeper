@@ -12,7 +12,6 @@ All services use `python:3.14-slim`, `PYTHONDONTWRITEBYTECODE=1`, `pip --no-cach
 | caddy | `caddy/Dockerfile` | `caddy:2-alpine` |
 | documentation | `documentation/Dockerfile` | `mkdocs build` then `granian --port 8005` |
 | mysql-db | `mysql:8.4` | — |
-| phpmyadmin | `phpmyadmin:5.2` | — |
 
 ## Compose
 
@@ -24,8 +23,7 @@ services:
   api: { build: api/Dockerfile, expose: [8002, 50051] }
   management: { build: management/Dockerfile, expose: [8003] }
   mysql-db: { image: mysql:8.4, expose: [3306] }
-  phpmyadmin: { image: phpmyadmin:5.2, expose: [80] }
-  documentation: { build: documentation/Dockerfile, expose: [8005] }
+    documentation: { build: documentation/Dockerfile, expose: [8005] }
 volumes: [gatekeeper_data, mysql_data]
 networks: [default, net-api(internal), net-data(internal), gatekeeper_dynamic(external), gatekeeper(external), cloudflared-tunnel(external)]
 ```

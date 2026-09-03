@@ -7,7 +7,7 @@
 ```caddy
 :7000 {
   handle /health { respond `{"status":"ok"}` 200 }
-  handle_path /phpmyadmin/* {
+  handle_path /documentation/* {
     forward_auth gatekeeper_auth:8001 { uri /api/authz/forward-auth }
     reverse_proxy gatekeeper_phpmyadmin:80
   }

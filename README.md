@@ -14,7 +14,7 @@ Request → Caddy :7000 → Auth Gateway :8001 /api/authz/forward-auth
 
 Any gated URL can carry `?access_code=<code>` as a magic link — stripped after setting the cookie.
 
-**Stack:** Python 3.14 · FastAPI + Granian · SQLAlchemy 2 (async) · MySQL 8.4 / SQLite · Caddy 2 · itsdangerous
+**Stack:** Python 3.14 · FastAPI + Granian · SQLAlchemy 2 (async) · MySQL 8.4 / SQLite · Caddy 2 · PyJWT
 
 ## Services
 
@@ -25,7 +25,7 @@ Any gated URL can carry `?access_code=<code>` as a magic link — stripped after
 | API | 8002 + 50051 (gRPC) | DB owner, CRUD, LogAuth |
 | Management | 8003 | Admin UI |
 | MySQL | 3306 | Store |
-| phpMyAdmin | 80 | DB UI (gated) |
+| Documentation | 8005 | MkDocs (gated) |
 | Documentation | 8005 | MkDocs |
 
 ## Quick Start
