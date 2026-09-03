@@ -26,7 +26,6 @@ Any gated URL can carry `?access_code=<code>` as a magic link — stripped after
 | Management | 8003 | Admin UI |
 | MySQL | 3306 | Store |
 | Documentation | 8005 | MkDocs (gated) |
-| Documentation | 8005 | MkDocs |
 
 ## Quick Start
 

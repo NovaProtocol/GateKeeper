@@ -2,7 +2,7 @@
 
 ## Images
 
-All services use `python:3.14-slim`, `PYTHONDONTWRITEBYTECODE=1`, `pip --no-cache-dir`, `compileall`, `USER appuser (10001)`, `entrypoint.sh` chown `/data`.
+All services use `python:3.14-slim`, `PYTHONDONTWRITEBYTECODE=1`, `pip --no-cache-dir`, `compileall`, `USER appuser (10001)`.
 
 | Service | Dockerfile | CMD |
 |---------|------------|-----|
@@ -30,10 +30,6 @@ networks: [default, net-api(internal), net-data(internal), gatekeeper_dynamic(ex
 
 All healthchecks: `python -c "urllib.request.urlopen('http://127.0.0.1:<port>/health')"`.
 Caddy is the only published port (`127.0.0.1:7000:7000`); others are `expose` internal.
-
-## Entrypoint
-
-`entrypoint.sh` does `chown -R appuser:appuser /data` at start — named volumes retain root ownership from pre-non-root era.
 
 ## Build
 
