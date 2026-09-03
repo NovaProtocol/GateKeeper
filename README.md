@@ -1,6 +1,6 @@
 # GateKeeper
 
-FastAPI gateway that protects web apps through a reverse-proxy gate. A signed, non-expiring access-code cookie (`gatekeeper_token`) on the apex domain is the primary credential; per-rule custom passwords and API keys cover special cases. All traffic enters via Caddy `:7000` (wildcard `*.projectnova.download`).
+FastAPI gateway that protects web apps through a reverse-proxy gate. A signed, expiring 12h JWT cookie (`gatekeeper_token` `PyJWT HS256` `iss=gatekeeper` `aud=projectnova.download` `exp 12h` `jti`) on the apex domain is the primary credential; `manage_session` (`8h` `Path /manage`) and per-rule `gatekeeper_custom_{id}` (`12h` `rid`) share the same `SECRET_KEY` (`Field(min_length=32)`). `codes.active=0` / `api_keys.active=0` revokes instantly via `api:8002` (`internal:true` `X-Internal-Api-Key`). All traffic enters via Caddy `:7000` (wildcard `*.projectnova.download`).
 
 ## How it works
 

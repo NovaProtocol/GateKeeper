@@ -34,9 +34,9 @@ project/
 
 | Service | Build | Expose | Networks |
 |---------|-------|--------|----------|
-| caddy | `caddy/Dockerfile` | `127.0.0.1:7000:7000` | default, gatekeeper, cloudflared-tunnel, net-data |
+| caddy | `caddy/Dockerfile` | `127.0.0.1:7000:7000` | default, gatekeeper, cloudflared-tunnel, gatekeeper_dynamic, net-data |
 | auth-gateway | `auth-gateway/Dockerfile` | 8001 | default, net-api, gatekeeper_dynamic |
-| api | `api/Dockerfile` | 8002, 50051 | net-api (internal), net-data (internal) |
+| api | `api/Dockerfile` | 8002, 50051 | net-api (internal), net-data (internal), gatekeeper_dynamic |
 | management | `management/Dockerfile` | 8003 | default, net-api |
 | mysql-db | `mysql:8.4` | 3306 | net-data |
 
@@ -70,7 +70,7 @@ Browser → Caddy :7000 → Auth Gateway :8001 /api/authz/forward-auth
   └─ on pass: longest-path Route match → proxy to upstream or redirect
 ```
 
-Cache: in-memory `RuleGroup+Route` polled every `CACHE_TTL=5s` under `asyncio.Lock`. Audit via `BackgroundTasks → POST http://api:8002/api/logs` (X-Internal-Api-Key) with direct DB fallback.
+Cache: in-memory `RuleGroup+Route` polled every `CACHE_TTL=5s` under `asyncio.Lock`. Audit via `BackgroundTasks → POST http://api:8002/api/logs` (`X-Internal-Api-Key` on `net-api`, `internal:true`) and `POST /api/routes/{id}/test` `socket.create_connection((upstream,port))` needs `api` on `gatekeeper_dynamic` to reach `portfolio_main:8000` etc.
 
 ## Networks
 
