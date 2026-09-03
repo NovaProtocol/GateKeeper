@@ -198,8 +198,6 @@ async def _get_authenticated_code(request: Request) -> Code | None:
     data = verify_access_token(token)
     if not data:
         return None
-    if data.get("fallback") and data.get("code"):
-        return await _verify_code_value(str(data["code"]))
     cid = data.get("cid")
     if cid is None:
         return None
@@ -430,17 +428,8 @@ def create_app() -> FastAPI:
         token = create_access_token(code.id, code.display_name or code.label or "User")
         resp.set_cookie(key="gatekeeper_token", value=token, domain=f".{apex}", path="/", httponly=True, samesite="lax", secure=True, max_age=43200)
 
-    def _set_auth_cookie_raw(resp: Response, code_val: str, apex: str, code: Code | None = None) -> None:
-        if code is not None:
-            _set_auth_cookie(resp, code, apex)
-            return
-        # fallback for direct code string without row — should not happen
-        token = create_access_token(0, "User")
-        # reuse but encode code in fallback path via shared.jwt fallback helper not exposed; just call verify path
-        import datetime as dt, uuid, jwt as _jwt
-        payload = {"sub": code_val, "code": code_val, "cid": 0, "iss": "gatekeeper", "aud": "projectnova.download", "iat": dt.datetime.now(dt.timezone.utc), "exp": dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=12), "jti": uuid.uuid4().hex}
-        token = _jwt.encode(payload, get_config().SECRET_KEY, algorithm="HS256")
-        resp.set_cookie(key="gatekeeper_token", value=token, domain=f".{apex}", path="/", httponly=True, samesite="lax", secure=True, max_age=43200)
+    def _set_auth_cookie_raw(resp: Response, code: Code, apex: str) -> None:
+        _set_auth_cookie(resp, code, apex)
 
     def _set_manage_session_cookie(resp: Response) -> None:
         token = create_manage_token()

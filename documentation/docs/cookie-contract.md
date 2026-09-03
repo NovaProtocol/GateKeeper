@@ -13,7 +13,7 @@ import jwt
 from shared.jwt import create_access_token, verify_access_token
 token = create_access_token(cid, name)  # HS256, exp 12h
 token = ser.dumps(raw_code)  # gatekeeper_token
-data = verify_access_token(token)  # checks exp/aud/iss, fallback to itsdangerous for one deploy
+data = verify_access_token(token)  # checks exp/aud/iss/signature
 ```
 
 - **Apex** `.example.com` covers `gatekeeper.example.com`, `portfolio.example.com`, etc. One login works everywhere.
