@@ -79,6 +79,7 @@ services:
     networks:
       - net-api
       - net-data
+      - gatekeeper_dynamic
 
   management:
     build:
