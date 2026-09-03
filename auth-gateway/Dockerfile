@@ -7,7 +7,7 @@ ENV PYTHONUNBUFFERED=1
 
 COPY requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt \
-    && pip install --no-cache-dir fastapi granian httpx itsdangerous PyJWT cryptography sqlalchemy aiosqlite structlog slowapi pydantic-settings uvicorn || true
+    && pip install --no-cache-dir fastapi granian httpx PyJWT cryptography sqlalchemy aiosqlite structlog slowapi pydantic-settings uvicorn || true
 
 COPY shared ./shared
 COPY auth-gateway ./auth-gateway

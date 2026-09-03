@@ -564,8 +564,6 @@ async def _code_from_jwt(token: str) -> Code | None:
     data = verify_access_token(token)
     if not data:
         return None
-    if data.get("fallback") and data.get("code"):
-        return await _verify_code_value(str(data["code"]))
     cid = data.get("cid")
     if cid is None:
         return None
