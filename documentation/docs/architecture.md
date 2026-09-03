@@ -6,7 +6,7 @@
 |-------|--------|
 | Runtime | Python 3.14-slim, Granian (ASGI) |
 | Framework | FastAPI modular — `shared/` + 3 services, not a Flask monolith |
-| Cookie | `itsdangerous.URLSafeSerializer(secret, salt="cookie")` |
+| Cookie | `PyJWT HS256` (`SECRET_KEY`, `iss=gatekeeper`, `aud=projectnova.download`, `exp 12h`) |
 | DB | SQLAlchemy 2 async — `aiosqlite` (SQLite WAL) or `aiomysql` (MySQL 8.4). File `gatekeeper.db` at `DB_DIR=/data` |
 | Docs | MkDocs Material 1.6.1 on `:8005`, FastAPI + granian, USER appuser |
 | Proxy | Caddy 2 on `:7000` — wildcard `*.projectnova.download` → `forward_auth gatekeeper_auth:8001` → DB Route lookup |
@@ -15,7 +15,7 @@
 
 ```
 project/
-├── caddy/Caddyfile                 # :7000 wildcard, handle /health, /phpmyadmin/*, /documentation/*, catch-all
+├── caddy/Caddyfile                 # :7000 wildcard, handle /health, /documentation/*, catch-all
 ├── caddy/Dockerfile                # caddy:2-alpine
 ├── shared/
 │   ├── config.py                   # pydantic-settings: SECRET_KEY, MANAGE_PASSWORD, DATABASE_URL, INTERNAL_API_KEY, DEPLOYMENT_TYPE, BACKUP_CODE
@@ -34,12 +34,12 @@ project/
 
 | Service | Build | Expose | Networks |
 |---------|-------|--------|----------|
-| caddy | `caddy/Dockerfile` | `127.0.0.1:7000:7000` | default, gatekeeper, cloudflared-tunnel, gatekeeper_dynamic, net-data |
+| caddy | `caddy/Dockerfile` | `127.0.0.1:7000:7000` | default, gatekeeper, cloudflared-tunnel, net-data |
 | auth-gateway | `auth-gateway/Dockerfile` | 8001 | default, net-api, gatekeeper_dynamic |
-| api | `api/Dockerfile` | 8002, 50051 | net-api, net-data |
+| api | `api/Dockerfile` | 8002, 50051 | net-api (internal), net-data (internal) |
 | management | `management/Dockerfile` | 8003 | default, net-api |
 | mysql-db | `mysql:8.4` | 3306 | net-data |
-| phpmyadmin | `phpmyadmin:5.2` | 80 | net-data |
+
 | documentation | `documentation/Dockerfile` | 8005 | default |
 
 All healthchecks: `python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:<port>/health')"`.

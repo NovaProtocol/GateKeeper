@@ -2,7 +2,7 @@
 
 FastAPI gateway that protects every web app on one apex domain behind a signed access-code cookie. Caddy `forward_auth` is the only gate — apps hold zero auth code and zero GateKeeper secrets.
 
-**Stack:** Python 3.14 · FastAPI + Granian · SQLAlchemy 2 (async) · MySQL 8.4 / SQLite · Caddy 2 · itsdangerous · Docker Compose
+**Stack:** Python 3.14 · FastAPI + Granian · SQLAlchemy 2 (async) · MySQL 8.4 / SQLite · Caddy 2 · PyJWT · Docker Compose
 
 ## Services
 
@@ -13,7 +13,7 @@ FastAPI gateway that protects every web app on one apex domain behind a signed a
 | **API** | `gatekeeper_api` | `:8002` + `:50051` (gRPC) | DB owner, CRUD, gRPC LogAuth | `net-api`, `net-data` |
 | **Management** | `gatekeeper_management` | `:8003` | Admin UI (Jinja + CSRF) | `net-api` |
 | **MySQL** | `gatekeeper_db` | `:3306` | Primary store | `net-data` |
-| **phpMyAdmin** | `gatekeeper_phpmyadmin` | `:80` | DB UI (gated) | `net-data` |
+| **Documentation** | `gatekeeper_phpmyadmin` | `:80` | DB UI (gated) | `net-data` |
 | **Documentation** | `gatekeeper_documentation` | `:8005` | MkDocs (FastAPI + granian) | `default` |
 
 Shared layer `shared/` holds `config.py` (pydantic-settings), `db.py` (async engine), `models.py` (7 tables), `security.py` (pbkdf2, host/path match), `error_pages.py`.

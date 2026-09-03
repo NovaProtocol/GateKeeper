@@ -19,7 +19,6 @@ from sqlalchemy import select
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from shared.config import get_config
-from shared.db import get_sessionmaker
 from shared.models import Code
 from shared.error_pages import render_error_html, wants_html
 from shared.security import apex_domain as shared_apex, mask_code
@@ -140,23 +139,54 @@ def _verify_csrf(request: Request, form_token: str | None) -> bool:
     return secrets.compare_digest(cookie_token, form_token)
 
 
+def _api_headers() -> dict[str, str]:
+    cfg = get_config()
+    h: dict[str, str] = {"Content-Type": "application/json"}
+    if cfg.INTERNAL_API_KEY:
+        h["X-Internal-Api-Key"] = cfg.INTERNAL_API_KEY
+    return h
+
+
+def _api_base() -> str:
+    import os
+    return os.environ.get("API_HTTP_ADDR", "http://api:8002")
+
+
 async def _verify_code_value(code_val: str) -> Code | None:
     if not code_val:
         return None
     try:
-        sm = get_sessionmaker()
-        async with sm() as s:
-            res = await s.execute(select(Code).where(Code.code == code_val, Code.active == True))  # noqa: E712
-            row = res.scalars().first()
-            if row:
-                try:
-                    import datetime as dt
+        base = _api_base()
+        client = _get_httpx()
+        resp = await client.post(f"{base}/api/auth/verify-code", json={"code": code_val}, headers=_api_headers(), timeout=2.0)
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        c = Code(code=code_val, label=data.get("label"), display_name=data.get("display_name"))
+        c.id = data.get("code_id", 0)  # type: ignore[attr-defined]
+        c.active = True  # type: ignore[attr-defined]
+        return c
+    except Exception:
+        return None
 
-                    row.last_accessed = dt.datetime.utcnow()  # type: ignore[attr-defined]
-                    await s.commit()
-                except Exception:
-                    pass
-            return row
+
+async def _verify_code_by_id(cid: int) -> Code | None:
+    try:
+        base = _api_base()
+        client = _get_httpx()
+        resp = await client.post(f"{base}/api/auth/verify-code-id", json={"cid": cid}, headers=_api_headers(), timeout=2.0)
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        # data has code_id/label/display_name
+        c = Code(code=data.get("code", ""), label=data.get("label"), display_name=data.get("display_name"))
+        c.id = data.get("code_id", cid)  # type: ignore[attr-defined]
+        c.active = True  # type: ignore[attr-defined]
+        if not c.code:
+            # fetch via /api/codes/{id} is public but need code value for mask — fetch from data["code"] if present
+            # if api didn't return code, keep label/display_name
+            c.code = "***"
+        return c
     except Exception:
         return None
 
@@ -173,21 +203,7 @@ async def _get_authenticated_code(request: Request) -> Code | None:
     cid = data.get("cid")
     if cid is None:
         return None
-    try:
-        sm = get_sessionmaker()
-        async with sm() as s:
-            res = await s.execute(select(Code).where(Code.id == int(cid), Code.active == True))  # noqa: E712
-            row = res.scalars().first()
-            if row:
-                try:
-                    import datetime as dt
-                    row.last_accessed = dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)  # type: ignore[attr-defined]
-                    await s.commit()
-                except Exception:
-                    pass
-            return row
-    except Exception:
-        return None
+    return await _verify_code_by_id(int(cid))
 
 
 def _display_name(code: Code) -> str:
@@ -552,25 +568,29 @@ def create_app() -> FastAPI:
         custom_host = ""
         try:
             from urllib.parse import urlsplit as _us
-            from shared.security import host_matches as _hm2, path_matches as _pm2
-            from sqlalchemy import select as _sel2
-            from shared.models import RuleGroup as _RG2, Rule as _R2
             tp = _us(redirect_target)
             th = (tp.hostname or "").lower()
             tpa = tp.path or "/"
             if th:
-                sm2 = get_sessionmaker()
-                async with sm2() as s2:
-                    gres = await s2.execute(_sel2(_RG2).order_by(_RG2.display_order))
-                    for g in gres.scalars().all():
-                        if not _hm2(g.domain, th):
+                # API-only: ask api to check custom rule via verify-custom (best-effort, no code yet)
+                # for login page decoration we do a lightweight probe: try verify-custom with dummy code
+                # Instead fetch groups via API and check locally without DB
+                base = _api_base()
+                client = _get_httpx()
+                g_resp = await client.get(f"{base}/api/groups", headers=_api_headers(), timeout=2.0)
+                if g_resp.status_code == 200:
+                    from shared.security import host_matches as _hm2, path_matches as _pm2
+                    for grow in g_resp.json():
+                        if not _hm2(grow.get("domain", ""), th):
                             continue
-                        rres = await s2.execute(_sel2(_R2).where(_R2.group_id == g.id).order_by(_R2.display_order))
-                        for r in rres.scalars().all():
-                            if _pm2(r.path, tpa) and r.action == "custom_password":
-                                is_custom = True
-                                custom_host = th
-                                break
+                        gid = grow.get("id")
+                        r_resp = await client.get(f"{base}/api/groups/{gid}/rules", headers=_api_headers(), timeout=2.0)
+                        if r_resp.status_code == 200:
+                            for rrow in r_resp.json():
+                                if _pm2(rrow.get("path", "/"), tpa) and rrow.get("action") == "custom_password":
+                                    is_custom = True
+                                    custom_host = th
+                                    break
                         break
         except Exception:
             pass
@@ -607,30 +627,22 @@ def create_app() -> FastAPI:
             return resp
         try:
             from urllib.parse import urlsplit as _urlsplit
-            from shared.security import host_matches as _hm, path_matches as _pm, verify_custom_password as _vcp
-            from sqlalchemy import select as _select
-            from shared.models import RuleGroup as _RG, Rule as _R
             target_parts = _urlsplit(redirect_target)
             thost = (target_parts.hostname or "").lower() or _apex_from_request(request).lower()
             tpath = target_parts.path or "/"
             if not thost:
                 thost = _apex_from_request(request)
-            sm = get_sessionmaker()
-            async with sm() as s:
-                gres = await s.execute(_select(_RG).order_by(_RG.display_order))
-                for g in gres.scalars().all():
-                    if not _hm(g.domain, thost):
-                        continue
-                    rres = await s.execute(_select(_R).where(_R.group_id == g.id).order_by(_R.display_order))
-                    for r in rres.scalars().all():
-                        if r.action == "custom_password" and r.custom_password_hash and r.custom_password_salt and _pm(r.path, tpath):
-                            if _vcp(code_val, r.custom_password_hash, r.custom_password_salt):
-                                tok = create_custom_token(r.id)
-                                if not _safe_redirect_target(redirect_target, apex):
-                                    redirect_target = "/"
-                                resp = RedirectResponse(url=redirect_target, status_code=302)
-                                resp.set_cookie(key=f"gatekeeper_custom_{r.id}", value=tok, domain=f".{apex}", path="/", httponly=True, samesite="lax", secure=True, max_age=43200)
-                                return resp
+            base = _api_base()
+            client = _get_httpx()
+            vresp = await client.post(f"{base}/api/auth/verify-custom", json={"code": code_val, "host": thost, "path": tpath}, headers=_api_headers(), timeout=2.0)
+            if vresp.status_code == 200:
+                rid = vresp.json().get("rule_id")
+                tok = create_custom_token(int(rid))
+                if not _safe_redirect_target(redirect_target, apex):
+                    redirect_target = "/"
+                resp = RedirectResponse(url=redirect_target, status_code=302)
+                resp.set_cookie(key=f"gatekeeper_custom_{rid}", value=tok, domain=f".{apex}", path="/", httponly=True, samesite="lax", secure=True, max_age=43200)
+                return resp
         except Exception:
             pass
         return templates.TemplateResponse(request, "login.html", {"request": request, "error": "Invalid code", "redirect": redirect_target, "csrf_token": _get_csrf_token(request), "is_custom": False, "custom_host": "", "login_host": _derive_login_host(redirect_target, apex)}, status_code=401)

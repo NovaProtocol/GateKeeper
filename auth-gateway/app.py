@@ -22,10 +22,9 @@ from sqlalchemy.orm import selectinload
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from shared.config import get_config
-from shared.db import get_sessionmaker
 from shared.models import ApiKey, AuditLog, Code, Route, Rule, RuleGroup
 from shared.security import apex_domain as shared_apex_domain
-from shared.security import hash_api_key, host_matches, path_matches, verify_custom_password
+from shared.security import host_matches, path_matches, verify_custom_password
 
 try:
     import structlog
@@ -327,6 +326,19 @@ def _api_key_allows(api_key: ApiKey, host: str, path: str) -> bool:
     return True
 
 
+def _api_headers() -> dict[str, str]:
+    cfg = get_config()
+    h: dict[str, str] = {"Content-Type": "application/json"}
+    if cfg.INTERNAL_API_KEY:
+        h["X-Internal-Api-Key"] = cfg.INTERNAL_API_KEY
+    return h
+
+
+def _api_base() -> str:
+    import os
+    return os.environ.get("API_HTTP_ADDR", "http://api:8002")
+
+
 async def _load_caches() -> tuple[list[Route], list[RuleGroup]]:
     global _CacheRoutes, _CacheGroups, _CacheTs
     now = time.monotonic()
@@ -337,12 +349,39 @@ async def _load_caches() -> tuple[list[Route], list[RuleGroup]]:
         if _CacheRoutes is not None and _CacheGroups is not None and (now2 - _CacheTs) < CACHE_TTL:
             return _CacheRoutes, _CacheGroups
         try:
-            sm = get_sessionmaker()
-            async with sm() as s:
-                rres = await s.execute(select(Route))
-                routes = list(rres.scalars().all())
-                gres = await s.execute(select(RuleGroup).options(selectinload(RuleGroup.rules)).order_by(RuleGroup.display_order))
-                groups = list(gres.scalars().all())
+            base = _api_base()
+            client = _get_httpx()
+            hdr = _api_headers()
+            # fetch routes + groups via API (X-Internal-Api-Key on net-api)
+            r_resp = await client.get(f"{base}/api/routes", headers=hdr, timeout=2.0)
+            r_resp.raise_for_status()
+            r_json = r_resp.json()
+            routes: list[Route] = []
+            for row in r_json if isinstance(r_json, list) else []:
+                rr = Route(host=row.get("host", ""), path=row.get("path", "/"), route_type=row.get("route_type", "proxy"), upstream=row.get("upstream"), port=row.get("port"), redirect_target=row.get("redirect_target"), redirect_code=row.get("redirect_code"))
+                rr.id = row.get("id", 0)  # type: ignore[attr-defined]
+                routes.append(rr)
+            g_resp = await client.get(f"{base}/api/groups", headers=hdr, timeout=2.0)
+            g_resp.raise_for_status()
+            g_json = g_resp.json()
+            groups: list[RuleGroup] = []
+            # groups endpoint returns without rules; fetch rules per group
+            for grow in g_json if isinstance(g_json, list) else []:
+                gr = RuleGroup(name=grow.get("name", ""), domain=grow.get("domain", ""), display_order=grow.get("display_order", 0), is_default=bool(grow.get("is_default", False)))
+                gr.id = grow.get("id", 0)  # type: ignore[attr-defined]
+                try:
+                    rr_resp = await client.get(f"{base}/api/groups/{gr.id}/rules", headers=hdr, timeout=2.0)
+                    if rr_resp.status_code == 200:
+                        for rrow in rr_resp.json():
+                            rule = Rule(group_id=gr.id, path=rrow.get("path", "/"), action=rrow.get("action", "access_code"), display_order=rrow.get("display_order", 0))
+                            rule.id = rrow.get("id", 0)  # type: ignore[attr-defined]
+                            rule.custom_password_hash = None  # type: ignore[attr-defined]
+                            rule.custom_password_salt = None  # type: ignore[attr-defined]
+                            # need hash for custom_password param check — fetch via direct rule lookup not exposed; keep verify via api
+                            gr.rules.append(rule)
+                except Exception:
+                    pass
+                groups.append(gr)
         except Exception as e:
             _slog("cache_load_failed", error=str(e))
             if _CacheRoutes is not None and _CacheGroups is not None:
@@ -397,49 +436,53 @@ async def _verify_code_value(code_val: str) -> Code | None:
     if not code_val:
         return None
     try:
-        sm = get_sessionmaker()
-        async with sm() as s:
-            res = await s.execute(select(Code).where(Code.code == code_val, Code.active == True))  # noqa: E712
-            row = res.scalars().first()
-            if row:
-                try:
-                    row.last_accessed = __import__("datetime").datetime.utcnow()  # type: ignore[attr-defined]
-                    await s.commit()
-                except Exception:
-                    pass
-            return row
+        base = _api_base()
+        client = _get_httpx()
+        resp = await client.post(f"{base}/api/auth/verify-code", json={"code": code_val}, headers=_api_headers(), timeout=2.0)
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        c = Code(code=code_val, label=data.get("label"), display_name=data.get("display_name"))
+        c.id = data.get("code_id", 0)  # type: ignore[attr-defined]
+        c.active = True  # type: ignore[attr-defined]
+        return c
     except Exception:
         return None
 
 
 async def _verify_api_key_value(key_val: str) -> ApiKey | None:
+    # legacy no-host check — used only for forward_auth without host context fallback
     if not key_val:
         return None
     try:
-        sm = get_sessionmaker()
-        async with sm() as s:
-            res = await s.execute(select(ApiKey).where(ApiKey.active == True))  # noqa: E712
-            for k in res.scalars().all():
-                exp = hash_api_key(key_val, k.salt)
-                if __import__("hmac").compare_digest(exp, k.key_hash):
-                    if k.expires_at is not None:
-                        import datetime as dt
-
-                        now = dt.datetime.utcnow()
-                        ea = k.expires_at
-                        if ea.tzinfo is not None:
-                            ea = ea.replace(tzinfo=None)
-                        if ea < now:
-                            return None
-                    try:
-                        import datetime as dt
-
-                        k.last_used = dt.datetime.utcnow()  # type: ignore[attr-defined]
-                        await s.commit()
-                    except Exception:
-                        pass
-                    return k
+        base = _api_base()
+        client = _get_httpx()
+        resp = await client.post(f"{base}/api/auth/verify-apikey", json={"key": key_val, "host": "", "path": "/"}, headers=_api_headers(), timeout=2.0)
+        if resp.status_code != 200:
             return None
+        data = resp.json()
+        k = ApiKey(key_hash="", key_prefix=data.get("key_prefix", ""), salt="", label=data.get("label"), mode=data.get("mode", "none"))
+        k.id = data.get("api_key_id", 0)  # type: ignore[attr-defined]
+        k.active = True  # type: ignore[attr-defined]
+        return k
+    except Exception:
+        return None
+
+
+async def _verify_api_key_allowed(key_val: str, host: str, path: str) -> ApiKey | None:
+    if not key_val:
+        return None
+    try:
+        base = _api_base()
+        client = _get_httpx()
+        resp = await client.post(f"{base}/api/auth/verify-apikey", json={"key": key_val, "host": host, "path": path}, headers=_api_headers(), timeout=2.0)
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        k = ApiKey(key_hash="", key_prefix=data.get("key_prefix", ""), salt="", label=data.get("label"), mode=data.get("mode", "none"))
+        k.id = data.get("api_key_id", 0)  # type: ignore[attr-defined]
+        k.active = True  # type: ignore[attr-defined]
+        return k
     except Exception:
         return None
 
@@ -490,31 +533,7 @@ async def _audit_log_async(
             pass
     except Exception:
         pass
-    try:
-        sm = get_sessionmaker()
-        async with sm() as s:
-            import datetime as dt
-
-            al = AuditLog(
-                ip=ip,
-                host=host,
-                path=path,
-                action=action,
-                matched_action=matched_action,
-                rule_group_id=rule_group_id,
-                rule_id=rule_id,
-                code_id=code_id,
-                api_key_id=api_key_id,
-                request_id=request_id,
-                user_agent=(user_agent or "")[:512],
-                referer=(referer or "")[:1024],
-                latency_ms=latency_ms,
-                ts=dt.datetime.utcnow(),
-            )
-            s.add(al)
-            await s.commit()
-    except Exception as e:
-        _slog("audit_direct_failed", error=str(e))
+    # audit fallback removed — API-only DB; api:8002 is sole writer (internal:true)
 
 
 def _queue_audit(background_tasks: BackgroundTasks, **kw: Any) -> None:
@@ -550,18 +569,20 @@ async def _code_from_jwt(token: str) -> Code | None:
     cid = data.get("cid")
     if cid is None:
         return None
+    # API-only: verify via cid endpoint (X-Internal-Api-Key on net-api)
     try:
-        sm = get_sessionmaker()
-        async with sm() as s:
-            res = await s.execute(select(Code).where(Code.id == int(cid), Code.active == True))  # noqa: E712
-            row = res.scalars().first()
-            if row:
-                try:
-                    row.last_accessed = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).replace(tzinfo=None)  # type: ignore[attr-defined]
-                    await s.commit()
-                except Exception:
-                    pass
-            return row
+        base = _api_base()
+        client = _get_httpx()
+        resp = await client.post(f"{base}/api/auth/verify-code-id", json={"cid": int(cid)}, headers=_api_headers(), timeout=2.0)
+        if resp.status_code != 200:
+            return None
+        jd = resp.json()
+        c = Code(code=jd.get("code", ""), label=jd.get("label"), display_name=jd.get("display_name"))
+        c.id = jd.get("code_id", int(cid))  # type: ignore[attr-defined]
+        c.active = True  # type: ignore[attr-defined]
+        if not c.code:
+            c.code = str(cid)
+        return c
     except Exception:
         return None
 
