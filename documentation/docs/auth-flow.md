@@ -20,16 +20,15 @@ Request → Caddy forward_auth → Auth Gateway /api/authz/forward-auth
 3. Within group, `Rules` ordered by `display_order`; first `path_matches(rule.path, uri.path)` wins (`/*` prefix).
 4. No match → default group's first rule.
 
-`CACHE_TTL=5s` in-memory under `asyncio.Lock`. All auth paths audit via `BackgroundTasks → POST http://api:8002/api/logs` (X-Internal-Api-Key) with DB fallback.
+`CACHE_TTL=5s` in-memory under `asyncio.Lock` — auth-gateway loads `Route`+`RuleGroup` via `GET http://api:8002/api/routes|groups|rules` (`X-Internal-Api-Key` on `net-api` `internal:true`), `api:8002` is sole `shared/db.py` owner (`net-data`). All auth paths audit via `BackgroundTasks → POST http://api:8002/api/logs` (`X-Internal-Api-Key`, `internal:true`); on failure keep stale cache / drop audit — no direct DB fallback in `auth-gateway`.
 
 ## Cookie
 
-`gatekeeper_token = URLSafeSerializer(SECRET_KEY, salt="cookie").dumps(code)`.
-Verified against `codes` where `active=1`; `last_accessed` bumped. Bad signature → no cookie.
+`gatekeeper_token = PyJWT HS256` (`shared/jwt.py` `create_access_token(cid,name)` `iss=gatekeeper` `aud=projectnova.download` `exp 12h` `jti`). Verified as `verify_access_token(token)` checks `exp/aud/iss/signature` then `POST http://api:8002/api/auth/verify-code-id {cid}` checks `codes.active=1` + bumps `last_accessed` on `net-api` `internal:true`; `jwt.ExpiredSignatureError` / bad signature → no cookie.
 
 ## Magic Link
 
-`?access_code=<code>` on any gated URL → validate → `Set-Cookie` on `.<apex>` (`HttpOnly`, `Lax`, `Secure`, no expiry) → `302` to same URL with param stripped (`urlsplit`/`parse_qsl`/`urlencode` keeps other params).
+`?access_code=<code>` on any gated URL → `POST http://api:8002/api/auth/verify-code {code}` via `api:8002` → `Set-Cookie gatekeeper_token=PyJWT HS256` on `.<apex>` (`HttpOnly`, `Lax`, `Secure`, `Max-Age=43200` `exp 12h`) → `302` to same URL with param stripped (`urlsplit`/`parse_qsl`/`urlencode` keeps other params).
 
 ## Custom Password
 

@@ -47,7 +47,7 @@ docker compose ps
 | `https://gatekeeper.projectnova.download/health` | Health probe |
 | `http://127.0.0.1:7000/health` | Local Caddy health |
 
-Login sets `gatekeeper_token` (apex, HttpOnly, Lax, Secure, no expiry). Management login sets `manage_session` (`/manage`, 8h).
+Login sets `gatekeeper_token` (`PyJWT HS256` `exp 12h` `Max-Age=43200` apex, `HttpOnly`, `Lax`, `Secure`). Management login sets `manage_session` (`8h` `Path /manage`). Per-rule `gatekeeper_custom_{id}` is `12h`.
 
 ## 3. Create Codes
 
