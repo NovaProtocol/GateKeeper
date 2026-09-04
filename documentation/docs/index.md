@@ -13,20 +13,19 @@ FastAPI gateway that protects every web app on one apex domain behind a signed a
 | **API** | `gatekeeper_api` | `:8002` + `:50051` (gRPC) | DB owner, CRUD, gRPC LogAuth | `net-api`, `net-data` |
 | **Management** | `gatekeeper_management` | `:8003` | Admin UI (Jinja + CSRF) | `net-api` |
 | **MySQL** | `gatekeeper_db` | `:3306` | Primary store | `net-data` |
-| **Documentation** | `gatekeeper_phpmyadmin` | `:80` | DB UI (gated) | `net-data` |
 | **Documentation** | `gatekeeper_documentation` | `:8005` | MkDocs (FastAPI + granian) | `default` |
 
-Shared layer `shared/` holds `config.py` (pydantic-settings), `db.py` (async engine), `models.py` (7 tables), `security.py` (pbkdf2, host/path match), `error_pages.py`.
+Shared layer `shared/` holds `config.py` (pydantic-settings), `jwt.py` (`PyJWT HS256` `iss=gatekeeper` `aud=projectnova.download` `exp 12h/8h/12h`), `models.py` (7 tables), `security.py` (pbkdf2, host/path match), `error_pages.py`; `shared/db.py` (async engine) is imported only by `api:8002` (`net-data` sole writer `gatekeeper_data` + `mysql_data`).
 
 ```mermaid
 graph TB
     TUN["Cloudflare Tunnel / Browser"] --> CADDY["Caddy :7000<br/>wildcard"]
     CADDY --> AUTH["Auth Gateway :8001<br/>forward_auth + proxy"]
-    AUTH --> API["API :8002 / :50051<br/>DB + gRPC"]
-    AUTH --> MGMT["Management :8003<br/>Jinja UI"]
-    AUTH --> DB[("MySQL / SQLite<br/>gatekeeper.db")]
-    AUTH --> COOKIE["gatekeeper_token<br/>HttpOnly Lax Secure<br/>.apex"]
     CADDY --> DOC["Docs :8005<br/>FastAPI/granian"]
+    AUTH --> API["API :8002 / :50051<br/>DB + gRPC"]
+    API --> DB[("MySQL 8.4 / SQLite<br/>gatekeeper_data + mysql_data")]
+    MGMT["Management :8003<br/>Jinja UI"] --> API
+    AUTH --> COOKIE["gatekeeper_token<br/>PyJWT HS256 12h<br/>HttpOnly Lax Secure .apex"]
 ```
 
 ```
