@@ -19,12 +19,14 @@ Shared layer `shared/` holds `config.py` (pydantic-settings), `jwt.py` (`PyJWT H
 
 ```mermaid
 graph TB
-    TUN["Cloudflare Tunnel / Browser"] --> CADDY["Caddy :7000<br/>wildcard"]
+    TUN["Cloudflare Tunnel / Browser"] --> CADDY["Caddy :7000<br/>wildcard — 3 handles"]
     CADDY --> AUTH["Auth Gateway :8001<br/>forward_auth + proxy"]
-    CADDY --> DOC["Docs :8005<br/>FastAPI/granian"]
+    CADDY --> MGMT["Management :8003<br/>Jinja UI"]
+    CADDY --> DOC["Docs :8005<br/>MkDocs"]
     AUTH --> API["API :8002 / :50051<br/>DB + gRPC"]
+    MGMT --> API
+    AUTH -.-> MGMT
     API --> DB[("MySQL 8.4 / SQLite<br/>gatekeeper_data + mysql_data")]
-    MGMT["Management :8003<br/>Jinja UI"] --> API
     AUTH --> COOKIE["gatekeeper_token<br/>PyJWT HS256 12h<br/>HttpOnly Lax Secure .apex"]
 ```
 
