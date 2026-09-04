@@ -11,6 +11,6 @@ rules(group_id, path, action, custom_password_hash, custom_password_salt, displa
 - `action`: `access_code` (check cookie/magic link), `none` (allow), `custom_password` (per-rule password), `deny` (403).
 - `allow_ip`, `allow_time`, `rate_limit` are **reserved** — stored, not enforced on hot path.
 
-Reorder via `PUT /api/groups/{id}/order` and `PUT /api/rules/{id}/order` (`up`/`down`).
+Reorder via `PUT /api/groups/{gid}/order {"direction": "up|down"}` and `PUT /api/rules/{rid}/order {"direction": "up|down"}` (`X-Internal-Api-Key`).
 
 Shadowing: `GET /api/warnings` reports `/*` rules that hide later rules.
