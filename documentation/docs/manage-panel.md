@@ -17,7 +17,7 @@
 | `GET /manage/rules` | Rule groups list |
 | `POST /manage/groups` | Create group (`name`, `domain`) |
 | `GET /manage/rules/{gid}` | Rules in group |
-| `POST /manage/groups/{gid}/rules` | Create rule (`path`, `action`, `custom_password`) |
+| `POST /manage/groups/{gid}/rules` | Create rule (`path`, `action`, `custom_password`) — see `PUT /api/rules/{rid}` for edit |
 | `GET /manage/codes` | Codes list + create/revoke/edit |
 | `GET /manage/logs` | Audit logs (filters host/ip/action/endpoint) |
 | `GET /manage/top-pages` | Top paths by hits |
