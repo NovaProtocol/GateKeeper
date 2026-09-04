@@ -29,4 +29,4 @@ All mutating `POST/PUT/DELETE` require `csrf_token` + `same_origin`.
 
 ## Codes
 
-`label`/`display_name`/`active`/`last_accessed`. Creating requires explicit `code` value; API also supports `dice` generation for API keys.
+`label`/`display_name`/`active`/`last_accessed`. Creating requires explicit `code` value; API auto-generates if `key` omitted (`POST /api/keys` without `key` → `secrets.token_urlsafe(16)`).
