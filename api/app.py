@@ -691,11 +691,6 @@ def create_app() -> FastAPI:
         await db.commit()
         return {"ok": True}
 
-    @app.get("/api/keys/dice")
-    async def dice(len: int = Query(default=8, ge=4, le=64)) -> dict[str, str]:  # noqa: A002
-        alphabet = string.ascii_letters + string.digits
-        return {"dice": "".join(secrets.choice(alphabet) for _ in range(len))}
-
     @app.get("/api/logs")
     async def list_logs(  # type: ignore[no-untyped-def]
         request: Request,
