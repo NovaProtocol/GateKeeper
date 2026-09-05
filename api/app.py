@@ -23,8 +23,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from shared.config import get_config
 from shared.db import Base, get_db, get_engine, get_sessionmaker
-from shared.models import ApiKey, AuditLog, Code, Route, Rule, RuleGroup
-from shared.security import hash_api_key, hash_custom_password, host_matches, path_matches
+from shared.models import AuditLog, Code, Route, Rule, RuleGroup, Setting
+from shared.security import hash_custom_password, host_matches, mask_code, path_matches
 
 try:
     import structlog
@@ -168,6 +168,29 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
             except Exception:
                 pass
         await conn.run_sync(_migrate_routes)
+
+        def _migrate_audit(sync_conn):  # type: ignore[no-untyped-def]
+            try:
+                res = sync_conn.execute(text("PRAGMA table_info(audit_logs)"))
+                cols = {row[1] for row in res.fetchall()}
+                if "method" not in cols:
+                    sync_conn.execute(text("ALTER TABLE audit_logs ADD COLUMN method VARCHAR(10)"))
+                if "status_code" not in cols:
+                    sync_conn.execute(text("ALTER TABLE audit_logs ADD COLUMN status_code INTEGER"))
+                if "attempted_code" not in cols:
+                    sync_conn.execute(text("ALTER TABLE audit_logs ADD COLUMN attempted_code VARCHAR(64)"))
+                if "ip" in cols:
+                    sync_conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_logs_ip ON audit_logs (ip)"))
+                if "action" in cols:
+                    sync_conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_logs_action ON audit_logs (action)"))
+            except Exception:
+                pass
+            try:
+                sync_conn.execute(text("CREATE TABLE IF NOT EXISTS settings (key VARCHAR(64) PRIMARY KEY, value TEXT NOT NULL, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)"))
+            except Exception:
+                pass
+
+        await conn.run_sync(_migrate_audit)
     async with get_sessionmaker()() as s:
         res = await s.execute(select(RuleGroup).where(RuleGroup.name == "*.*/*"))
         grp = res.scalars().first()
@@ -215,6 +238,13 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
             if not res.scalars().first():
                 s.add(Code(code=cfg.BACKUP_CODE, label="backup"))
                 await s.commit()
+        try:
+            res = await s.execute(select(Setting).where(Setting.key == "rate_limit_access_code_per_min"))
+            if not res.scalars().first():
+                s.add(Setting(key="rate_limit_access_code_per_min", value="5"))
+                await s.commit()
+        except Exception:
+            pass
     yield
 
 
@@ -645,52 +675,6 @@ def create_app() -> FastAPI:
         await db.refresh(obj)
         return {"id": obj.id, "code": obj.code, "label": obj.label, "display_name": obj.display_name, "active": obj.active}
 
-    @app.get("/api/keys")
-    async def list_keys(db=Depends(get_db)):  # type: ignore[no-untyped-def]
-        res = await db.execute(select(ApiKey).order_by(ApiKey.id.desc()))
-        rows = res.scalars().all()
-        return [{"id": k.id, "key_prefix": k.key_prefix, "label": k.label, "display_name": k.display_name, "active": k.active, "mode": k.mode, "whitelist": k.whitelist, "blacklist": k.blacklist, "expires_at": k.expires_at, "last_used": k.last_used} for k in rows]
-
-    @app.post("/api/keys", dependencies=[Depends(_require_internal)])
-    async def create_key(payload: dict, db=Depends(get_db)):  # type: ignore[no-untyped-def]
-        raw = str(payload.get("key") or "").strip() or secrets.token_urlsafe(16)[:16]
-        if len(raw) < 8 or len(raw) > 64:
-            raise HTTPException(status_code=400, detail="key must be 8-64 chars")
-        label = payload.get("label")
-        mode = str(payload.get("mode") or "none").strip()
-        if mode not in ("none", "whitelist", "blacklist"):
-            raise HTTPException(status_code=400, detail="invalid mode")
-        whitelist = payload.get("whitelist")
-        blacklist = payload.get("blacklist")
-        if isinstance(whitelist, list):
-            whitelist = json.dumps(whitelist)
-        if isinstance(blacklist, list):
-            blacklist = json.dumps(blacklist)
-        expires_at = payload.get("expires_at")
-        exp_dt = _parse_dt(str(expires_at)) if expires_at else None
-        salt = secrets.token_hex(32)
-        h = hash_api_key(raw, salt)
-        prefix = raw[:4] + "***" + raw[-4:] if len(raw) > 8 else raw[:2] + "***" + raw[-2:]
-        k = ApiKey(key_hash=h, key_prefix=prefix, salt=salt, label=str(label).strip() if label else None, display_name=str(payload.get("display_name") or label).strip() if (label or payload.get("display_name")) else None, mode=mode, whitelist=whitelist, blacklist=blacklist, expires_at=exp_dt)
-        db.add(k)
-        try:
-            await db.commit()
-            await db.refresh(k)
-        except IntegrityError:
-            await db.rollback()
-            raise HTTPException(status_code=409, detail="key exists")
-        return {"id": k.id, "key": raw, "key_prefix": prefix, "label": k.label, "mode": k.mode}
-
-    @app.post("/api/keys/{kid}/revoke", dependencies=[Depends(_require_internal)])
-    async def revoke_key(kid: int, db=Depends(get_db)):  # type: ignore[no-untyped-def]
-        res = await db.execute(select(ApiKey).where(ApiKey.id == kid))
-        obj = res.scalars().first()
-        if not obj:
-            raise HTTPException(status_code=404, detail="not found")
-        obj.active = False  # type: ignore[assignment]
-        await db.commit()
-        return {"ok": True}
-
     @app.get("/api/logs")
     async def list_logs(  # type: ignore[no-untyped-def]
         request: Request,
@@ -747,19 +731,13 @@ def create_app() -> FastAPI:
         res = await db.execute(q)
         rows = res.scalars().all()
         code_ids = [r.code_id for r in rows if r.code_id]
-        api_key_ids = [r.api_key_id for r in rows if r.api_key_id]
         code_map: dict[int, Code] = {}
-        api_key_map: dict[int, ApiKey] = {}
         if code_ids:
             cres = await db.execute(select(Code).where(Code.id.in_(code_ids)))
             for c in cres.scalars().all():
                 code_map[c.id] = c
-        if api_key_ids:
-            kres = await db.execute(select(ApiKey).where(ApiKey.id.in_(api_key_ids)))
-            for k in kres.scalars().all():
-                api_key_map[k.id] = k
         response.headers["X-Total-Count"] = str(total)
-        return [{"id": r.id, "ts": r.ts, "ip": r.ip, "host": r.host, "path": r.path, "action": r.action, "matched_action": r.matched_action, "request_id": r.request_id, "code_id": r.code_id, "api_key_id": r.api_key_id, "code_label": (code_map[r.code_id].display_name or code_map[r.code_id].label) if r.code_id and r.code_id in code_map else None, "code_value": code_map[r.code_id].code if r.code_id and r.code_id in code_map else None, "code_active": code_map[r.code_id].active if r.code_id and r.code_id in code_map else None, "api_key_label": (api_key_map[r.api_key_id].display_name or api_key_map[r.api_key_id].label) if r.api_key_id and r.api_key_id in api_key_map else None, "api_key_active": api_key_map[r.api_key_id].active if r.api_key_id and r.api_key_id in api_key_map else None} for r in rows]
+        return [{"id": r.id, "ts": r.ts, "ip": r.ip, "host": r.host, "path": r.path, "action": r.action, "matched_action": r.matched_action, "request_id": r.request_id, "code_id": r.code_id, "code_label": (code_map[r.code_id].display_name or code_map[r.code_id].label) if r.code_id and r.code_id in code_map else None, "code_value": code_map[r.code_id].code if r.code_id and r.code_id in code_map else None, "code_active": code_map[r.code_id].active if r.code_id and r.code_id in code_map else None, "method": r.method, "status_code": r.status_code, "attempted_code": r.attempted_code, "user_agent": r.user_agent, "referer": r.referer, "latency_ms": r.latency_ms, "rule_group_id": r.rule_group_id, "rule_id": r.rule_id} for r in rows]
 
     @app.get("/api/logs/top")
     async def logs_top(  # type: ignore[no-untyped-def]
@@ -837,74 +815,6 @@ def create_app() -> FastAPI:
             pass
         return {"ok": True, "code_id": obj.id, "label": obj.label, "display_name": obj.display_name, "code": obj.code}
 
-    @app.post("/api/auth/verify-apikey", dependencies=[Depends(_require_internal)])
-    async def verify_apikey(payload: dict, db=Depends(get_db)):  # type: ignore[no-untyped-def]
-        key_val = str(payload.get("key") or "").strip()
-        host = str(payload.get("host") or "").strip().lower()
-        path = str(payload.get("path") or "/").strip() or "/"
-        if not key_val:
-            raise HTTPException(status_code=400, detail="key required")
-        res = await db.execute(select(ApiKey).where(ApiKey.active == True))  # noqa: E712
-        matched: ApiKey | None = None
-        for k in res.scalars().all():
-            exp = hash_api_key(key_val, k.salt)
-            import hmac as _hmac
-
-            if _hmac.compare_digest(exp, k.key_hash):
-                if k.expires_at is not None:
-                    ea = k.expires_at
-                    if ea.tzinfo is not None:
-                        ea = ea.replace(tzinfo=None)
-                    if ea < dt.datetime.utcnow():
-                        continue
-                matched = k
-                break
-        if not matched:
-            raise HTTPException(status_code=404, detail="not found")
-        # whitelist/blacklist via host_matches/path_matches
-        mode = (matched.mode or "none").lower()
-        if mode != "none" and host:
-
-            def _parse(raw: Any) -> list[str]:  # type: ignore[no-untyped-def]
-                if not raw:
-                    return []
-                if isinstance(raw, list):
-                    return [str(x).strip() for x in raw if str(x).strip()]
-                try:
-                    j = json.loads(raw)
-                    if isinstance(j, list):
-                        return [str(x).strip() for x in j if str(x).strip()]
-                except Exception:
-                    pass
-                return [s.strip() for s in str(raw).split(",") if s.strip()]
-
-            def _glob_match(pattern: str, target_host: str, target_path: str) -> bool:
-                if "/" in pattern:
-                    ph, pp = pattern.split("/", 1)
-                    pp = "/" + pp
-                else:
-                    ph, pp = pattern, "/*"
-                return host_matches(ph, target_host) and path_matches(pp, target_path)
-
-            if mode == "whitelist":
-                wl = _parse(matched.whitelist)
-                if not wl:
-                    raise HTTPException(status_code=403, detail="not allowed for this endpoint")
-                allowed = any(_glob_match(pat, host, path) for pat in wl)
-                if not allowed:
-                    raise HTTPException(status_code=403, detail="not allowed for this endpoint")
-            elif mode == "blacklist":
-                bl = _parse(matched.blacklist)
-                for pat in bl:
-                    if _glob_match(pat, host, path):
-                        raise HTTPException(status_code=403, detail="blocked for this endpoint")
-        try:
-            matched.last_used = dt.datetime.utcnow()  # type: ignore[attr-defined]
-            await db.commit()
-        except Exception:
-            pass
-        return {"ok": True, "api_key_id": matched.id, "label": matched.label, "mode": matched.mode, "key_prefix": matched.key_prefix}
-
     @app.post("/api/auth/verify-custom", dependencies=[Depends(_require_internal)])
     async def verify_custom(payload: dict, db=Depends(get_db)):  # type: ignore[no-untyped-def]
         code_val = str(payload.get("code") or "").strip()
@@ -935,6 +845,127 @@ def create_app() -> FastAPI:
         res = await db.execute(select(RuleGroup).options(selectinload(RuleGroup.rules)).order_by(RuleGroup.display_order))
         groups = res.scalars().all()
         return _shadowed_warnings(groups)
+
+    @app.get("/api/settings")
+    async def list_settings(db=Depends(get_db)):  # type: ignore[no-untyped-def]
+        res = await db.execute(select(Setting).order_by(Setting.key))
+        rows = res.scalars().all()
+        return [{"key": r.key, "value": r.value, "updated_at": r.updated_at} for r in rows]
+
+    @app.get("/api/settings/{key}")
+    async def get_setting(key: str, db=Depends(get_db)):  # type: ignore[no-untyped-def]
+        res = await db.execute(select(Setting).where(Setting.key == key))
+        obj = res.scalars().first()
+        if not obj:
+            raise HTTPException(status_code=404, detail="not found")
+        return {"key": obj.key, "value": obj.value, "updated_at": obj.updated_at}
+
+    @app.put("/api/settings/{key}", dependencies=[Depends(_require_internal)])
+    async def put_setting(key: str, payload: dict, db=Depends(get_db)):  # type: ignore[no-untyped-def]
+        key = key.strip()
+        if not key:
+            raise HTTPException(status_code=400, detail="key required")
+        raw = payload.get("value")
+        if raw is None:
+            raw = payload.get("key")
+        if raw is None:
+            raise HTTPException(status_code=400, detail="value required")
+        val = str(raw).strip()
+        # validate known keys
+        if key == "rate_limit_access_code_per_min":
+            try:
+                n = int(val)
+            except Exception:
+                raise HTTPException(status_code=400, detail="must be integer 1..1000")
+            if not (1 <= n <= 1000):
+                raise HTTPException(status_code=400, detail="must be 1..1000")
+            val = str(n)
+        res = await db.execute(select(Setting).where(Setting.key == key))
+        obj = res.scalars().first()
+        if obj:
+            obj.value = val  # type: ignore[assignment]
+        else:
+            obj = Setting(key=key, value=val)
+            db.add(obj)
+        await db.commit()
+        await db.refresh(obj)
+        return {"key": obj.key, "value": obj.value, "updated_at": obj.updated_at}
+
+    @app.post("/api/auth/check-rate-limit", dependencies=[Depends(_require_internal)])
+    async def check_rate_limit(payload: dict, db=Depends(get_db)):  # type: ignore[no-untyped-def]
+        ip = str(payload.get("ip") or "").strip()
+        if not ip:
+            raise HTTPException(status_code=400, detail="ip required")
+        # read limit from settings
+        res = await db.execute(select(Setting).where(Setting.key == "rate_limit_access_code_per_min"))
+        row = res.scalars().first()
+        try:
+            limit = int(row.value) if row else 5
+        except Exception:
+            limit = 5
+        cutoff = dt.datetime.utcnow() - dt.timedelta(minutes=1)
+        # count access_code attempts in last minute (both success and fail)
+        cq = select(func.count()).select_from(AuditLog).where(AuditLog.ip == ip, AuditLog.ts >= cutoff, AuditLog.action.in_(["access_code_login", "access_code_fail", "auth_success", "no_cookie_redirect", "access_code_rate_limited"]))
+        # fallback: count all with attempted_code not null
+        cnt = (await db.execute(cq)).scalar_one()
+        allowed = cnt < limit
+        return {"allowed": allowed, "count": cnt, "limit": limit, "ip": ip}
+
+    @app.get("/api/logs/by-ip")
+    async def logs_by_ip(limit: int = Query(default=50, ge=1, le=200), db=Depends(get_db)):  # type: ignore[no-untyped-def]
+        # aggregate by ip: calls + recent pages + codes
+        q = select(AuditLog.ip, func.count().label("cnt")).group_by(AuditLog.ip).order_by(func.count().desc()).limit(limit)
+        res = await db.execute(q)
+        rows = res.all()
+        out = []
+        for ip_val, cnt in rows:
+            if not ip_val:
+                continue
+            r2 = await db.execute(select(AuditLog).where(AuditLog.ip == ip_val).order_by(AuditLog.ts.desc()).limit(5))
+            recs = r2.scalars().all()
+            code_ids = [r.code_id for r in recs if r.code_id]
+            code_labels = {}
+            if code_ids:
+                cr = await db.execute(select(Code).where(Code.id.in_(code_ids)))
+                for c in cr.scalars().all():
+                    code_labels[c.id] = c.display_name or c.label or c.code[:8]
+            recent = [{"host": r.host, "path": r.path, "ts": r.ts, "action": r.action, "code_label": code_labels.get(r.code_id) if r.code_id else None, "attempted_code": r.attempted_code} for r in recs]
+            codes = list({code_labels[cid] for cid in code_ids if cid in code_labels})
+            out.append({"ip": ip_val, "calls": cnt, "recent": recent, "codes": codes})
+        return out
+
+    @app.post("/api/logs", dependencies=[Depends(_require_internal)])
+    async def ingest_log(payload: dict, db=Depends(get_db)):  # type: ignore[no-untyped-def]
+        # expected payload from auth-gateway _audit_log_async
+        try:
+            ts_raw = payload.get("ts")
+            ts = _parse_dt(str(ts_raw)) if ts_raw else dt.datetime.utcnow()
+            if ts is None:
+                ts = dt.datetime.utcnow()
+            obj = AuditLog(
+                ts=ts,
+                ip=str(payload.get("ip") or "")[:64] or None,
+                host=str(payload.get("host") or "")[:255] or None,
+                path=str(payload.get("path") or "")[:1024] or None,
+                action=str(payload.get("action") or "")[:32] or None,
+                code_id=payload.get("code_id"),
+                rule_group_id=payload.get("rule_group_id"),
+                rule_id=payload.get("rule_id"),
+                matched_action=str(payload.get("matched_action") or "")[:32] or None,
+                latency_ms=payload.get("latency_ms"),
+                user_agent=str(payload.get("user_agent") or "")[:512] or None,
+                request_id=str(payload.get("request_id") or "")[:64] or None,
+                referer=str(payload.get("referer") or "")[:1024] or None,
+                method=str(payload.get("method") or "")[:10] or None,
+                status_code=payload.get("status_code"),
+                attempted_code=str(payload.get("attempted_code") or "")[:64] or None,
+            )
+            db.add(obj)
+            await db.commit()
+            return {"ok": True, "id": obj.id}
+        except Exception as e:
+            await db.rollback()
+            raise HTTPException(status_code=400, detail=str(e))
 
     return app
 

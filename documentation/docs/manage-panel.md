@@ -12,7 +12,7 @@
 
 | Path | Purpose |
 |------|---------|
-| `GET /manage` | Dashboard — stats (routes/groups/codes/api_keys) + warnings |
+| `GET /manage` | Dashboard — stats (routes/groups/codes) + warnings |
 | `GET/POST /manage/routing` | Routes CRUD (`host`, `path`, `proxy` upstream:port or `redirect` target:code) + `POST /{id}/test` |
 | `GET /manage/rules` | Rule groups list |
 | `POST /manage/groups` | Create group (`name`, `domain`) |
@@ -29,4 +29,12 @@ All mutating `POST/PUT/DELETE` require `csrf_token` + `same_origin`.
 
 ## Codes
 
-`label`/`display_name`/`active`/`last_accessed`. Creating requires explicit `code` value; API auto-generates if `key` omitted (`POST /api/keys` without `key` → `secrets.token_urlsafe(16)`).
+`label`/`display_name`/`active`/`last_accessed`. Creating requires explicit `code` value (`POST /api/codes {"code": "...", "label": "..."}` `X-Internal-Api-Key`).
+
+## Logs — live scroll + monitoring
+
+`GET /manage/logs` supports `?format=json&page&per_page&ip&host&endpoint&code&from&to` with `X-Total-Count`; template `logs.html` does `IntersectionObserver` infinite scroll loading next page as you scroll. `GET /manage/monitoring` (`GET /api/logs/by-ip?limit=50`) lists IPs → `{calls, recent: [{host,path,ts,action,code_label,attempted_code}], codes}`.
+
+## Settings — real DB-backed
+
+`GET /manage/settings` loads `GET /api/settings` and shows `rate_limit_access_code_per_min` (default 5). `POST /manage/settings` validates `1..1000` with `csrf_token` + `same_origin` and `PUT /api/settings/{key}`. Enforced per-IP in `auth-gateway` on `?access_code=` via `POST /api/auth/check-rate-limit {ip}` → `429` when `count >= limit`.

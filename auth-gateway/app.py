@@ -22,9 +22,9 @@ from sqlalchemy.orm import selectinload
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from shared.config import get_config
-from shared.models import ApiKey, AuditLog, Code, Route, Rule, RuleGroup
+from shared.models import Code, Route, Rule, RuleGroup
 from shared.security import apex_domain as shared_apex_domain
-from shared.security import host_matches, path_matches, verify_custom_password
+from shared.security import host_matches, mask_code, path_matches, verify_custom_password
 
 try:
     import structlog
@@ -223,27 +223,6 @@ def _get_forwarded_proto(request: Request) -> str:
     return request.url.scheme
 
 
-def _get_api_key_value(request: Request) -> str | None:
-    auth = request.headers.get("Authorization", "")
-    if auth.lower().startswith("bearer "):
-        v = auth[7:].strip()
-        if v:
-            return v
-    v = request.headers.get("X-Api-Key") or request.headers.get("x-api-key")
-    if v:
-        return v.strip()
-    v = request.query_params.get("api_key") or request.query_params.get("apiKey")
-    if v:
-        return v.strip()
-    xf_uri = request.headers.get("X-Forwarded-Uri", "")
-    if xf_uri:
-        qs = urlsplit(xf_uri).query
-        for k, val in parse_qsl(qs):
-            if k in ("api_key", "apiKey", "x-api-key"):
-                return val.strip()
-    return None
-
-
 def _get_access_code_param(request: Request) -> tuple[str | None, str, str]:
     xf_uri = request.headers.get("X-Forwarded-Uri", "")
     if xf_uri:
@@ -265,65 +244,6 @@ def _strip_access_code(uri: str) -> str:
     parts = urlsplit(uri)
     qs = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True) if k != "access_code"]
     return urlunsplit(("", "", parts.path, urlencode(qs), parts.fragment))
-
-
-def _api_key_allows(api_key: ApiKey, host: str, path: str) -> bool:
-    mode = (api_key.mode or "none").lower()
-    if mode == "none":
-        return True
-    wl_raw = api_key.whitelist
-    bl_raw = api_key.blacklist
-
-    def _parse(raw: Any) -> list[str]:
-        if not raw:
-            return []
-        if isinstance(raw, list):
-            return [str(x).strip() for x in raw if str(x).strip()]
-        try:
-            j = json.loads(raw)
-            if isinstance(j, list):
-                return [str(x).strip() for x in j if str(x).strip()]
-        except Exception:
-            pass
-        return [s.strip() for s in str(raw).split(",") if s.strip()]
-
-    host_path = f"{host}{path}"
-
-    def _glob_match(pattern: str, target_host: str, target_path: str) -> bool:
-        if "/" in pattern:
-            ph, pp = pattern.split("/", 1)
-            pp = "/" + pp
-        else:
-            ph, pp = pattern, "/*"
-        return host_matches(ph, target_host) and path_matches(pp, target_path)
-
-    if mode == "whitelist":
-        wl = _parse(wl_raw)
-        if not wl:
-            return False
-        for pat in wl:
-            if _glob_match(pat, host, path) or _glob_match(pat, host_path, path):
-                if pat == "*.*/*" or pat == "*.*":
-                    return True
-                if "/" in pat:
-                    h, _ = pat.split("/", 1)
-                    if host_matches(h, host):
-                        return True
-                    if host_matches(pat.split("/")[0], host_path):
-                        return True
-                if _glob_match(pat, host, path):
-                    return True
-        for pat in wl:
-            if _glob_match(pat, host, path):
-                return True
-        return False
-    if mode == "blacklist":
-        bl = _parse(bl_raw)
-        for pat in bl:
-            if _glob_match(pat, host, path):
-                return False
-        return True
-    return True
 
 
 def _api_headers() -> dict[str, str]:
@@ -450,41 +370,24 @@ async def _verify_code_value(code_val: str) -> Code | None:
         return None
 
 
-async def _verify_api_key_value(key_val: str) -> ApiKey | None:
-    # legacy no-host check — used only for forward_auth without host context fallback
-    if not key_val:
-        return None
+_RateLimitCache: dict[str, Any] = {"value": 5, "ts": 0.0}
+
+
+async def _check_access_code_rate_limited(ip: str) -> tuple[bool, int, int]:
+    if not ip or ip == "0.0.0.0":
+        return False, 0, 5
     try:
         base = _api_base()
         client = _get_httpx()
-        resp = await client.post(f"{base}/api/auth/verify-apikey", json={"key": key_val, "host": "", "path": "/"}, headers=_api_headers(), timeout=2.0)
-        if resp.status_code != 200:
-            return None
-        data = resp.json()
-        k = ApiKey(key_hash="", key_prefix=data.get("key_prefix", ""), salt="", label=data.get("label"), mode=data.get("mode", "none"))
-        k.id = data.get("api_key_id", 0)  # type: ignore[attr-defined]
-        k.active = True  # type: ignore[attr-defined]
-        return k
+        # cache settings value for 10s to avoid extra call if check-rate-limit already does it, but we just call check directly
+        resp = await client.post(f"{base}/api/auth/check-rate-limit", json={"ip": ip}, headers=_api_headers(), timeout=2.0)
+        if resp.status_code == 200:
+            d = resp.json()
+            allowed = bool(d.get("allowed", True))
+            return (not allowed), int(d.get("count", 0)), int(d.get("limit", 5))
     except Exception:
-        return None
-
-
-async def _verify_api_key_allowed(key_val: str, host: str, path: str) -> ApiKey | None:
-    if not key_val:
-        return None
-    try:
-        base = _api_base()
-        client = _get_httpx()
-        resp = await client.post(f"{base}/api/auth/verify-apikey", json={"key": key_val, "host": host, "path": path}, headers=_api_headers(), timeout=2.0)
-        if resp.status_code != 200:
-            return None
-        data = resp.json()
-        k = ApiKey(key_hash="", key_prefix=data.get("key_prefix", ""), salt="", label=data.get("label"), mode=data.get("mode", "none"))
-        k.id = data.get("api_key_id", 0)  # type: ignore[attr-defined]
-        k.active = True  # type: ignore[attr-defined]
-        return k
-    except Exception:
-        return None
+        pass
+    return False, 0, 5
 
 
 async def _audit_log_async(
@@ -496,11 +399,13 @@ async def _audit_log_async(
     rule_group_id: int | None,
     rule_id: int | None,
     code_id: int | None,
-    api_key_id: int | None,
     request_id: str,
     user_agent: str | None,
     referer: str | None,
     latency_ms: int | None = None,
+    method: str | None = None,
+    status_code: int | None = None,
+    attempted_code: str | None = None,
 ) -> None:
     payload = {
         "ts": __import__("datetime").datetime.utcnow().isoformat(),
@@ -512,11 +417,13 @@ async def _audit_log_async(
         "rule_group_id": rule_group_id,
         "rule_id": rule_id,
         "code_id": code_id,
-        "api_key_id": api_key_id,
         "request_id": request_id,
         "user_agent": (user_agent or "")[:512],
         "referer": (referer or "")[:1024],
         "latency_ms": latency_ms,
+        "method": (method or "")[:10] or None,
+        "status_code": status_code,
+        "attempted_code": mask_code(attempted_code) if attempted_code else None,
     }
     try:
         cfg = get_config()
@@ -776,7 +683,7 @@ def create_app() -> FastAPI:
         ip = _get_ip(request)
         req_id = getattr(request.state, "request_id", uuid.uuid4().hex)
 
-        async def _log(action: str, code_id: int | None = None, api_key_id: int | None = None) -> None:
+        async def _log(action: str, code_id: int | None = None, status_code: int | None = None, attempted_code: str | None = None) -> None:
             lat = int((time.monotonic() - t0) * 1000)
             _queue_audit(
                 background_tasks,
@@ -788,11 +695,13 @@ def create_app() -> FastAPI:
                 rule_group_id=grp.id if grp else None,
                 rule_id=rule.id if rule else None,
                 code_id=code_id,
-                api_key_id=api_key_id,
                 request_id=req_id,
                 user_agent=request.headers.get("User-Agent"),
                 referer=request.headers.get("Referer"),
                 latency_ms=lat,
+                method=request.method,
+                status_code=status_code,
+                attempted_code=attempted_code,
             )
 
         if rule and rule.action == "deny":
@@ -840,6 +749,11 @@ def create_app() -> FastAPI:
 
         access_code, _ac_path, _ac_qs = _get_access_code_param(request)
         if access_code:
+            # rate-limit access_code tries per minute per IP (tries/min setting)
+            limited, cnt, lim = await _check_access_code_rate_limited(ip)
+            if limited:
+                await _log("access_code_rate_limited", status_code=429, attempted_code=access_code)
+                return JSONResponse(status_code=429, content={"detail": f"rate limited {cnt}/{lim} per minute"})
             cres = await _verify_code_value(access_code)
             if cres:
                 clean = _strip_access_code(uri)
@@ -848,30 +762,11 @@ def create_app() -> FastAPI:
                 loc = clean if clean else "/"
                 resp = RedirectResponse(url=loc, status_code=302)
                 _set_auth_cookie(resp, cres, apex)
-                await _log("access_code_login", code_id=cres.id)
+                await _log("access_code_login", code_id=cres.id, status_code=302, attempted_code=access_code)
                 return resp
+            await _log("access_code_fail", status_code=401, attempted_code=access_code)
 
-        api_key_val = _get_api_key_value(request)
-        if api_key_val:
-            k = await _verify_api_key_value(api_key_val)
-            if k:
-                if _api_key_allows(k, host, path):
-                    await _log("api_key_success", api_key_id=k.id)
-                    return Response(status_code=200)
-                await _log("api_key_blacklisted", api_key_id=k.id)
-                return _error_response(
-                    request,
-                    403,
-                    "Access denied",
-                    "This page is denied by gateway rules. If you believe this is an error, contact the admin or return to the gateway.",
-                    "api key not allowed for this endpoint",
-                    host,
-                    path,
-                    req_id,
-                    apex,
-                )
-
-        await _log("no_cookie_redirect")
+        await _log("no_cookie_redirect", status_code=302)
         target = quote(f"https://{host}{uri}", safe="")
         return RedirectResponse(url=f"https://gatekeeper.{apex}/login?redirect={target}", status_code=302)
 
@@ -901,11 +796,10 @@ def create_app() -> FastAPI:
         ip = _get_ip(request)
         req_id = getattr(request.state, "request_id", uuid.uuid4().hex)
         code_id: int | None = None
-        api_key_id: int | None = None
         need_custom_cookie = False
         custom_cookie_rule: Rule | None = None
 
-        async def _log(action: str, code_id: int | None = None, api_key_id: int | None = None) -> None:
+        async def _log(action: str, code_id: int | None = None, status_code: int | None = None, attempted_code: str | None = None) -> None:
             lat = int((time.monotonic() - t0) * 1000)
             _queue_audit(
                 background_tasks,
@@ -917,11 +811,13 @@ def create_app() -> FastAPI:
                 rule_group_id=grp.id if grp else None,
                 rule_id=rule.id if rule else None,
                 code_id=code_id,
-                api_key_id=api_key_id,
                 request_id=req_id,
                 user_agent=request.headers.get("User-Agent"),
                 referer=request.headers.get("Referer"),
                 latency_ms=lat,
+                method=request.method,
+                status_code=status_code,
+                attempted_code=attempted_code,
             )
 
         if rule and rule.action == "deny":
@@ -965,7 +861,6 @@ def create_app() -> FastAPI:
         elif rule is None or (rule and rule.action == "access_code"):
             authed = False
             code_id: int | None = None
-            api_key_id: int | None = None
             token = request.cookies.get("gatekeeper_token")
             if token:
                 cres = await _code_from_jwt(token)
@@ -975,6 +870,10 @@ def create_app() -> FastAPI:
             if not authed:
                 ac, _, _ = _get_access_code_param(request)
                 if ac:
+                    limited, cnt, lim = await _check_access_code_rate_limited(ip)
+                    if limited:
+                        await _log("access_code_rate_limited", status_code=429, attempted_code=ac)
+                        return JSONResponse(status_code=429, content={"detail": f"rate limited {cnt}/{lim} per minute"})
                     cres = await _verify_code_value(ac)
                     if cres:
                         clean = _strip_access_code(full_uri)
@@ -983,39 +882,20 @@ def create_app() -> FastAPI:
                         loc = clean if clean else "/"
                         resp = RedirectResponse(url=loc, status_code=302)
                         _set_auth_cookie(resp, cres, apex)
-                        await _log("access_code_login", code_id=cres.id)
+                        await _log("access_code_login", code_id=cres.id, status_code=302, attempted_code=ac)
                         return resp
-            if not authed:
-                ak = _get_api_key_value(request)
-                if ak:
-                    k = await _verify_api_key_value(ak)
-                    if k and _api_key_allows(k, host, raw_path):
-                        authed = True
-                        api_key_id = k.id
-                    elif k:
-                        await _log("api_key_blacklisted", api_key_id=k.id)
-                        return _error_response(
-                            request,
-                            403,
-                            "Access denied",
-                            "This page is denied by gateway rules. If you believe this is an error, contact the admin or return to the gateway.",
-                            "api key not allowed",
-                            host,
-                            raw_path,
-                            req_id,
-                            apex,
-                        )
+                    await _log("access_code_fail", status_code=401, attempted_code=ac)
             if not authed:
                 if rule is None:
                     pass
                 else:
-                    await _log("no_cookie_redirect")
+                    await _log("no_cookie_redirect", status_code=302)
                     target = quote(f"https://{host}{full_uri}", safe="")
                     return RedirectResponse(url=f"https://gatekeeper.{apex}/login?redirect={target}", status_code=302)
             if authed:
-                await _log("auth_success", code_id=code_id, api_key_id=api_key_id)
+                await _log("auth_success", code_id=code_id, status_code=200)
             else:
-                await _log("none_gate")
+                await _log("none_gate", status_code=200)
 
         route = _find_route(host, raw_path, routes)
         if not route and host in ("gatekeeper.projectnova.download", "projectnova.download", "gatekeeper", "localhost"):
@@ -1051,7 +931,7 @@ def create_app() -> FastAPI:
                 loc = f"https://{host}{target}"
                 if clean_qs:
                     loc += "?" + clean_qs if "?" not in target else "&" + clean_qs
-            await _log("redirect", code_id=code_id, api_key_id=api_key_id)
+            await _log("redirect", code_id=code_id)
             resp = RedirectResponse(url=loc, status_code=code)
             if need_custom_cookie and custom_cookie_rule:
                 _set_custom_cookie(resp, custom_cookie_rule.id, apex)
