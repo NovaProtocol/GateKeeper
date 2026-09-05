@@ -8,8 +8,8 @@ FastAPI gateway that protects every web app on one apex domain behind a signed a
 
 | Service | Container | Port | Purpose | Network |
 |---------|-----------|------|---------|---------|
-| **Caddy** | `gatekeeper_caddy` | `:7000` (127.0.0.1) | Wildcard ingress + forward_auth | `gatekeeper_dynamic`, `cloudflared-tunnel` |
-| **Auth Gateway** | `gatekeeper_auth` | `:8001` | forward_auth + wildcard proxy | `gatekeeper_dynamic`, `net-api` |
+| **Caddy** | `gatekeeper_caddy` | `:7000` (127.0.0.1) | Wildcard ingress + forward_auth | `default`, `gatekeeper`, `cloudflared-tunnel`, `gatekeeper_dynamic`, `net-data` |
+| **Auth Gateway** | `gatekeeper_auth` | `:8001` | forward_auth + wildcard proxy | `default`, `net-api`, `gatekeeper_dynamic` |
 | **API** | `gatekeeper_api` | `:8002` + `:50051` (gRPC) | DB owner, CRUD, gRPC LogAuth | `net-api`, `net-data` |
 | **Management** | `gatekeeper_management` | `:8003` | Admin UI (Jinja + CSRF) | `net-api` |
 | **MySQL** | `gatekeeper_db` | `:3306` | Primary store | `net-data` |
