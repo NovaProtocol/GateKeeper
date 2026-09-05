@@ -59,7 +59,7 @@ Visit `https://gatekeeper.projectnova.download/` (login) or `/manage/login` for 
 | `GET /manage/login`, `POST /manage/login` | — | Management login (sets `manage_session`) |
 | `GET /manage/logout` | manage | Clear session |
 | `GET /manage`, `/routing`, `/rules`, `/codes`, `/logs`, `/top-pages`, `/warnings` | manage | Admin pages |
-| `GET /api/routes`, `/groups`, `/rules`, `/codes`, `/keys`, `/logs` | internal/api key | REST API |
+| `GET /api/routes`, `/groups`, `/rules`, `/codes`, `/logs`, `/settings`, `/warnings` | internal (`X-Internal-Api-Key` on `net-api`) | REST API |
 
 ## Domain Adaptation
 
