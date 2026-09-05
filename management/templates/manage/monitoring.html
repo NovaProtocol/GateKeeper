@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Monitoring · GateKeeper{% endblock %}
+{% block content %}
+<div class="container" style="padding:2rem;max-width:1400px">
+  <div class="card">
+    <div class="card-header"><h2><i class="fa-solid fa-satellite-dish"></i> Monitoring — IPs & Pages</h2><span class="header-badge">{{ items|length }} IPs</span></div>
+    <div class="card-body" style="padding:1.25rem">
+      <p style="color:var(--text-secondary);font-size:.85rem;margin-bottom:1rem">Grouped by <code>X-Forwarded-For[0]</code> — recent pages + access code per IP. Source: <code>GET /api/logs/by-ip</code>.</p>
+      <table class="codes-table" style="width:100%">
+        <thead><tr><th>IP</th><th>Calls</th><th>Recent Pages</th><th>Codes Seen</th></tr></thead>
+        <tbody>
+        {% for it in items %}
+        <tr>
+          <td style="font-family:'JetBrains Mono',monospace;font-size:.85rem">{{ it.ip }}</td>
+          <td style="font-family:'JetBrains Mono',monospace">{{ it.calls }}</td>
+          <td style="font-size:.8rem;max-width:520px">
+            {% for r in it.recent %}
+              <div style="display:flex;gap:.5rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"><span style="color:var(--text-secondary)">{{ r.ts }}</span> <span style="font-family:'JetBrains Mono',monospace">{{ r.host }}{{ r.path }}</span> <span class="tag tag-active" style="font-size:.65rem">{{ r.action }}</span> {% if r.code_label %}<span style="color:var(--accent)">{{ r.code_label }}</span>{% elif r.attempted_code %}<span style="color:var(--danger)">{{ r.attempted_code }}</span>{% endif %}</div>
+            {% endfor %}
+          </td>
+          <td style="font-size:.8rem">{{ it.codes|join(', ') if it.codes else '—' }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="4" style="text-align:center;color:var(--text-secondary);padding:1.5rem">No data</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}

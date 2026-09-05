@@ -668,8 +668,7 @@ def create_app() -> FastAPI:
         groups = await _api_proxy_get("/api/groups")
         codes = await _api_proxy_get("/api/codes")
         warnings = await _api_proxy_get("/api/warnings")
-        api_keys = await _api_proxy_get("/api/keys")
-        stats = {"routes": len(routes) if isinstance(routes, list) else 0, "groups": len(groups) if isinstance(groups, list) else 0, "codes": len(codes) if isinstance(codes, list) else 0, "api_keys": len(api_keys) if isinstance(api_keys, list) else 0}
+        stats = {"routes": len(routes) if isinstance(routes, list) else 0, "groups": len(groups) if isinstance(groups, list) else 0, "codes": len(codes) if isinstance(codes, list) else 0}
         return await _render_manage(request, "manage/dashboard.html", {"stats": stats, "routes": routes if isinstance(routes, list) else [], "groups": groups if isinstance(groups, list) else [], "codes": codes if isinstance(codes, list) else [], "warnings": warnings})
 
     @app.get("/manage/routing", response_class=HTMLResponse)
@@ -1006,14 +1005,35 @@ def create_app() -> FastAPI:
         if _auth is not None:
             return _auth
         params: dict[str, Any] = {}
-        for k in ("ip", "host", "action", "endpoint", "from", "to", "page", "per_page"):
+        for k in ("ip", "host", "action", "endpoint", "from", "to", "page", "per_page", "code"):
             v = request.query_params.get(k)
             if v:
                 params[k] = v
+        accept = request.headers.get("accept", "").lower()
+        is_json = request.query_params.get("format") == "json" or "application/json" in accept
+        if is_json:
+            client = _get_httpx()
+            r = await client.get("http://api:8002/api/logs", params=params, headers=_api_headers(), timeout=5.0)
+            try:
+                body = r.json()
+            except Exception:
+                body = []
+            return JSONResponse({"logs": body if isinstance(body, list) else [], "total": int(r.headers.get("X-Total-Count", "0") or "0")})
         logs = await _api_proxy_get("/api/logs", params)
         if not isinstance(logs, list):
             logs = []
         return await _render_manage(request, "manage/logs.html", {"logs": logs, "filters": params})
+
+    @app.get("/manage/monitoring", response_class=HTMLResponse)
+    async def manage_monitoring(request: Request) -> Response:
+        _auth = await _require_manage_auth(request)
+        if _auth is not None:
+            return _auth
+        limit = request.query_params.get("limit", "50")
+        data = await _api_proxy_get("/api/logs/by-ip", {"limit": limit})
+        if not isinstance(data, list):
+            data = []
+        return await _render_manage(request, "manage/monitoring.html", {"items": data})
 
     @app.get("/manage/top-pages", response_class=HTMLResponse)
     async def manage_top_pages(request: Request) -> Response:
@@ -1043,7 +1063,32 @@ def create_app() -> FastAPI:
         _auth = await _require_manage_auth(request)
         if _auth is not None:
             return _auth
-        return await _render_manage(request, "manage/settings.html", {})
+        settings = await _api_proxy_get("/api/settings")
+        if not isinstance(settings, list):
+            settings = []
+        sval = next((s["value"] for s in settings if s.get("key") == "rate_limit_access_code_per_min"), "5")
+        return await _render_manage(request, "manage/settings.html", {"settings": settings, "rate_limit": sval})
+
+    @app.post("/manage/settings", response_class=HTMLResponse)
+    async def manage_settings_post(request: Request) -> Response:
+        _auth = await _require_manage_auth(request)
+        if _auth is not None:
+            return _auth
+        form = await request.form()
+        if not _verify_csrf(request, str(form.get("csrf_token") or "")):
+            raise HTTPException(status_code=403, detail="Invalid CSRF")
+        if not same_origin(request):
+            raise HTTPException(status_code=403, detail="Cross-site")
+        raw = str(form.get("rate_limit_access_code_per_min") or "").strip()
+        try:
+            n = int(raw)
+            if not (1 <= n <= 1000):
+                raise ValueError()
+        except Exception:
+            raise HTTPException(status_code=400, detail="rate_limit must be 1..1000")
+        client = _get_httpx()
+        await client.put(f"http://api:8002/api/settings/rate_limit_access_code_per_min", json={"value": str(n)}, headers=_api_headers(), timeout=5.0)
+        return RedirectResponse(url="/manage/settings", status_code=302)
 
     @app.get("/manage/backup", response_class=HTMLResponse)
     async def manage_backup(request: Request) -> Response:

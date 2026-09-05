@@ -20,7 +20,7 @@ project/
 ├── shared/
 │   ├── config.py                   # pydantic-settings: SECRET_KEY, MANAGE_PASSWORD, DATABASE_URL, INTERNAL_API_KEY, DEPLOYMENT_TYPE, BACKUP_CODE
 │   ├── jwt.py                      # PyJWT HS256 iss=gatekeeper aud=projectnova.download exp 12h/8h/12h + jti
-│   ├── models.py                   # 7 tables: routes, rule_groups, rules, codes, api_keys, audit_logs
+│   ├── models.py                   # 6 tables + settings + audit_logs (routes, rule_groups, rules, codes, settings, audit_logs with method/status_code/attempted_code)
 │   ├── security.py                 # pbkdf2_hmac sha512 100k, host_matches, path_matches, mask_code, apex_domain
 │   ├── error_pages.py              # wants_html, render_error_html (dark theme)
 │   └── db.py                       # create_async_engine, async_sessionmaker, get_db() — imported only by api:8002 (net-data)
@@ -44,7 +44,7 @@ project/
 
 All healthchecks: `python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:<port>/health')"`.
 
-## Data Model (7 tables)
+## Data Model (6 tables + settings)
 
 | Table | Key columns |
 |-------|-------------|
@@ -52,8 +52,8 @@ All healthchecks: `python -c "import urllib.request; urllib.request.urlopen('htt
 | `rule_groups` | `name unique, domain, display_order, is_default` |
 | `rules` | `group_id, path, action(access_code|none|custom_password|deny), custom_password_hash/salt, allow_ip, allow_time, rate_limit, display_order` |
 | `codes` | `code unique, label, display_name, active, last_accessed` |
-| `api_keys` | `key_hash unique, key_prefix, salt, label, mode(none|whitelist|blacklist), whitelist/blacklist JSON, expires_at, last_used` |
-| `audit_logs` | `ts, ip, host, path, action, code_id, api_key_id, rule_group_id, rule_id, latency_ms, request_id` |
+| `settings` | `key PK, value, updated_at` — e.g. `rate_limit_access_code_per_min` |
+| `audit_logs` | `ts, ip, host, path, action, code_id, rule_group_id, rule_id, method, status_code, attempted_code, latency_ms, request_id, user_agent, referer` |
 
 `allow_ip / allow_time / rate_limit` on `rules` are **reserved** (stored, not enforced on hot path).
 
@@ -70,7 +70,7 @@ Browser → Caddy :7000 → Auth Gateway :8001 /api/authz/forward-auth
   └─ on pass: longest-path Route match → proxy to upstream or redirect
 ```
 
-Cache: in-memory `RuleGroup+Route` polled every `CACHE_TTL=5s` under `asyncio.Lock` via `GET http://api:8002/api/routes|groups|rules` (`X-Internal-Api-Key` on `net-api` `internal:true`) — only `api:8002` imports `shared/db.py`. Code/API-key verification is `POST /api/auth/verify-*` on `net-api`. Audit via `BackgroundTasks → POST http://api:8002/api/logs` (`X-Internal-Api-Key` `internal:true`) and `POST /api/routes/{id}/test` `socket.create_connection((upstream,port))` needs `api` on `gatekeeper_dynamic` to reach `portfolio_main:8000` etc.
+Cache: in-memory `RuleGroup+Route` polled every `CACHE_TTL=5s` under `asyncio.Lock` via `GET http://api:8002/api/routes|groups|rules` (`X-Internal-Api-Key` on `net-api` `internal:true`) — only `api:8002` imports `shared/db.py`. Code verification is `POST /api/auth/verify-*` on `net-api`. Audit via `BackgroundTasks → POST http://api:8002/api/logs` (`X-Internal-Api-Key` `internal:true`) + rate-limit `POST /api/auth/check-rate-limit {ip}` for `?access_code=` tries/min; `POST /api/routes/{id}/test` `socket.create_connection((upstream,port))` needs `api` on `gatekeeper_dynamic` to reach `portfolio_main:8000` etc.
 
 ## Networks
 

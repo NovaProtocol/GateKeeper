@@ -17,10 +17,6 @@ def verify_custom_password(password: str, hash_hex: str, salt: str) -> bool:
     return hmac.compare_digest(h.hex(), hash_hex)
 
 
-def hash_api_key(key: str, salt: str) -> str:
-    return hashlib.pbkdf2_hmac("sha512", key.encode(), salt.encode(), 100000).hex()
-
-
 def mask_code(code: str) -> str:
     if len(code) <= 8:
         return code[:2] + "***" + code[-2:]

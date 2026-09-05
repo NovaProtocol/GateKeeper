@@ -18,7 +18,7 @@ data = verify_access_token(token)  # checks exp/aud/iss/signature + cid active v
 ```
 
 - **Apex** `.example.com` covers `gatekeeper.example.com`, `portfolio.example.com`, etc. One login works everywhere (`SameSite=Lax`).
-- **Expiry** — `gatekeeper_token` `12h` (`Max-Age=43200`), `manage_session` `8h`, `gatekeeper_custom_{id}` `12h` — revocation is still `codes.active=0` / `api_keys.active=0` via `api:8002`; expired `jwt.ExpiredSignatureError` → `302 /login`.
+- **Expiry** — `gatekeeper_token` `12h` (`Max-Age=43200`), `manage_session` `8h`, `gatekeeper_custom_{id}` `12h` — revocation is `codes.active=0` via `api:8002`; expired `jwt.ExpiredSignatureError` → `302 /login`.
 - **SameSite=Lax** allows top-level navigation across subdomains to carry cookies; iframe on same apex works, cross-site does not.
 - Rotate `SECRET_KEY` → all cookies invalid.
 

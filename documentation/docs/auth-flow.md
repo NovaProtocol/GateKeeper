@@ -8,8 +8,7 @@ Request → Caddy forward_auth → Auth Gateway /api/authz/forward-auth
   ├─ Rule = deny                              → 403
   ├─ Rule = custom_password (cookie/header/qs)→ 200 or 302 to login
   ├─ Valid gatekeeper_token cookie            → 200
-  ├─ Valid ?access_code= (stripped)           → 302 + Set-Cookie
-  ├─ Valid API key (whitelist/blacklist)      → 200
+  ├─ Valid ?access_code= (stripped)           → 302 + Set-Cookie (rate-limited tries/min)
   └─ None                                     → 302 → https://gatekeeper.<apex>/login?redirect=<original>
 ```
 
@@ -35,10 +34,9 @@ Request → Caddy forward_auth → Auth Gateway /api/authz/forward-auth
 Per-rule `custom_password_hash/salt` (`pbkdf2_hmac sha512 100k`). Checked as:
 `gatekeeper_custom_{rule.id}` cookie (per-rule salt) → `X-Custom-Password` header → `?custom_password=` query. Sets per-rule cookie on success.
 
-## API Keys
+## Rate Limit (access_code tries/min)
 
-Transports: `Authorization: Bearer <key>` → `X-Api-Key` → `?api_key=` (also via `X-Forwarded-Uri`). Verified by `pbkdf2` hash compare, `active` and `expires_at` check, `last_used` bump. `mode` controls host/path globs:
-`none` (any), `whitelist` (only listed), `blacklist` (all except listed) via `host_matches`/`path_matches`.
+`settings` `rate_limit_access_code_per_min` (default 5) enforced per-IP in `auth-gateway` via `POST /api/auth/check-rate-limit {ip}` on `api:8002` (`internal:true` `X-Internal-Api-Key`) — counts `audit_logs` last 60s. On deny → `429`.
 
 ## Login
 

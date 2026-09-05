@@ -70,5 +70,4 @@ nav:
   - Docker: docker.md
   - Routes: routes.md
   - Rules & Rule Groups: rules.md
-  - API Keys: api-keys.md
   - Logs & Warnings: logs.md
