@@ -22,7 +22,7 @@ Any gated URL can carry `?access_code=<code>` as a magic link — stripped after
 |---------|------|---------|
 | Caddy | 7000 | Wildcard ingress, forward_auth |
 | Auth Gateway | 8001 | forward_auth + wildcard proxy |
-| API | 8002 + 50051 (gRPC) | DB owner, CRUD, LogAuth |
+| API | 8002 | DB owner, CRUD |
 | Management | 8003 | Admin UI |
 | MySQL | 3306 | Store |
 | Documentation | 8005 | MkDocs (gated) |

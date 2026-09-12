@@ -7,15 +7,18 @@ ENV PYTHONUNBUFFERED=1
 
 COPY requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt \
-    && pip install --no-cache-dir fastapi granian httpx PyJWT cryptography sqlalchemy aiosqlite structlog slowapi pydantic-settings uvicorn || true
+    && pip install --no-cache-dir fastapi granian httpx PyJWT cryptography sqlalchemy aiosqlite structlog slowapi pydantic-settings uvicorn
 
 COPY shared ./shared
 COPY auth-gateway ./auth-gateway
-RUN ln -sf /app/auth-gateway /app/auth_gateway || true
+RUN ln -sf /app/auth-gateway /app/auth_gateway
 
 ENV PYTHONPATH=/app
 
 WORKDIR /app/auth-gateway
+
+RUN useradd --create-home --uid 10001 appuser && chown -R appuser:appuser /app
+USER appuser
 
 EXPOSE 8001
 

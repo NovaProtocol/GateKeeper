@@ -18,6 +18,6 @@ Longest `path` match wins for `host`. `projectnova.download /` → redirect to `
 
 ```bash
 curl -X POST http://api:8002/api/routes/1/test \
-  -H "X-Internal-Api-Key: $INTERNAL_API_KEY"
+ -H "X-Internal-Api-Key: $INTERNAL_API_KEY"
 # checks socket reachability
 ```

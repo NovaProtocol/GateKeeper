@@ -43,7 +43,7 @@ docker compose ps
 |-----|---------|
 | `https://gatekeeper.projectnova.download/` | Login (`GET /`, `POST /`, `GET /login`) |
 | `https://gatekeeper.projectnova.download/manage/login` | Management login |
-| `https://gatekeeper.projectnova.download/api/authz/forward-auth` | forward_auth (Caddy) |
+| `https://gatekeeper.projectnova.download/api/authz/forward-auth` | GateKeeper gate (Caddy) |
 | `https://gatekeeper.projectnova.download/health` | Health probe |
 | `http://127.0.0.1:7000/health` | Local Caddy health |
 
@@ -60,5 +60,5 @@ Login sets `gatekeeper_token` (`PyJWT HS256` `exp 12h` `Max-Age=43200` apex, `Ht
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 SECRET_KEY=dev MANAGE_PASSWORD=dev DEPLOYMENT_TYPE=debug \
-  python -m granian --interface asgi --host 127.0.0.1 --port 8001 auth-gateway.app:app
+ python -m granian --interface asgi --host 127.0.0.1 --port 8001 auth-gateway.app:app
 ```

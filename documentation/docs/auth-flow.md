@@ -1,15 +1,15 @@
 # Auth Flow
 
-`GET /api/authz/forward-auth` is Caddy's `forward_auth` check. Caddy sends `X-Forwarded-Uri`, `X-Forwarded-Host`, `X-Forwarded-Proto`; GateKeeper answers `200` or `302`. Apps never check tokens themselves.
+`GET /api/authz/forward-auth` is Caddy's `GateKeeper gate` check. Caddy sends `X-Forwarded-Uri`, `X-Forwarded-Host`, `X-Forwarded-Proto`; GateKeeper answers `200` or `302`. Apps never check tokens themselves.
 
 ```
-Request → Caddy forward_auth → Auth Gateway /api/authz/forward-auth
-  ├─ Rule = none                              → 200
-  ├─ Rule = deny                              → 403
-  ├─ Rule = custom_password (cookie/header/qs)→ 200 or 302 to login
-  ├─ Valid gatekeeper_token cookie            → 200
-  ├─ Valid ?access_code= (stripped)           → 302 + Set-Cookie (rate-limited tries/min)
-  └─ None                                     → 302 → https://gatekeeper.<apex>/login?redirect=<original>
+Request → Caddy GateKeeper gate → Auth Gateway /api/authz/forward-auth
+ ├─ Rule = none → 200
+ ├─ Rule = deny → 403
+ ├─ Rule = custom_password (cookie/header/qs)→ 200 or 302 to login
+ ├─ Valid gatekeeper_token cookie → 200
+ ├─ Valid ?access_code= (stripped) → 302 + Set-Cookie (rate-limited tries/min)
+ └─ None → 302 → https://gatekeeper.<apex>/login?redirect=<original>
 ```
 
 ## Rule Dispatch
