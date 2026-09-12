@@ -3,14 +3,14 @@
 ## Audit Logs
 
 ```bash
-GET /api/logs?host=&ip=&action=&endpoint=&from=&to=&page=&per_page=&code=   # ?endpoint=host/path glob, ?code= label/code masked
+GET /api/logs?host=&ip=&action=&endpoint=&from=&to=&page=&per_page=&code= # ?endpoint=host/path glob, ?code= label/code masked
 GET /api/logs/top?limit=&host=&path=
 GET /api/logs/export?format=csv
-GET /api/logs/by-ip?limit=50          # grouped by ip → {calls, recent[5], codes}
-DELETE /api/logs/clear   # X-Internal-Api-Key
-POST /api/logs           # internal ingest — auth-gateway BackgroundTasks X-Internal-Api-Key
-POST /api/auth/check-rate-limit {ip}  # X-Internal-Api-Key → {allowed,count,limit}
-GET|PUT /api/settings[/{key}]         # settings table — PUT needs X-Internal-Api-Key
+GET /api/logs/by-ip?limit=50 # grouped by ip → {calls, recent[5], codes}
+DELETE /api/logs/clear # X-Internal-Api-Key
+POST /api/logs # internal ingest — auth-gateway BackgroundTasks X-Internal-Api-Key
+POST /api/auth/check-rate-limit {ip} # X-Internal-Api-Key → {allowed,count,limit}
+GET|PUT /api/settings[/{key}] # settings table — PUT needs X-Internal-Api-Key
 ```
 
 - Host/path filters use `LIKE%` glob; `code` matches `code_label/code_value/attempted_code`.

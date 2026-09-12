@@ -7,15 +7,18 @@ ENV PYTHONUNBUFFERED=1
 
 COPY requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt \
-    && pip install --no-cache-dir fastapi granian httpx PyJWT cryptography sqlalchemy aiosqlite structlog slowapi pydantic-settings uvicorn jinja2 python-multipart || true
+    && pip install --no-cache-dir fastapi granian httpx PyJWT cryptography sqlalchemy aiosqlite structlog slowapi pydantic-settings uvicorn jinja2 python-multipart
 
 COPY shared ./shared
 COPY management ./management
-RUN ln -sf /app/management /app/mgnt || true
+RUN ln -sf /app/management /app/mgnt
 
 ENV PYTHONPATH=/app
 
 WORKDIR /app/management
+
+RUN useradd --create-home --uid 10001 appuser && chown -R appuser:appuser /app
+USER appuser
 
 EXPOSE 8003
 
