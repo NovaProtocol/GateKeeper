@@ -16,7 +16,7 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from shared.jwt import create_access_token, create_custom_token, verify_access_token, verify_custom_token
 
-from shared.error_pages import render_error_html, wants_html
+from shared.error_pages import render_error_html, render_maintenance_html, wants_html
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -27,6 +27,15 @@ from shared.gate import DEFAULT_UNMATCHED_ACTION, find_group_rule, resolve_rule_
 from shared.models import Code, Route, Rule, RuleGroup
 from shared.security import apex_domain as shared_apex_domain
 from shared.security import host_matches, mask_code, verify_custom_password
+from shared.settings_spec import (
+    MAINTENANCE_MESSAGE,
+    MAINTENANCE_MODE,
+    SESSION_LIFETIME_HOURS,
+    as_bool,
+    as_int,
+    default_int,
+    default_value,
+)
 
 try:
     import structlog
@@ -357,6 +366,105 @@ async def _resolve_action(grp: RuleGroup | None, rule: Rule | None) -> str:
     return resolve_rule_action(None, None, unmatched)
 
 
+async def _setting_int(key: str) -> int:
+    """A stored integer setting, read through the shared reader.
+
+    The stored value is re-read through :func:`shared.settings_spec.read_value`
+    so a row edited by hand, or restored from an older backup, is normalized the
+    same way the write path would have. The cached default comes from the same
+    table, so a settings outage cannot produce a lifetime the panel refuses.
+    """
+    fallback = default_int(key)
+    raw = await _get_setting(key, str(fallback))
+    return as_int(key, raw)
+
+
+async def _setting_bool(key: str) -> bool:
+    raw = await _get_setting(key, default_value(key))
+    return as_bool(key, raw)
+
+
+#: Hosts where the maintenance switch must never apply to, because they are how
+#: the operator turns it back off. Matched on the hostname, ignoring any port.
+_MANAGE_HOSTS = ("gatekeeper", "gatekeeper.projectnova.download", "localhost", "127.0.0.1")
+
+
+def _is_maintenance_exempt(host: str, path: str) -> bool:
+    """Whether this request is how the operator gets back into the panel.
+
+    The exemption is both a host and a path condition: on the gatekeeper host
+    only `/manage` and `/manage/login` are spared, so the rest of that site still
+    shows the maintenance page like everything else.
+    """
+    hostname = (host or "").split(",")[0].strip().split(":")[0].lower()
+    if hostname not in _MANAGE_HOSTS:
+        return False
+    p = path if path.startswith("/") else "/" + path
+    return p == "/manage" or p.startswith("/manage/")
+
+
+async def _maintenance_response(
+    request: Request, host: str, path: str, apex: str
+) -> Response | None:
+    """The themed 503 while maintenance mode is on, or ``None`` to carry on.
+
+    Checked before rule dispatch, so the switch says the same thing on every host
+    rather than depending on which rule happens to match. `/manage` on the
+    gatekeeper host is exempt, because a maintenance switch that also hides the
+    page that turns it off is a foot-gun.
+    """
+    if _is_maintenance_exempt(host, path):
+        return None
+    if not await _setting_bool(MAINTENANCE_MODE):
+        return None
+    message = await _get_setting(MAINTENANCE_MESSAGE, "")
+    if wants_html(request):
+        html = render_maintenance_html(message=message, host=host, apex=apex)
+        return HTMLResponse(
+            content=html,
+            status_code=503,
+            headers={"Content-Type": "text/html; charset=utf-8", "Retry-After": "300"},
+        )
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "maintenance mode"},
+        headers={"Retry-After": "300"},
+    )
+
+
+async def _queue_maintenance_audit(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    host: str,
+    path: str,
+    ip: str,
+    req_id: str,
+) -> None:
+    """One audit row per refused-by-maintenance request, same shape as the rest.
+
+    Without this the switch is invisible in the audit trail, which is exactly the
+    kind of gap that makes an operator distrust the page.
+    """
+    _queue_audit(
+        background_tasks,
+        host=host,
+        path=path,
+        ip=ip,
+        action="maintenance_mode",
+        matched_action="maintenance_mode",
+        rule_group_id=None,
+        rule_id=None,
+        code_id=None,
+        request_id=req_id,
+        user_agent=request.headers.get("User-Agent"),
+        referer=request.headers.get("Referer"),
+        latency_ms=None,
+        method=request.method,
+        status_code=503,
+        attempted_code=None,
+    )
+
+
 def _find_route(host: str, path: str, routes: list[Route]) -> Route | None:
     hl = host.lower().split(":")[0]
     if not path.startswith("/"):
@@ -478,8 +586,10 @@ def _queue_audit(background_tasks: BackgroundTasks, **kw: Any) -> None:
     background_tasks.add_task(_audit_log_async, **kw)
 
 
-def _set_auth_cookie(resp: Response, code: Code, apex: str) -> None:
-    token = create_access_token(code.id, code.display_name or code.label or "User")
+def _set_auth_cookie(resp: Response, code: Code, apex: str, lifetime_hours: int | None = None) -> None:
+    if lifetime_hours is None:
+        lifetime_hours = default_int(SESSION_LIFETIME_HOURS)
+    token = create_access_token(code.id, code.display_name or code.label or "User", expires_hours=lifetime_hours)
     resp.set_cookie(
         key="gatekeeper_token",
         value=token,
@@ -488,7 +598,7 @@ def _set_auth_cookie(resp: Response, code: Code, apex: str) -> None:
         httponly=True,
         samesite="lax",
         secure=True,
-        max_age=43200,
+        max_age=lifetime_hours * 3600,
     )
 
 
@@ -523,9 +633,11 @@ async def _code_from_jwt(token: str) -> Code | None:
         return None
 
 
-def _set_custom_cookie(resp: Response, rule_id: int, apex: str) -> None:
-    token = create_custom_token(rule_id)
-    resp.set_cookie(key=f"gatekeeper_custom_{rule_id}", value=token, domain=f".{apex}", path="/", httponly=True, samesite="lax", secure=True, max_age=43200)
+def _set_custom_cookie(resp: Response, rule_id: int, apex: str, lifetime_hours: int | None = None) -> None:
+    if lifetime_hours is None:
+        lifetime_hours = default_int(SESSION_LIFETIME_HOURS)
+    token = create_custom_token(rule_id, expires_hours=lifetime_hours)
+    resp.set_cookie(key=f"gatekeeper_custom_{rule_id}", value=token, domain=f".{apex}", path="/", httponly=True, samesite="lax", secure=True, max_age=lifetime_hours * 3600)
 
 
 def _has_valid_custom_cookie(request: Request, rule: Rule) -> bool:
@@ -709,6 +821,19 @@ def create_app() -> FastAPI:
             path = "/" + path
         apex = _apex_from_host(host) if host else _apex_from_host(request.headers.get("Host", ""))
         routes, groups = await _load_caches()
+        # Audited like any other request: a maintenance refusal that leaves no
+        # row would make the switch invisible in the log it is explained by.
+        maintenance = await _maintenance_response(request, host, path, apex)
+        if maintenance is not None:
+            await _queue_maintenance_audit(
+                request,
+                background_tasks,
+                host,
+                path,
+                _get_ip(request),
+                getattr(request.state, "request_id", uuid.uuid4().hex),
+            )
+            return maintenance
         grp, rule = _find_group_rule(host, path, groups)
         action = await _resolve_action(grp, rule)
         # The audit row carries the action that actually governed the request, so
@@ -783,13 +908,13 @@ def create_app() -> FastAPI:
                 return Response(status_code=200)
             if _check_custom_password_param(request, rule):
                 resp = Response(status_code=200)
-                _set_custom_cookie(resp, rule.id, apex)
+                _set_custom_cookie(resp, rule.id, apex, await _setting_int(SESSION_LIFETIME_HOURS))
                 await _log("custom_password_login")
                 return resp
             cpass = request.query_params.get("custom_password") or request.headers.get("X-Custom-Password")
             if cpass and rule.custom_password_hash and rule.custom_password_salt and verify_custom_password(cpass, rule.custom_password_hash, rule.custom_password_salt):
                 resp = Response(status_code=200)
-                _set_custom_cookie(resp, rule.id, apex)
+                _set_custom_cookie(resp, rule.id, apex, await _setting_int(SESSION_LIFETIME_HOURS))
                 await _log("custom_password_login")
                 return resp
             await _log("custom_password_required")
@@ -817,7 +942,7 @@ def create_app() -> FastAPI:
                     clean = "/" + clean
                 loc = clean if clean else "/"
                 resp = RedirectResponse(url=loc, status_code=302)
-                _set_auth_cookie(resp, cres, apex)
+                _set_auth_cookie(resp, cres, apex, await _setting_int(SESSION_LIFETIME_HOURS))
                 await _log("access_code_login", code_id=cres.id, status_code=302, attempted_code=access_code)
                 return resp
             await _log("access_code_fail", status_code=401, attempted_code=access_code)
@@ -847,6 +972,12 @@ def create_app() -> FastAPI:
         proto = _get_forwarded_proto(request)
         apex = _apex_from_host(host) if host else _apex_from_host(request.headers.get("Host", ""))
         routes, groups = await _load_caches()
+        maintenance = await _maintenance_response(request, host, raw_path, apex)
+        if maintenance is not None:
+            ip = _get_ip(request)
+            req_id = getattr(request.state, "request_id", uuid.uuid4().hex)
+            await _queue_maintenance_audit(request, background_tasks, host, raw_path, ip, req_id)
+            return maintenance
         grp, rule = _find_group_rule(host, raw_path, groups)
         action = await _resolve_action(grp, rule)
         matched_action = action if rule is None else rule.action
@@ -940,7 +1071,7 @@ def create_app() -> FastAPI:
                             clean = "/" + clean
                         loc = clean if clean else "/"
                         resp = RedirectResponse(url=loc, status_code=302)
-                        _set_auth_cookie(resp, cres, apex)
+                        _set_auth_cookie(resp, cres, apex, await _setting_int(SESSION_LIFETIME_HOURS))
                         await _log("access_code_login", code_id=cres.id, status_code=302, attempted_code=ac)
                         return resp
                     await _log("access_code_fail", status_code=401, attempted_code=ac)
@@ -989,7 +1120,7 @@ def create_app() -> FastAPI:
             await _log("redirect", code_id=code_id)
             resp = RedirectResponse(url=loc, status_code=code)
             if need_custom_cookie and custom_cookie_rule:
-                _set_custom_cookie(resp, custom_cookie_rule.id, apex)
+                _set_custom_cookie(resp, custom_cookie_rule.id, apex, await _setting_int(SESSION_LIFETIME_HOURS))
             return resp
 
         clean_qs = "&".join(f"{k}={quote(v, safe='')}" for k, v in parse_qsl(raw_qs, keep_blank_values=True) if k not in ("access_code", "custom_password", "customPassword", "password"))
@@ -1027,11 +1158,11 @@ def create_app() -> FastAPI:
             await rp.aclose()
             resp = Response(content=content, status_code=rp.status_code, headers=resp_headers)
             if need_custom_cookie and custom_cookie_rule:
-                _set_custom_cookie(resp, custom_cookie_rule.id, apex)
+                _set_custom_cookie(resp, custom_cookie_rule.id, apex, await _setting_int(SESSION_LIFETIME_HOURS))
             return resp
         resp2 = StreamingResponse(_stream(), status_code=rp.status_code, headers=resp_headers, background=BackgroundTaskWrapper(rp))
         if need_custom_cookie and custom_cookie_rule:
-            _set_custom_cookie(resp2, custom_cookie_rule.id, apex)
+            _set_custom_cookie(resp2, custom_cookie_rule.id, apex, await _setting_int(SESSION_LIFETIME_HOURS))
         return resp2
 
     class BackgroundTaskWrapper:  # type: ignore[no-redef]

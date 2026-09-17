@@ -27,7 +27,7 @@ A group ends in a `/*` catch-all, so "group matched, no rule matched" means that
 
 That catch-all is no longer a convention nobody enforces. See the next section.
 
-`unmatched_action` applies only when the host is in no group. Values: `access_code` (default) redirects to login, `deny` returns `403`, `none` proxies without auth. Set it with `PUT /api/settings/unmatched_action`; anything else is refused with `400 must be one of access_code, deny, none`. It defaults to `access_code` when the row or the setting API is unavailable, so a missing value gates rather than opens.
+`unmatched_action` applies only when the host is in no group. Values: `access_code` (default) redirects to login, `deny` returns `403`, `none` proxies without auth. Set it on [Management UI](manage-panel.md) → Settings, or with `PUT /api/settings/unmatched_action`; anything else is refused with `400 must be one of access_code, deny, none` in both places. It defaults to `access_code` when the row or the setting API is unavailable, so a missing value gates rather than opens.
 
 Worth knowing before reaching for it: the seeded default group is `*.*/*`, which matches **every** host, so normally no request can reach the "no group matched" branch. It becomes reachable when the default group is missing or its `domain` has been changed away from `*.*/*`. The setting is therefore a backstop for a broken default group, not a per-host policy dial; the middle row of the table above is the state a normal misconfiguration actually produces, and that one is always refused.
 

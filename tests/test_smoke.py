@@ -47,6 +47,7 @@ def test_api_openapi_exposes_expected_routes(client) -> None:
         "/api/rules/{rid}/order",
         "/api/groups/{gid}/order",
         "/api/logs/by-ip",
+        "/api/logs/prune",
         "/api/warnings",
     ):
         assert expected in paths, f"{expected} missing from openapi.json"
@@ -55,6 +56,31 @@ def test_api_openapi_exposes_expected_routes(client) -> None:
 def test_api_internal_route_rejects_anonymous(client) -> None:
     r = client.put("/api/settings/rate_limit_access_code_per_min", json={"value": "7"})
     assert r.status_code == 401
+
+
+def test_session_lifetime_rejects_anonymous_and_accepts_the_key(client) -> None:
+    """The new key sits behind the same gate as the old one, with no exception."""
+    anonymous = client.put("/api/settings/session_lifetime_hours", json={"value": "6"})
+    assert anonymous.status_code == 401
+
+    accepted = client.put(
+        "/api/settings/session_lifetime_hours",
+        json={"value": "6"},
+        headers=INTERNAL_KEY_HEADERS,
+    )
+    assert accepted.status_code == 200
+    assert accepted.json()["value"] == "6"
+
+    restored = client.put(
+        "/api/settings/session_lifetime_hours",
+        json={"value": "12"},
+        headers=INTERNAL_KEY_HEADERS,
+    )
+    assert restored.status_code == 200
+
+
+def test_prune_logs_rejects_anonymous(client) -> None:
+    assert client.post("/api/logs/prune").status_code == 401
 
 
 def test_api_internal_route_accepts_internal_key(client) -> None:

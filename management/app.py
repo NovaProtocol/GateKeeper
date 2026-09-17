@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import secrets
 import uuid
 from contextlib import asynccontextmanager
@@ -24,6 +25,12 @@ from shared.config import get_config
 from shared.models import Code
 from shared.error_pages import render_error_html, wants_html
 from shared.security import apex_domain as shared_apex, mask_code
+from shared.settings_spec import (
+    LOG_RETENTION_DAYS,
+    MANAGE_FIELDS,
+    default_value,
+    validate_value,
+)
 
 try:
     import structlog
@@ -306,8 +313,78 @@ async def _api_proxy_put(path: str, payload: dict[str, Any]) -> Any:
 #: The word an operator types before a configuration replace goes ahead.
 RESTORE_CONFIRM = "REPLACE"
 
+#: The word an operator types before audit rows are deleted.
+PRUNE_CONFIRM = "PRUNE"
+
 #: Counts shown on the backup page, keyed the same way the export is.
 BACKUP_SECTIONS = ("routes", "groups", "rules", "codes", "settings")
+
+
+def _submitted_settings(form: Any) -> dict[str, str]:
+    """The submitted form as `{key: value}` for keys this panel owns.
+
+    The last occurrence of a key wins, which is what makes a checkbox usable: the
+    template puts a hidden `false` before the box, so a browser sends `false` when
+    it is unchecked and `false,true` when it is checked, and the later value is
+    the one that reflects the operator's decision.
+
+    A key the browser did not send at all is left out entirely, so a partial form
+    cannot blank a setting it never showed. Keys outside `MANAGE_FIELDS` are
+    dropped, so a crafted post cannot reach a setting this page does not own.
+    """
+    out: dict[str, str] = {}
+    for key in MANAGE_FIELDS:
+        try:
+            values = form.getlist(key)
+        except AttributeError:  # a plain dict, as in the unit tests
+            raw = form.get(key)
+            values = [] if raw is None else [raw]
+        if not values:
+            continue
+        out[key] = str(values[-1])
+    return out
+
+
+def _environment_panel() -> dict[str, Any]:
+    """Read-only facts about the running process.
+
+    A secret is reported only as configured or not: reading the value to report
+    anything richer would put it in this process for a question a boolean
+    already answers, and it would then be one template mistake away from the
+    page.
+    """
+    config = get_config()
+    return {
+        "deployment_type": config.DEPLOYMENT_TYPE,
+        "db_backend": config.db_url.split("://", 1)[0].split("+", 1)[0].lower() or "sqlite",
+        "db_is_override": bool(config.DATABASE_URL),
+        "internal_api_key_set": bool(config.INTERNAL_API_KEY),
+        "secret_key_set": bool(config.SECRET_KEY),
+    }
+
+
+def _retention_source(stored: dict[str, str]) -> str:
+    """Where the retention window actually comes from, in the panel's words."""
+    if LOG_RETENTION_DAYS in stored:
+        return "stored setting"
+    return "LOG_RETENTION_DAYS environment variable" if os.environ.get("LOG_RETENTION_DAYS") else "built-in default"
+
+
+async def _settings_context(errors: list[str] | None = None) -> dict[str, Any]:
+    """Everything the settings page renders: current values and the environment."""
+    settings = await _api_proxy_get("/api/settings")
+    if not isinstance(settings, list):
+        settings = []
+    stored = {str(s.get("key")): str(s.get("value")) for s in settings if isinstance(s, dict)}
+    environment = _environment_panel()
+    environment["log_retention_source"] = _retention_source(stored)
+    return {
+        "values": {key: stored.get(key, default_value(key)) for key in MANAGE_FIELDS},
+        "errors": errors or [],
+        "environment": environment,
+        "stored_keys": sorted(stored),
+        "confirm_word": PRUNE_CONFIRM,
+    }
 
 
 async def _backup_context(
@@ -694,7 +771,7 @@ def create_app() -> FastAPI:
     async def login_post(request: Request) -> Response:
         return await _handle_login_post(request)
 
-    async def _render_manage(request: Request, template: str, ctx: dict[str, Any] | None = None) -> Response:
+    async def _render_manage(request: Request, template: str, ctx: dict[str, Any] | None = None, status_code: int = 200) -> Response:
         auth_resp = await _require_manage_auth(request)
         if auth_resp is not None:
             return auth_resp
@@ -702,7 +779,7 @@ def create_app() -> FastAPI:
         base_ctx: dict[str, Any] = {"request": request, "csrf_token": csrf}
         if ctx:
             base_ctx.update(ctx)
-        resp = templates.TemplateResponse(request, template, base_ctx)
+        resp = templates.TemplateResponse(request, template, base_ctx, status_code=status_code)
         if not request.cookies.get("csrf_token"):
             resp.set_cookie(key="csrf_token", value=csrf, path="/", samesite="lax", secure=True)
         return resp
@@ -1317,11 +1394,7 @@ def create_app() -> FastAPI:
         _auth = await _require_manage_auth(request)
         if _auth is not None:
             return _auth
-        settings = await _api_proxy_get("/api/settings")
-        if not isinstance(settings, list):
-            settings = []
-        sval = next((s["value"] for s in settings if s.get("key") == "rate_limit_access_code_per_min"), "5")
-        return await _render_manage(request, "manage/settings.html", {"settings": settings, "rate_limit": sval})
+        return await _render_manage(request, "manage/settings.html", await _settings_context())
 
     @app.post("/manage/settings", response_class=HTMLResponse)
     async def manage_settings_post(request: Request) -> Response:
@@ -1333,16 +1406,52 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=403, detail="Invalid CSRF")
         if not same_origin(request):
             raise HTTPException(status_code=403, detail="Cross-site")
-        raw = str(form.get("rate_limit_access_code_per_min") or "").strip()
-        try:
-            n = int(raw)
-            if not (1 <= n <= 1000):
-                raise ValueError()
-        except Exception:
-            raise HTTPException(status_code=400, detail="rate_limit must be 1..1000")
-        client = _get_httpx()
-        await client.put(f"http://api:8002/api/settings/rate_limit_access_code_per_min", json={"value": str(n)}, headers=_api_headers(), timeout=5.0)
+        # One `PUT` per changed field, and only for keys this panel owns. A field
+        # the browser did not send is left alone, so a partial form cannot blank
+        # a setting it never showed.
+        errors: list[str] = []
+        for key, raw in _submitted_settings(form).items():
+            try:
+                value = validate_value(key, raw)
+            except ValueError as e:
+                errors.append(f"{key}: {e}")
+                continue
+            await _api_proxy_put(f"/api/settings/{key}", {"value": value})
+        if errors:
+            ctx = await _settings_context()
+            ctx["errors"] = errors
+            return await _render_manage(request, "manage/settings.html", ctx, status_code=400)
         return RedirectResponse(url="/manage/settings", status_code=302)
+
+    @app.post("/manage/logs/prune", response_class=HTMLResponse)
+    async def manage_logs_prune(request: Request) -> Response:
+        """Delete audit rows past the retention window, on demand.
+
+        The only way to prune without restarting the API, and it always asks for
+        the confirmation word first: this deletes history with no undo.
+        """
+        _auth = await _require_manage_auth(request)
+        if _auth is not None:
+            return _auth
+        form = await request.form()
+        if not _verify_csrf(request, str(form.get("csrf_token") or "")):
+            raise HTTPException(status_code=403, detail="Invalid CSRF")
+        if not same_origin(request):
+            raise HTTPException(status_code=403, detail="Cross-site")
+        if str(form.get("confirm") or "").strip() != PRUNE_CONFIRM:
+            raise HTTPException(status_code=403, detail=f"Type {PRUNE_CONFIRM} to confirm")
+        client = _get_httpx()
+        try:
+            r = await client.post("http://api:8002/api/logs/prune", headers=_api_headers(), timeout=60.0)
+            verdict = r.json()
+        except Exception as e:
+            _slog("logs_prune_failed", error=str(e))
+            verdict = {"ok": False, "detail": "prune failed"}
+        if not isinstance(verdict, dict):
+            verdict = {"ok": False, "detail": "prune failed"}
+        ctx = await _settings_context()
+        ctx["prune"] = verdict
+        return await _render_manage(request, "manage/settings.html", ctx)
 
     @app.get("/manage/backup", response_class=HTMLResponse)
     async def manage_backup(request: Request) -> Response:

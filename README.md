@@ -1,11 +1,12 @@
 # GateKeeper
 
-FastAPI gateway that protects web apps through a reverse-proxy gate. A signed, expiring 12h JWT cookie (`gatekeeper_token` `PyJWT HS256` `iss=gatekeeper` `aud=projectnova.download` `exp 12h` `jti`) on the apex domain is the primary credential; `manage_session` (`8h` `Path /manage`) and per-rule `gatekeeper_custom_{id}` (`12h` `rid`) share the same `SECRET_KEY` (`Field(min_length=32)`). `codes.active=0` revokes instantly via `api:8002` (`internal:true` `X-Internal-Api-Key`). `settings.rate_limit_access_code_per_min` rate-limits `?access_code=` tries/min. All traffic enters via Caddy `:7000` (wildcard `*.projectnova.download`).
+FastAPI gateway that protects web apps through a reverse-proxy gate. A signed, expiring JWT cookie (`gatekeeper_token` `PyJWT HS256` `iss=gatekeeper` `aud=projectnova.download` `exp` = `session_lifetime_hours`, default 12h, `jti`) on the apex domain is the primary credential; `manage_session` (`8h` `Path /manage`) and per-rule `gatekeeper_custom_{id}` (`session_lifetime_hours`) share the same `SECRET_KEY` (`Field(min_length=32)`). `codes.active=0` revokes instantly via `api:8002` (`internal:true` `X-Internal-Api-Key`). `settings.rate_limit_access_code_per_min` rate-limits `?access_code=` tries/min. All traffic enters via Caddy `:7000` (wildcard `*.projectnova.download`).
 
 ## How it works
 
 ```
 Request → Caddy :7000 → Auth Gateway :8001 /api/authz/forward-auth
+                          ├─ maintenance_mode on           → 503 (manage hosts exempt)
                           ├─ valid gatekeeper_token        → 200 → proxy to Route upstream
                           ├─ valid ?access_code=           → 302 + Set-Cookie (stripped)
                           ├─ valid custom_password → 200
@@ -18,6 +19,8 @@ Any gated URL can carry `?access_code=<code>` as a magic link — stripped after
 Rule resolution and the unmatched-request decision live in `shared/gate.py` and are used by **both** gate paths, so `forward_auth` and the wildcard proxy cannot reach different verdicts about the same request. A host that is in no rule group follows `settings.unmatched_action`: `access_code` (default, redirect to login), `deny` (403), or `none` (proxy without auth). A group that matched the host with no matching rule is always refused, whatever the setting says.
 
 Every group carries exactly one `/*` catch-all (`rules.is_default`), forced last, and the API refuses to delete, reorder or rename it: `/*` is a reserved path and deleting the group is the only way to remove its catch-all. A group created through `POST /api/groups` seeds one with `action=access_code`, because gating is the default. The boot backfill in `shared/rule_defaults.py` establishes and reports the invariant on an existing database.
+
+Behaviour an operator can change while the gateway runs lives in the `settings` table, described once in `shared/settings_spec.py`: `unmatched_action`, `rate_limit_access_code_per_min`, `session_lifetime_hours`, `maintenance_mode`, `maintenance_message` and `log_retention_days`. All six are editable on `/manage/settings`, which also shows a read-only environment panel (`DEPLOYMENT_TYPE`, database backend, and whether the two secrets are configured, as presence only). The visitor cookie's lifetime is `session_lifetime_hours`; `manage_session` keeps its own fixed `8h` and deliberately does not follow it. Maintenance mode serves a themed `503` on every gated host while keeping `/manage` reachable, so the switch cannot lock the operator out. Retention prunes at API startup and on demand, with no scheduler.
 
 **Stack:** Python 3.14 · FastAPI + Granian · SQLAlchemy 2 (async) · MySQL 8.4 / SQLite · Caddy 2 · PyJWT
 
@@ -54,6 +57,7 @@ Visit `https://gatekeeper.projectnova.download/` (login) or `/manage/login` for 
 | `DATABASE_URL` | no | `mysql+aiomysql://` or `sqlite+aiosqlite://` |
 | `BACKUP_CODE` | no | Seeded backup code |
 | `DB_DIR` | no | `/data` in container |
+| `LOG_RETENTION_DAYS` | no | Seeds the `log_retention_days` setting on a fresh volume (default `30`) |
 
 ## Routes
 
@@ -65,6 +69,7 @@ Visit `https://gatekeeper.projectnova.download/` (login) or `/manage/login` for 
 | `GET /manage/logout` | manage | Clear session |
 | `GET /manage`, `/routing`, `/rules`, `/codes`, `/logs`, `/audit`, `/top-pages`, `/settings` | manage | Admin pages |
 | `GET /manage/monitoring` | manage | `302` alias to `/manage/audit`, kept so old bookmarks land |
+| `POST /manage/logs/prune` | manage | Delete audit rows past the retention window (`confirm=PRUNE`) |
 | `GET /manage/backup`, `/manage/backup/download`, `POST /manage/backup/restore` | manage | Configuration export and restore (`confirm=REPLACE`, `stage=preview\|apply`) |
 | `POST /manage/groups/{gid}/order`, `POST /manage/rules/{rid}/order` | manage | Reorder rule groups and rules up/down (refused on the pinned default group and catch-all) |
 | `POST /manage/codes/{cid}/active`, `POST /manage/codes/{cid}/delete` | manage | Activate/deactivate a code, or delete it permanently against a typed `confirm_code` |
@@ -72,7 +77,8 @@ Visit `https://gatekeeper.projectnova.download/` (login) or `/manage/login` for 
 | `GET /api/routes`, `/groups`, `/rules`, `/codes`, `/logs`, `/settings`, `/warnings` | internal (`X-Internal-Api-Key` on `net-api`) | REST API (`/api/codes` hides inactive rows unless `?include_inactive=true`) |
 | `PUT /api/groups/{gid}`, `PUT /api/rules/{rid}` | internal (`X-Internal-Api-Key`) | Update a group or rule; each field is validated only when present in the body |
 | `PUT /api/codes/{cid}`, `DELETE /api/codes/{cid}` | internal (`X-Internal-Api-Key`) | Activate/deactivate a code (`active`, booleans or `"true"`/`"false"`/`"1"`/`"0"`); `DELETE` removes it permanently and nulls `audit_logs.code_id` |
-| `PUT /api/settings/{key}` | internal (`X-Internal-Api-Key`) | Update a setting; `rate_limit_access_code_per_min` is `1..1000`, `unmatched_action` is `access_code`/`deny`/`none` |
+| `PUT /api/settings/{key}` | internal (`X-Internal-Api-Key`) | Update a setting, validated per key in `shared/settings_spec.py`: `unmatched_action` is `access_code`/`deny`/`none`, `rate_limit_access_code_per_min` is `1..1000`, `session_lifetime_hours` is `1..720`, `maintenance_mode` is `true`/`false`, `maintenance_message` is at most 200 characters, `log_retention_days` is `7..3650` |
+| `POST /api/logs/prune` | internal (`X-Internal-Api-Key`) | Delete audit rows older than the retention window; `?days=` overrides the stored setting |
 | `GET /api/backup`, `POST /api/backup/restore` | internal (`X-Internal-Api-Key`) | Export the configuration as signed plain JSON; restore it (`?dry_run=1` verifies without writing) |
 
 ## Domain Adaptation

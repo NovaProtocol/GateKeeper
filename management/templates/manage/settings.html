@@ -1,20 +1,203 @@
 {% extends "base.html" %}
 {% block title %}Settings · GateKeeper{% endblock %}
+{% block head_extra %}
+<style>
+.set-note{color:var(--text-secondary);font-size:.75rem;line-height:1.5;margin-top:.35rem}
+.set-note code{font-family:'JetBrains Mono',monospace;color:var(--text-secondary)}
+.set-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:1.25rem;align-items:start}
+.set-field{min-width:0}
+.set-field label{display:block;font-size:.75rem;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.05em;margin-bottom:.375rem}
+.set-field input[type="text"],
+.set-field input[type="number"],
+.set-field select{width:100%;max-width:320px;background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:.55rem .75rem;color:var(--text-primary);font-family:'JetBrains Mono',monospace;font-size:.85rem}
+.set-field input:focus,.set-field select:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-dim)}
+.set-errors{border:1px solid var(--danger);background:var(--danger-dim);border-radius:8px;padding:.85rem 1rem;margin-bottom:1.25rem;font-size:.85rem}
+.set-errors ul{margin:.4rem 0 0 1.1rem;color:var(--text-secondary)}
+.set-verdict{border:1px solid var(--accent);background:var(--accent-dim);border-radius:8px;padding:.85rem 1rem;margin-bottom:1.25rem;font-size:.85rem}
+.env-list{width:100%;border-collapse:collapse;font-size:.85rem}
+.env-list th{text-align:left;font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;color:var(--text-secondary);padding:.4rem 0;font-weight:600}
+.env-list td{padding:.35rem 0;border-top:1px solid var(--border)}
+.env-list td:first-child{font-family:'JetBrains Mono',monospace;color:var(--text-secondary);white-space:nowrap;padding-right:1.25rem}
+.env-list td:last-child{font-family:'JetBrains Mono',monospace}
+.set-actions{display:flex;gap:.6rem;align-items:center;flex-wrap:wrap;margin-top:1.25rem}
+</style>
+{% endblock %}
 {% block content %}
 <div class="container container-narrow">
-  <div class="card">
-    <div class="card-header"><h2><i class="fa-solid fa-gear"></i> Settings</h2><span class="header-badge" style="font-family:'JetBrains Mono',monospace">DB-backed</span></div>
-    <div class="card-body" style="color:var(--text-secondary);font-size:.9rem">
-      <form method="post" action="/manage/settings" style="display:flex;gap:1rem;align-items:end;flex-wrap:wrap">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <div style="display:flex;flex-direction:column;gap:.4rem">
-          <label for="rate_limit" style="font-size:.8rem;font-weight:600;color:var(--text-primary)">Access code tries per minute (per IP)</label>
-          <input id="rate_limit" name="rate_limit_access_code_per_min" type="number" min="1" max="1000" value="{{ rate_limit }}" style="background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:.55rem .75rem;color:var(--text-primary);font-family:'JetBrains Mono',monospace;width:140px">
-          <small style="color:var(--text-secondary);font-size:.75rem">Enforced in auth-gateway on <code>?access_code=</code> — <code>POST /api/auth/check-rate-limit</code> counts <code>audit_logs</code> last 60s.</small>
+  <div class="stat-strip">
+    <div class="stat"><span class="stat-label">settings rows</span><span class="stat-value">{{ stored_keys | length }}</span></div>
+    <div class="stat"><span class="stat-label">editable here</span><span class="stat-value">{{ values | length }}</span></div>
+    <div class="stat"><span class="stat-label">db</span><span class="stat-value">{{ environment.db_backend }}</span></div>
+    <div class="stat"><span class="stat-label">mode</span><span class="stat-value">{{ environment.deployment_type }}</span></div>
+  </div>
+
+  {% if errors %}
+  <div class="set-errors">
+    <strong>Nothing was saved.</strong>
+    <ul>{% for error in errors %}<li>{{ error }}</li>{% endfor %}</ul>
+  </div>
+  {% endif %}
+  {% if prune %}
+  <div class="set-verdict">
+    {% if prune.ok %}
+      Deleted {{ prune.deleted }} audit row{{ '' if prune.deleted == 1 else 's' }}; {{ prune.remaining }} remain.
+    {% else %}
+      Prune failed: {{ prune.detail or 'unknown error' }}.
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <form method="post" action="/manage/settings">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+    <div class="card">
+      <div class="card-header"><h2><i class="fa-solid fa-shield-halved" aria-hidden="true"></i> Gateway</h2></div>
+      <div class="card-body">
+        <div class="set-grid">
+          <div class="set-field">
+            <label for="unmatched_action">Unmatched request</label>
+            <select id="unmatched_action" name="unmatched_action" title="What happens when a host matches no rule group" aria-label="Unmatched request behaviour">
+              {% for option in ['access_code', 'deny', 'none'] %}
+              <option value="{{ option }}" {% if values.unmatched_action == option %}selected{% endif %}>{{ option }}</option>
+              {% endfor %}
+            </select>
+            <p class="set-note">
+              Applies only when <strong>no group matches the host</strong>. Enforced by
+              <code>shared/gate.py:resolve_rule_action</code> in both gate paths.
+              It cannot override the case where a group matched but its catch-all is missing:
+              that is always refused, whatever this says.
+              In a healthy database the seeded <code>*.*/*</code> group matches every host, so
+              this is a backstop for a missing default group rather than a per-host policy.
+            </p>
+          </div>
+          <div class="set-field">
+            <label for="rate_limit_access_code_per_min">Access code tries per minute</label>
+            <input id="rate_limit_access_code_per_min" name="rate_limit_access_code_per_min" type="number" min="1" max="1000" value="{{ values.rate_limit_access_code_per_min }}" title="Access code attempts allowed per IP per minute" aria-label="Access code tries per minute">
+            <p class="set-note">
+              Counted in <code>api/app.py:check_rate_limit</code> over the last 60s of
+              <code>audit_logs</code> for that IP, per IP.
+            </p>
+          </div>
         </div>
-        <button class="btn btn-accent" type="submit" title="Save" aria-label="Save"><i class="fa-solid fa-floppy-disk" aria-hidden="true"></i></button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><h2><i class="fa-solid fa-hourglass-half" aria-hidden="true"></i> Sessions</h2></div>
+      <div class="card-body">
+        <div class="set-field">
+          <label for="session_lifetime_hours">Visitor session lifetime (hours)</label>
+          <input id="session_lifetime_hours" name="session_lifetime_hours" type="number" min="1" max="720" value="{{ values.session_lifetime_hours }}" title="How long a visitor stays signed in" aria-label="Visitor session lifetime in hours">
+          <p class="set-note">
+            Sets both the cookie's <code>Max-Age</code> and the JWT's <code>exp</code>, in
+            <code>auth-gateway/app.py:_set_auth_cookie</code> and <code>_set_custom_cookie</code>.
+            They move together on purpose: a cookie that outlives its own token is a cookie that
+            fails on the next request.
+            This does <strong>not</strong> change the <code>manage_session</code> cookie, which
+            stays at its own 8 hours. An admin session and a visitor session are different trust
+            levels and do not share one dial.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><h2><i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i> Maintenance</h2></div>
+      <div class="card-body">
+        <div class="set-grid">
+          <div class="set-field">
+            <label for="maintenance_mode">Maintenance mode</label>
+            <div class="toggle-wrapper">
+              <input type="hidden" name="maintenance_mode" value="false">
+              <label class="toggle">
+                <input type="checkbox" id="maintenance_mode" name="maintenance_mode" value="true" {% if values.maintenance_mode == 'true' %}checked{% endif %} title="Serve a maintenance page instead of the site" aria-label="Maintenance mode">
+                <span class="toggle-slider"></span>
+              </label>
+              <span>serve 503 to every gated host</span>
+            </div>
+            <p class="set-note">
+              Checked in <code>auth-gateway/app.py:_maintenance_response</code> before rule
+              dispatch, so it means the same thing on every host.
+              <strong>/manage and /manage/login are exempt</strong>, which is why this page
+              stays reachable to switch it back off. The API is unaffected, so
+              <code>X-Internal-Api-Key</code> callers still work.
+            </p>
+          </div>
+          <div class="set-field">
+            <label for="maintenance_message">Notice shown to visitors</label>
+            <input id="maintenance_message" name="maintenance_message" type="text" maxlength="200" value="{{ values.maintenance_message }}" title="Optional line shown on the maintenance page" aria-label="Maintenance notice">
+            <p class="set-note">
+              Rendered into <code>shared/error_pages.py:render_maintenance_html</code>, escaped.
+              Leave it blank to say nothing extra.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><h2><i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i> Audit</h2></div>
+      <div class="card-body">
+        <div class="set-field">
+          <label for="log_retention_days">Log retention (days)</label>
+          <input id="log_retention_days" name="log_retention_days" type="number" min="7" max="3650" value="{{ values.log_retention_days }}" title="How long audit rows are kept" aria-label="Log retention in days">
+          <p class="set-note">
+            Used by <code>api/app.py:prune_audit_logs</code>, which runs once at API startup and
+            whenever the button below is pressed. There is no scheduler: nothing ages rows out
+            while the API keeps running. Currently sourced from the
+            <strong>{{ environment.log_retention_source }}</strong>.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <div class="set-actions">
+      <button class="btn btn-accent" type="submit" title="Save settings" aria-label="Save settings"><i class="fa-solid fa-floppy-disk" aria-hidden="true"></i> Save</button>
+      <a class="btn btn-ghost btn-sm" href="/manage/backup" title="Export or restore configuration" aria-label="Go to backup">Backup</a>
+    </div>
+  </form>
+
+  <div class="card">
+    <div class="card-header"><h2><i class="fa-solid fa-broom" aria-hidden="true"></i> Prune audit logs</h2></div>
+    <div class="card-body">
+      <p class="set-note" style="margin-top:0">
+        Deletes every audit row older than the retention above. Rows inside the window are kept.
+        This cannot be undone and there is no export behind it, so the word below is checked on
+        the server, not only here.
+      </p>
+      <form method="post" action="/manage/logs/prune">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <div class="set-field">
+          <label for="prune-confirm">Type {{ confirm_word }} to confirm</label>
+          <input id="prune-confirm" name="confirm" type="text" autocomplete="off" placeholder="{{ confirm_word }}" title="Type {{ confirm_word }} to enable the prune" aria-label="Prune confirmation word">
+        </div>
+        <div class="set-actions">
+          <button class="btn btn-outline-danger" type="submit" title="Delete audit rows past the retention window" aria-label="Prune audit logs"><i class="fa-solid fa-broom" aria-hidden="true"></i> Prune now</button>
+        </div>
       </form>
-      <p style="margin-top:1rem;font-size:.8rem">Other settings are still via env (<span style="font-family:'JetBrains Mono',monospace;color:var(--text-primary)">SECRET_KEY</span> etc.). Use <a href="/manage/backup" style="color:var(--accent)">/manage/backup</a> for snapshots.</p>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><h2><i class="fa-solid fa-server" aria-hidden="true"></i> Environment</h2><span class="header-badge">read-only</span></div>
+    <div class="card-body">
+      <div class="table-scroll" tabindex="0" role="region" aria-label="Environment">
+        <table class="env-list">
+          <thead><tr><th scope="col">Setting</th><th scope="col">Value</th></tr></thead>
+          <tbody>
+            <tr><td>DEPLOYMENT_TYPE</td><td>{{ environment.deployment_type }}</td></tr>
+            <tr><td>database</td><td>{{ environment.db_backend }}{% if environment.db_is_override %} (DATABASE_URL override){% endif %}</td></tr>
+            <tr><td>INTERNAL_API_KEY</td><td>{{ 'configured' if environment.internal_api_key_set else 'not set' }}</td></tr>
+            <tr><td>SECRET_KEY</td><td>{{ 'configured' if environment.secret_key_set else 'not set' }}</td></tr>
+            <tr><td>retention source</td><td>{{ environment.log_retention_source }}</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="set-note">
+        Presence only for the two keys: the panel never reads a secret value, so there is nothing
+        here to leak. Everything else on this page is stored in the database and moves with a
+        backup; these follow the compose environment and need a redeploy.
+      </p>
     </div>
   </div>
 </div>

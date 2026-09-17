@@ -55,6 +55,7 @@ def render_error_html(
     request_id: str | None = None,
     apex: str = "projectnova.download",
     subtitle: str | None = None,
+    extra_html: str = "",
 ) -> str:
     """Return a standalone HTML document for the given error."""
     apex = _apex_fallback(apex)
@@ -123,6 +124,7 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;background
       <div style="font-family:'JetBrains Mono',monospace;font-size:.75rem;color:var(--accent);margin-bottom:.75rem;letter-spacing:.08em;text-transform:uppercase">{status} — {esc_title}</div>
       <h1 style="font-size:1.45rem;font-weight:800;margin-bottom:.6rem;line-height:1.3">{esc_title}</h1>
       <p style="color:var(--text-secondary);font-size:.95rem;line-height:1.6;margin-bottom:1.5rem">{esc_message}</p>
+      {extra_html}
       {detail_line}
       {host_path_line}
       {req_line}
@@ -136,3 +138,36 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;background
 </body>
 </html>
 """
+
+
+def render_maintenance_html(
+    *,
+    message: str = "",
+    host: str | None = None,
+    apex: str = "projectnova.download",
+) -> str:
+    """The page every gated host answers with while maintenance mode is on.
+
+    Deliberately the same document as every other gateway error: an outage is the
+    worst moment to make a visitor learn a second layout. ``message`` is the
+    operator's own notice; it is escaped here and never rendered raw.
+    """
+    note = message.strip() if message else ""
+    extra = (
+        '<p style="color:var(--text-secondary);font-size:.9rem;line-height:1.6;margin:1rem 0 0">'
+        f"{html.escape(note)}</p>"
+        if note
+        else ""
+    )
+    return render_error_html(
+        status=503,
+        title="Down for maintenance",
+        message=(
+            "The gateway is being updated. Nothing is wrong with your connection, "
+            "and this page will load again shortly."
+        ),
+        host=host,
+        apex=apex,
+        subtitle="maintenance",
+        extra_html=extra,
+    )

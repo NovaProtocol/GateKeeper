@@ -6,7 +6,7 @@
 |-------|--------|
 | Runtime | Python 3.14-slim, Granian (ASGI) |
 | Framework | FastAPI modular — `shared/` + 3 services, not a Flask monolith |
-| Cookie | `PyJWT HS256` (`SECRET_KEY`, `iss=gatekeeper`, `aud=projectnova.download`, `exp 12h`) |
+| Cookie | `PyJWT HS256` (`SECRET_KEY`, `iss=gatekeeper`, `aud=projectnova.download`, `exp` = `session_lifetime_hours`, default 12h) |
 | DB | SQLAlchemy 2 async — `aiosqlite` (SQLite WAL) or `aiomysql` (MySQL 8.4). File `gatekeeper.db` at `DB_DIR=/data` |
 | Docs | MkDocs Material 1.6.1 on `:8005`, FastAPI + granian, USER appuser |
 | Proxy | Caddy 2 on `:7000` — wildcard `*.projectnova.download` → `gatekeeper_auth:8001` → DB Route lookup |
@@ -19,11 +19,14 @@ project/
 ├── caddy/Dockerfile # caddy:2-alpine
 ├── shared/
 │ ├── config.py # pydantic-settings: SECRET_KEY, MANAGE_PASSWORD, DATABASE_URL, INTERNAL_API_KEY, DEPLOYMENT_TYPE, BACKUP_CODE
-│ ├── jwt.py # PyJWT HS256 iss=gatekeeper aud=projectnova.download exp 12h/8h/12h + jti
+│ ├── jwt.py # PyJWT HS256 iss=gatekeeper aud=projectnova.download exp configurable/8h/configurable + jti
 │ ├── models.py # 6 tables + settings + audit_logs (routes, rule_groups, rules, codes, settings, audit_logs with method/status_code/attempted_code)
+│ ├── settings_spec.py # the settings table: accepted values, defaults, fallback direction
 │ ├── security.py # pbkdf2_hmac sha512 100k, host_matches, path_matches, mask_code, apex_domain
+│ ├── gate.py # rule dispatch + the unmatched-request decision (find_group_rule, resolve_rule_action)
 │ ├── backup.py # signed plain-JSON export/restore of the config tables (HMAC-SHA256 over `config`)
-│ ├── error_pages.py # wants_html, render_error_html (dark theme)
+│ ├── rule_defaults.py # boot backfill: exactly one `/*` catch-all per group, forced last
+│ ├── error_pages.py # wants_html, render_error_html, render_maintenance_html (dark theme)
 │ └── db.py # create_async_engine, async_sessionmaker, get_db() — imported only by api:8002 (net-data)
 ├── auth-gateway/app.py # :8001 — RequestID, ProxyFix, CSP, slowapi, wildcard proxy (net-api → api:8002, no DB)
 ├── api/app.py # :8002 — lifespan create_all + migrations + seed (net-data sole writer)
@@ -53,10 +56,39 @@ All healthchecks: `python -c "import urllib.request; urllib.request.urlopen('htt
 | `rule_groups` | `name unique, domain, display_order, is_default` |
 | `rules` | `group_id, path, action(access_code|none|custom_password|deny), custom_password_hash/salt, allow_ip, allow_time, rate_limit, display_order, is_default` |
 | `codes` | `code unique, label, display_name, active, last_accessed` |
-| `settings` | `key PK, value, updated_at`. Known keys: `rate_limit_access_code_per_min` (1..1000), `unmatched_action` (`access_code`/`deny`/`none`) |
+| `settings` | `key PK, value, updated_at`. Keys the panel edits: `unmatched_action` (`access_code`/`deny`/`none`), `rate_limit_access_code_per_min` (1..1000), `session_lifetime_hours` (1..720), `maintenance_mode` (`true`/`false`), `maintenance_message` (≤200 chars), `log_retention_days` (7..3650). The accepted values, defaults and fallback direction for each live in `shared/settings_spec.py`, which the API validator, both reader services and the manage form all read |
 | `audit_logs` | `ts, ip, host, path, action, code_id, rule_group_id, rule_id, method, status_code, attempted_code, latency_ms, request_id, user_agent, referer` |
 
 `allow_ip / allow_time / rate_limit` on `rules` are **reserved** (stored, not enforced on hot path).
+
+### The settings table
+
+Settings are the third source of gateway behaviour, alongside the rule tables and the compose environment. The split is deliberate: anything an operator changes while the gateway is running is a `settings` row, and anything that describes how the process was started stays in the environment.
+
+`shared/settings_spec.py` is the single description of every key: accepted values, default, and the direction to fall back in when a stored value is unusable. Four things read it and none of them repeats a rule from it:
+
+1. `api/app.py` validates `PUT /api/settings/{key}` against it, so an invalid value is refused at the only write path and cannot reach the database through the API at all.
+2. `shared/settings_spec.py` normalises a stored value on the reader side, and `auth-gateway` goes through `read_value()` (via `as_int` / `as_bool`) for every settings value it acts on. The database can still be edited by hand or restored from an older backup, and no reader may act on a value the writer would have rejected. A `NULL` row is one of those cases and takes the same fallback as any other unusable value, which matters because `NULL` stringified is `"none"`, a valid and permissive `unmatched_action`.
+3. The `api` lifespan seeds a row for every key the panel edits, so the page shows the value the process is actually running with rather than a blank that means "default".
+4. `management/app.py` builds the settings form from `MANAGE_FIELDS`, so a key cannot exist in the database and be unreachable in the UI.
+
+Fallbacks are chosen to be the *safe* reading of each key rather than the convenient one: `unmatched_action` falls back to `access_code` (refuse what it cannot classify) and `maintenance_mode` falls back to `false`, because defaulting a gateway into an outage on a settings blip would take the site down rather than protect it. A key whose value cannot be read is never more permissive than the documented default.
+
+Two keys have an environment variable that seeds them rather than a constant default: `log_retention_days` is seeded from `LOG_RETENTION_DAYS`, and both accept the environment value only when it is itself in range, so an out-of-range variable falls back to the built-in window rather than seeding a row the panel would refuse to edit.
+
+### Where the settings act
+
+The gate consults settings at three points, in this order, in both gate paths:
+
+```
+request
+  ├─ 1. maintenance_mode        → 503 themed page (manage hosts exempt)
+  ├─ 2. find_group_rule         → group + rule, or group + none, or none + none
+  └─ 3. resolve_rule_action     → the rule's action, or a refusal, or unmatched_action
+          ↑ session_lifetime_hours is read where a cookie is minted, not here
+```
+
+Steps 2 and 3 are `shared/gate.py` and are the fail-closed core: a group that matched the host with no matching rule is always refused, while a host in no group follows `unmatched_action`. Step 1 sits above both so the maintenance switch means the same thing on every host and cannot be reached around. Because step 1 runs first, a request that `access_code` would have gated receives the `503` instead of a login redirect while maintenance is on, and turning it off restores exactly the previous behaviour. See [Auth Flow](auth-flow.md) for the decision table and [Rules](rules.md) for the catch-all invariant.
 
 ### Configuration vs history
 
@@ -74,7 +106,7 @@ satisfies is nulled, never cascaded into a deleted log row. See Backup & Restore
 
 ### DB Init
 
-`api/app.py:lifespan` runs `create_all`, then `ALTER TABLE` migrations (try/except), seeds default `*.*/*` group (`/* → access_code`), public groups `gatekeeper.projectnova.download` + `projectnova.download` (`/* → none`), and `BACKUP_CODE` if set. Reseats `display_order` so `*.*/*` stays bottom.
+`api/app.py:lifespan` runs `create_all`, then `ALTER TABLE` migrations (try/except), seeds default `*.*/*` group (`/* → access_code`), public groups `gatekeeper.projectnova.download` + `projectnova.download` (`/* → none`), and `BACKUP_CODE` if set. Reseats `display_order` so `*.*/*` stays bottom. It then backfills the per-group catch-all invariant (`shared/rule_defaults.py`), seeds a `settings` row for every key the panel edits, and runs one audit-log retention sweep inside a guarded `try/except` so a boot never fails on housekeeping.
 
 ## Auth Flow (summary)
 
