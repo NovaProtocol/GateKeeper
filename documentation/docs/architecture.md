@@ -120,7 +120,28 @@ Browser → Caddy :7000 → Auth Gateway :8001 /api/authz/forward-auth
  └─ on pass: longest-path Route match → proxy to upstream or redirect
 ```
 
-Cache: in-memory `RuleGroup+Route` polled every `CACHE_TTL=5s` under `asyncio.Lock` via `GET http://api:8002/api/routes|groups|rules` (`X-Internal-Api-Key` on `net-api` `internal:true`) — only `api:8002` imports `shared/db.py`. Code verification is `POST /api/auth/verify-*` on `net-api`. Audit via `BackgroundTasks → POST http://api:8002/api/logs` (`X-Internal-Api-Key` `internal:true`) + rate-limit `POST /api/auth/check-rate-limit {ip}` for `?access_code=` tries/min; `POST /api/routes/{id}/test` `socket.create_connection((upstream,port))` needs `api` on `gatekeeper` to reach `portfolio_main:8000` etc.
+Cache: in-memory `RuleGroup+Route` polled every `CACHE_TTL=5s` under `asyncio.Lock` via `GET http://api:8002/api/routes|groups|rules` (`X-Internal-Api-Key` on `net-api` `internal:true`) — only `api:8002` imports `shared/db.py`. Code verification is `POST /api/auth/verify-*` on `net-api`. Audit via `BackgroundTasks → POST http://api:8002/api/logs` (`X-Internal-Api-Key` `internal:true`) + rate-limit `POST /api/auth/check-rate-limit {ip}` for `?access_code=` tries/min; `POST /api/routes/{id}/test` and `POST /api/routes/test` both `socket.create_connection((upstream,port))` and need `api` on `gatekeeper` to reach `portfolio_main:8000` etc.
+
+## When an upstream fails
+
+A routed host whose container is not answering used to return a bare JSON body whatever the caller asked for, and every failure reported the same status. Both are now decided in `auth-gateway/app.py` `_proxy_to_upstream`, and the two failure classes are kept apart:
+
+| Failure | Status | What it means |
+|---------|--------|---------------|
+| `httpx.ConnectError` | `502 Upstream unavailable` | nothing is listening on that address |
+| `httpx.TimeoutException` | `504 Upstream timed out` | the connection was accepted and then went quiet |
+| any other transport error | `502 Upstream unavailable` | the gateway could not complete the request |
+
+They are distinct because they have different causes and different fixes. "Nothing is listening" points at a stopped or misnamed container; "accepted and went quiet" points at a process that is running but stuck, under load, or holding a connection it will not answer. Collapsing the two, as one `except Exception` did, sends the operator to look in the wrong place. `httpx.ConnectTimeout` is a `TimeoutException` and not a `ConnectError`, so the branch order cannot misclassify it, and a connect that times out is reported as a timeout because that is what it was.
+
+All three go through the shared `_error_response` helper, which is the same one the `404` route-not-found path already used. It branches on `wants_html(request)`:
+
+- a browser (an `Accept` header containing `text/html`) gets `render_error_html` from `shared/error_pages.py`, the dark-theme document every other gateway error uses, so an outage is not the moment to learn a second layout;
+- an API caller (`Accept: application/json`) gets `{"detail": …}` with the upstream and port named;
+- anything else gets the detail as plain text.
+
+The status is the same in every case, so the caller can branch on it without parsing the body. Themed or not, an upstream failure is never a `200`. A route whose upstream is alive is unaffected: this is the error path only.
+
 
 ## Networks
 

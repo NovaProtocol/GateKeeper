@@ -24,6 +24,10 @@ Behaviour an operator can change while the gateway runs lives in the `settings` 
 
 `/manage/audit` shows where visitors came from, next to the per-visitor table. `audit_logs.country` is a two-letter code read from `CF-IPCountry` by `shared/geo.py`, gated by `geo_lookup_enabled`, country level only: no city, no coordinates from a visitor's own address, no lookup service. `GET /api/logs/geo?mode=views|visitors|gated|blocked` aggregates it and the page draws radius-scaled circle markers rather than a heat layer, because one centroid per country is not a density surface. Whether cloudflared forwards `CF-IPCountry` to the origin is not yet verified; if it does not, every row stores `NULL` and the page reports `Unknown` instead of failing.
 
+When a route's upstream fails, the gateway keeps the two causes apart: `502` when nothing is listening and `504` when the connection was accepted and went quiet. Both go through the same `_error_response` helper as every other gateway error, so a browser gets the themed page and an `Accept: application/json` caller gets JSON with the upstream and port named.
+
+Routing and Rules each have a **Test before saving** button in their add and edit modals. It asks the server about the values currently typed, without saving: `POST /api/routes/test` connects to the named upstream and port, and `POST /api/dry-run` reports which rule would win and whether the path is shadowed. Reachability means something is listening, not that it is the right application.
+
 **Stack:** Python 3.14 · FastAPI + Granian · SQLAlchemy 2 (async) · MySQL 8.4 / SQLite · Caddy 2 · PyJWT
 
 ## Services
@@ -77,7 +81,9 @@ Visit `https://gatekeeper.projectnova.download/` (login) or `/manage/login` for 
 | `POST /manage/groups/{gid}/order`, `POST /manage/rules/{rid}/order` | manage | Reorder rule groups and rules up/down (refused on the pinned default group and catch-all) |
 | `POST /manage/codes/{cid}/active`, `POST /manage/codes/{cid}/delete` | manage | Activate/deactivate a code, or delete it permanently against a typed `confirm_code` |
 | `POST /manage/groups/{gid}/edit`, `POST /manage/rules/{rid}/edit` | manage | Edit a rule group (`name`, `domain`) or a rule (`path`, `action`) |
+| `POST /manage/routing/test`, `POST /manage/rules/test` | manage | Test the values currently typed into a route or rule modal before saving (`{ok, note}` / the gate's verdict); write nothing |
 | `GET /api/routes`, `/groups`, `/rules`, `/codes`, `/logs`, `/settings`, `/warnings` | internal (`X-Internal-Api-Key` on `net-api`) | REST API (`/api/codes` hides inactive rows unless `?include_inactive=true`) |
+| `POST /api/routes/test` | internal (`X-Internal-Api-Key`) | Probe a route that has not been saved yet: `{route_type, upstream, port, redirect_target}`; a dead upstream is `200` with `ok: false`, a bad shape is `400`. Shares its probe with `POST /api/routes/{rid}/test` |
 | `PUT /api/groups/{gid}`, `PUT /api/rules/{rid}` | internal (`X-Internal-Api-Key`) | Update a group or rule; each field is validated only when present in the body |
 | `PUT /api/codes/{cid}`, `DELETE /api/codes/{cid}` | internal (`X-Internal-Api-Key`) | Activate/deactivate a code (`active`, booleans or `"true"`/`"false"`/`"1"`/`"0"`); `DELETE` removes it permanently and nulls `audit_logs.code_id` |
 | `PUT /api/settings/{key}` | internal (`X-Internal-Api-Key`) | Update a setting, validated per key in `shared/settings_spec.py`: `unmatched_action` is `access_code`/`deny`/`none`, `rate_limit_access_code_per_min` is `1..1000`, `session_lifetime_hours` is `1..720`, `maintenance_mode` is `true`/`false`, `maintenance_message` is at most 200 characters, `log_retention_days` is `7..3650`, `geo_lookup_enabled` is `true`/`false` |

@@ -115,6 +115,87 @@ def _sample_path(path: str) -> str:
     return path
 
 
+def probe_upstream(upstream: str | None, port: int | None, timeout: float = 2.0) -> dict[str, Any]:
+    """Is something listening on ``upstream:port``? Answered, never raised.
+
+    Shared by the saved-route test and the pre-save test so the two cannot drift
+    into giving different verdicts about the same pair. A refusal is data, not an
+    error: the caller is asking a question and "no" is a valid answer, which is
+    why the caller returns 200 with ``ok: false`` rather than a 4xx.
+
+    The probe is a TCP connect and nothing more. It sends no request, reads no
+    response and does not distinguish one service from another, so it can say
+    "something is listening there" and never "that is the right application".
+    """
+    if not upstream:
+        return {"ok": False, "error": "no upstream"}
+    try:
+        probe_port = int(port) if port is not None else 0
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "port must be a number"}
+    if not (1 <= probe_port <= 65535):
+        return {"ok": False, "error": "port must be 1-65535"}
+    try:
+        sock = socket.create_connection((upstream, probe_port), timeout=timeout)
+        sock.close()
+        return {"ok": True, "latency": "reachable"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def probe_redirect_target(target: str | None) -> dict[str, Any]:
+    """Can a redirect target be used? A URL needs a resolvable host, a path does not.
+
+    Same shape and the same "never raise" contract as :func:`probe_upstream`, and
+    shared with the saved-route variant for the same reason.
+    """
+    text = (target or "").strip()
+    if not text:
+        return {"ok": False, "error": "no target"}
+    if text.startswith("http://") or text.startswith("https://"):
+        try:
+            from urllib.parse import urlsplit
+
+            host = urlsplit(text).hostname or ""
+            if host:
+                socket.getaddrinfo(host, None)
+            return {"ok": True, "note": "redirect target ok"}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+    return {"ok": True, "note": "redirect path ok"}
+
+
+def validate_route_shape(payload: dict[str, Any]) -> dict[str, Any]:
+    """Normalise and validate a route payload, for the pre-save probe.
+
+    Mirrors ``create_route``'s rules so the test button refuses the same shapes
+    the save would, and returns the same normalised fields. Raising the same
+    ``HTTPException`` codes means the modal reports a validation failure and a
+    save failure identically, which is the point of testing before saving.
+    """
+    route_type = str(payload.get("route_type", "proxy")).strip().lower()
+    if route_type not in ("proxy", "redirect"):
+        raise HTTPException(status_code=400, detail="route_type must be proxy or redirect")
+    if route_type == "proxy":
+        upstream = str(payload.get("upstream", "")).strip()
+        if not upstream:
+            raise HTTPException(status_code=400, detail="upstream (container name) required")
+        raw_port = payload.get("port", 8080)
+        try:
+            port = int(str(raw_port).strip() or 8080)
+        except Exception:
+            # The ValueError is not the useful part of this; the caller is told
+            # what is wrong with the port instead.
+            raise HTTPException(status_code=400, detail="port must be a number") from None
+        if not (1 <= port <= 65535):
+            raise HTTPException(status_code=400, detail="port must be 1-65535")
+        return {"route_type": "proxy", "upstream": upstream, "port": port}
+    target = str(payload.get("redirect_target", "")).strip()
+    if not target:
+        raise HTTPException(status_code=400, detail="redirect_target required")
+    return {"route_type": "redirect", "redirect_target": target}
+
+
 def _shadowed_warnings(groups: list[RuleGroup]) -> dict[str, Any]:
     groups_sorted = sorted(groups, key=lambda g: g.display_order)
     shadowed_groups: list[dict[str, Any]] = []
@@ -507,26 +588,34 @@ def create_app() -> FastAPI:
         if not obj:
             raise HTTPException(status_code=404, detail="not found")
         if (obj.route_type or "proxy") == "redirect":
-            target = (obj.redirect_target or "").strip()
-            if not target:
-                return JSONResponse(status_code=200, content={"ok": False, "error": "no target"})
-            if target.startswith("http://") or target.startswith("https://"):
-                try:
-                    from urllib.parse import urlsplit
-                    host = urlsplit(target).hostname or ""
-                    if host:
-                        socket.getaddrinfo(host, None)
-                    return {"ok": True, "note": "redirect target ok"}
-                except Exception as e:
-                    return JSONResponse(status_code=200, content={"ok": False, "error": str(e)})
-            else:
-                return {"ok": True, "note": "redirect path ok"}
-        try:
-            sock = socket.create_connection((obj.upstream, obj.port), timeout=2)
-            sock.close()
-            return {"ok": True, "latency": "reachable"}
-        except Exception as e:
-            return JSONResponse(status_code=200, content={"ok": False, "error": str(e)})
+            return JSONResponse(status_code=200, content=probe_redirect_target(obj.redirect_target))
+        result = probe_upstream(obj.upstream, obj.port)
+        if result.get("ok"):
+            return result
+        return JSONResponse(status_code=200, content=result)
+
+    @app.post("/api/routes/test", dependencies=[Depends(_require_internal)])
+    async def test_route_draft(payload: dict) -> Any:  # type: ignore[no-untyped-def]
+        """Probe a route that has not been saved yet.
+
+        The saved-route endpoint can only answer questions about a route that
+        already exists, which is exactly the wrong moment for a wrong port or a
+        misspelled container name: by then it is in the database and live. This
+        takes the form's current values instead, so the modal's Test button can
+        report a mistake before Save writes it.
+
+        Nothing is read from or written to the database, and an unreachable
+        upstream is a 200 with ``ok: false`` rather than a 4xx, because the
+        answer "nothing is listening there" is the result of a successful probe.
+        """
+        shape = validate_route_shape(payload)
+        if shape["route_type"] == "redirect":
+            target = probe_redirect_target(shape["redirect_target"])
+            return JSONResponse(status_code=200, content=target)
+        result = probe_upstream(shape["upstream"], shape["port"])
+        if result.get("ok"):
+            return result
+        return JSONResponse(status_code=200, content=result)
 
     @app.get("/api/groups")
     async def list_groups(db=Depends(get_db)):  # type: ignore[no-untyped-def]
