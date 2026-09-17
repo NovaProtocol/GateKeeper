@@ -138,15 +138,38 @@
     <div class="card">
       <div class="card-header"><h2><i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i> Audit</h2></div>
       <div class="card-body">
-        <div class="set-field">
-          <label for="log_retention_days">Log retention (days)</label>
-          <input id="log_retention_days" name="log_retention_days" type="number" min="7" max="3650" value="{{ values.log_retention_days }}" title="How long audit rows are kept" aria-label="Log retention in days">
-          <p class="set-note">
-            Used by <code>api/app.py:prune_audit_logs</code>, which runs once at API startup and
-            whenever the button below is pressed. There is no scheduler: nothing ages rows out
-            while the API keeps running. Currently sourced from the
-            <strong>{{ environment.log_retention_source }}</strong>.
-          </p>
+        <div class="set-grid">
+          <div class="set-field">
+            <label for="geo_lookup_enabled">Country capture</label>
+            <div class="toggle-wrapper">
+              <input type="hidden" name="geo_lookup_enabled" value="false">
+              <label class="toggle">
+                <input type="checkbox" id="geo_lookup_enabled" name="geo_lookup_enabled" value="true" {% if values.geo_lookup_enabled == 'true' %}checked{% endif %} title="Record the visitor country on each audit row" aria-label="Country capture">
+                <span class="toggle-slider"></span>
+              </label>
+              <span>read <code>CF-IPCountry</code> per request</span>
+            </div>
+            <p class="set-note">
+              Read by <code>auth-gateway/app.py:_visitor_country</code> and stored by
+              <code>api/app.py:ingest_log</code> through <code>shared/geo.py</code>. Country only:
+              no city, no coordinates derived from the visitor address and no lookup service, so a
+              visitor is never sent anywhere to be identified.
+              <strong>The header reaching the origin is unverified.</strong> If Cloudflare does not
+              forward <code>CF-IPCountry</code> to the tunnel, every request stores nothing and the
+              audit page reports <strong>Unknown</strong> everywhere rather than failing: check the
+              newest audit row after a visit to find out which it is.
+            </p>
+          </div>
+          <div class="set-field">
+            <label for="log_retention_days">Log retention (days)</label>
+            <input id="log_retention_days" name="log_retention_days" type="number" min="7" max="3650" value="{{ values.log_retention_days }}" title="How long audit rows are kept" aria-label="Log retention in days">
+            <p class="set-note">
+              Used by <code>api/app.py:prune_audit_logs</code>, which runs once at API startup and
+              whenever the button below is pressed. There is no scheduler: nothing ages rows out
+              while the API keeps running. Currently sourced from the
+              <strong>{{ environment.log_retention_source }}</strong>.
+            </p>
+          </div>
         </div>
       </div>
     </div>

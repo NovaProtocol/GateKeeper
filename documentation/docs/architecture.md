@@ -20,10 +20,11 @@ project/
 ├── shared/
 │ ├── config.py # pydantic-settings: SECRET_KEY, MANAGE_PASSWORD, DATABASE_URL, INTERNAL_API_KEY, DEPLOYMENT_TYPE, BACKUP_CODE
 │ ├── jwt.py # PyJWT HS256 iss=gatekeeper aud=projectnova.download exp configurable/8h/configurable + jti
-│ ├── models.py # 6 tables + settings + audit_logs (routes, rule_groups, rules, codes, settings, audit_logs with method/status_code/attempted_code)
+│ ├── models.py # 6 tables + settings + audit_logs (routes, rule_groups, rules, codes, settings, audit_logs with method/status_code/attempted_code/country)
 │ ├── settings_spec.py # the settings table: accepted values, defaults, fallback direction
 │ ├── security.py # pbkdf2_hmac sha512 100k, host_matches, path_matches, mask_code, apex_domain
 │ ├── gate.py # rule dispatch + the unmatched-request decision (find_group_rule, resolve_rule_action)
+│ ├── geo.py # country resolution from CF-IPCountry + the static centroid table (country level only)
 │ ├── backup.py # signed plain-JSON export/restore of the config tables (HMAC-SHA256 over `config`)
 │ ├── rule_defaults.py # boot backfill: exactly one `/*` catch-all per group, forced last
 │ ├── error_pages.py # wants_html, render_error_html, render_maintenance_html (dark theme)
@@ -56,8 +57,10 @@ All healthchecks: `python -c "import urllib.request; urllib.request.urlopen('htt
 | `rule_groups` | `name unique, domain, display_order, is_default` |
 | `rules` | `group_id, path, action(access_code|none|custom_password|deny), custom_password_hash/salt, allow_ip, allow_time, rate_limit, display_order, is_default` |
 | `codes` | `code unique, label, display_name, active, last_accessed` |
-| `settings` | `key PK, value, updated_at`. Keys the panel edits: `unmatched_action` (`access_code`/`deny`/`none`), `rate_limit_access_code_per_min` (1..1000), `session_lifetime_hours` (1..720), `maintenance_mode` (`true`/`false`), `maintenance_message` (≤200 chars), `log_retention_days` (7..3650). The accepted values, defaults and fallback direction for each live in `shared/settings_spec.py`, which the API validator, both reader services and the manage form all read |
-| `audit_logs` | `ts, ip, host, path, action, code_id, rule_group_id, rule_id, method, status_code, attempted_code, latency_ms, request_id, user_agent, referer` |
+| `settings` | `key PK, value, updated_at`. Keys the panel edits: `unmatched_action` (`access_code`/`deny`/`none`), `rate_limit_access_code_per_min` (1..1000), `session_lifetime_hours` (1..720), `maintenance_mode` (`true`/`false`), `maintenance_message` (≤200 chars), `log_retention_days` (7..3650), `geo_lookup_enabled` (`true`/`false`). The accepted values, defaults and fallback direction for each live in `shared/settings_spec.py`, which the API validator, both reader services and the manage form all read |
+| `audit_logs` | `ts, ip, host, path, action, code_id, rule_group_id, rule_id, method, status_code, attempted_code, country, latency_ms, request_id, user_agent, referer` |
+
+`audit_logs.country` is a two-character code resolved from `CF-IPCountry` by `shared/geo.py`, or `NULL` when the header is absent, a Cloudflare sentinel, or not a country code. It is added to a live table by the guarded `ALTER TABLE ... ADD COLUMN` block in `api/app.py:_migrate_audit`, which also creates `ix_audit_logs_country`, and it is **never back-filled**: rows written before the column existed stay `NULL` and are reported as `Unknown` rather than guessed at from an address. Country level only, no city and no coordinates derived from a visitor's own address.
 
 `allow_ip / allow_time / rate_limit` on `rules` are **reserved** (stored, not enforced on hot path).
 
@@ -106,7 +109,7 @@ satisfies is nulled, never cascaded into a deleted log row. See Backup & Restore
 
 ### DB Init
 
-`api/app.py:lifespan` runs `create_all`, then `ALTER TABLE` migrations (try/except), seeds default `*.*/*` group (`/* → access_code`), public groups `gatekeeper.projectnova.download` + `projectnova.download` (`/* → none`), and `BACKUP_CODE` if set. Reseats `display_order` so `*.*/*` stays bottom. It then backfills the per-group catch-all invariant (`shared/rule_defaults.py`), seeds a `settings` row for every key the panel edits, and runs one audit-log retention sweep inside a guarded `try/except` so a boot never fails on housekeeping.
+`api/app.py:lifespan` runs `create_all`, then `ALTER TABLE` migrations (try/except; `audit_logs` gains `method`, `status_code`, `attempted_code` and `country` plus their indexes, and a `country` index is created in the same pass as the column rather than the one after), seeds default `*.*/*` group (`/* → access_code`), public groups `gatekeeper.projectnova.download` + `projectnova.download` (`/* → none`), and `BACKUP_CODE` if set. Reseats `display_order` so `*.*/*` stays bottom. It then backfills the per-group catch-all invariant (`shared/rule_defaults.py`), seeds a `settings` row for every key the panel edits, and runs one audit-log retention sweep inside a guarded `try/except` so a boot never fails on housekeeping.
 
 ## Auth Flow (summary)
 

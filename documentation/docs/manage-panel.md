@@ -33,11 +33,12 @@ Every entry resolves to a page below. There is no second navigation: the dashboa
 | `POST /manage/rules/{rid}/order` | Move rule up/down (`direction`); disabled on the catch-all, see `documentation/docs/rules.md` |
 | `GET /manage/codes` | Codes list + create/edit, activate/deactivate, permanent delete, `?include_inactive=1` |
 | `GET /manage/logs` | Audit logs (filters host/ip/action/endpoint) |
-| `GET /manage/audit` | Per-visitor view — IPs, their recent pages and the code they used |
+| `GET /manage/audit` | Viewer map (country, four aggregation modes) plus the per-visitor table: IPs, their recent pages and the code they used |
 | `GET /manage/monitoring` | `302` to `/manage/audit`, so an old bookmark still lands |
 | `GET /manage/top-pages` | Top paths by hits |
-| `GET/POST /manage/settings` | Six editable settings in sections, plus a read-only environment panel |
-| `POST /manage/logs/prune` | Delete audit rows past the retention window (`confirm=PRUNE`) |
+| `GET/POST /manage/settings` | Seven editable settings in sections, plus a read-only environment panel |
+| `POST /manage/logs/prune` | Delete audit rows past the retention window (`confirm=PRUNE`), rendering the count back onto the page that posted it |
+| `POST /manage/logs/clear` | Delete every audit row (`confirm=DELETE`), checked on the server |
 | `GET /manage/backup` | Backup — signed plain-JSON export, and a two-step restore |
 | `GET /manage/backup/download` | Streams the configuration export as a download |
 | `POST /manage/backup/restore` | Preview or apply a restore (`file` + `confirm=REPLACE` + `stage`) |
@@ -87,13 +88,13 @@ The **Permanent delete** toggle turns each row's deactivate button into a delete
 
 ## Logs, Audit, and the warnings banner
 
-`GET /manage/logs` supports `?format=json&page&per_page&ip&host&endpoint&code&from&to` with `X-Total-Count`; template `logs.html` does `IntersectionObserver` infinite scroll loading next page as you scroll. `GET /manage/audit` (`GET /api/logs/by-ip?limit=50`) lists IPs → `{calls, recent: [{host,path,ts,action,code_label,attempted_code}], codes}` for the per-visitor view.
+`GET /manage/logs` supports `?format=json&page&per_page&ip&host&endpoint&code&from&to` with `X-Total-Count`; template `logs.html` does `IntersectionObserver` infinite scroll loading next page as you scroll. `GET /manage/audit` pairs the viewer map with `GET /api/logs/by-ip?limit=50`, which lists IPs → `{calls, recent: [{host,path,ts,action,code_label,attempted_code}], codes}` for the per-visitor view.
 
 Warnings are no longer a page. `GET /api/warnings` reports a shadowed group or rule only when one exists, and on a healthy gateway it answers `{groups: [], rules: []}`, so `/manage/warnings` rendered two empty tables under a red header and nothing else. The page is deleted, the endpoint is not: the dashboard reads it and renders a `.warn-banner` **only when the response is non-empty**, linking to `/manage/rules` where the order can be fixed. Nothing about shadowing detection changed, only where it is shown.
 
 ## Settings
 
-The page is no longer one field. It is six settings in four sections, each control carrying a one-line note naming the file and function that enforces it, plus a read-only environment panel.
+The page is no longer one field. It is seven settings in four sections, each control carrying a one-line note naming the file and function that enforces it, plus a read-only environment panel.
 
 | Section | Key | Default | Accepted | Enforced by |
 |---------|-----|---------|----------|-------------|
@@ -103,12 +104,13 @@ The page is no longer one field. It is six settings in four sections, each contr
 | Maintenance | `maintenance_mode` | `false` | `true` / `false` | `auth-gateway/app.py:_maintenance_response`, before rule dispatch |
 | Maintenance | `maintenance_message` | empty | at most 200 characters, escaped | `shared/error_pages.py:render_maintenance_html` |
 | Audit | `log_retention_days` | `LOG_RETENTION_DAYS` (`30`) | `7..3650` | `api/app.py:prune_audit_logs`, at boot and on demand |
+| Audit | `geo_lookup_enabled` | `true` | `true` / `false` | `auth-gateway/app.py:_visitor_country`, checked before the header is read |
 
 Every key is described exactly once, in `shared/settings_spec.py`, and three callers read that table rather than re-implementing a rule from it: the API validates a `PUT /api/settings/{key}` against it, so an invalid value is refused at the only write path; `auth-gateway` normalises every stored value through `read_value()` before acting on it, so a row edited by hand or restored from an older file cannot change behaviour to something the panel would refuse; and this page builds its form from `MANAGE_FIELDS` and validates against the same specs, so a key cannot exist in the database and be unreachable in the UI.
 
 The fallback direction is the safe reading of each key, not the convenient one. `unmatched_action` falls back to `access_code`, which refuses a request it cannot classify, and `maintenance_mode` falls back to `false`, because defaulting a gateway into an outage on a settings blip would take the site down rather than protect it. An empty or `NULL` stored value is treated as unusable and takes the same fallback, so an absent row can never become the permissive value.
 
-What the four settings do is documented where they act: [Auth Flow](auth-flow.md) for `unmatched_action`, the session lifetime and maintenance mode, [Logs](logs.md) for retention. This page owns the surface.
+What the settings do is documented where they act: [Auth Flow](auth-flow.md) for `unmatched_action`, the session lifetime and maintenance mode, [Logs & Audit](logs.md) for retention and country capture. This page owns the surface.
 
 ### Saving
 
@@ -118,7 +120,21 @@ A rejected value is reported on the page with its reason and a `400`, and no wri
 
 ### Prune audit logs
 
-The card below the form deletes every audit row older than `log_retention_days`. `POST /manage/logs/prune` requires `csrf_token`, `same_origin` and `confirm=PRUNE`, then proxies `POST /api/logs/prune` and re-renders the page with the returned count: how many rows were deleted and how many remain. There is no export behind it and no undo, which is why the word is checked on the server rather than only in the form. See [Logs](logs.md) for the retention model.
+The card below the form deletes every audit row older than `log_retention_days`. `POST /manage/logs/prune` requires `csrf_token`, `same_origin` and `confirm=PRUNE`, then proxies `POST /api/logs/prune` and re-renders the page with the returned count: how many rows were deleted and how many remain. There is no export behind it and no undo, which is why the word is checked on the server rather than only in the form. The same route serves the Audit page, which posts a closed-enum `back=audit` field and gets the count rendered there instead; a field naming its own destination is a value the caller picks from two options, not a URL the caller supplies. See [Logs & Audit](logs.md) for the retention model.
+
+## The Audit page
+
+`/manage/audit` answers "who is visiting, and from where" in two halves: a map card of countries at the top, and the per-IP table underneath.
+
+The map card holds an aggregation dropdown, a `prune` button and a `clear` button. The dropdown is a **GET form** (`?mode=`), so the view is a URL that can be bookmarked or shared and there is no client-side arithmetic to get wrong: the server counts and the browser draws. It offers `views` (requests), `visitors` (distinct addresses), `gated` (a code was presented) and `blocked` (the gate refused); an unknown value in the URL falls back to `views` rather than erroring, while the API itself refuses it with a `400` naming the accepted four.
+
+The map is Leaflet 1.9.4 from `cdn.jsdelivr.net`, which `script-src` and `style-src` already allow, and OpenStreetMap raster tiles, which arrive as `<img>` requests and therefore needed one CSP change: `img-src` gained `https://cdn.jsdelivr.net`, `https://tile.openstreetmap.org` and `https://*.tile.openstreetmap.org`. `cdn.jsdelivr.net` is in that list because Leaflet resolves its own default marker images relative to the script URL. No other directive changed.
+
+A tile host missing from `img-src` is a silent break: the script loads, the container renders and every tile is refused with nothing on the page to say so. That is why the check in `tests/ui/check_audit_page.py` reads the served header and counts the tile responses in a real browser rather than trusting the page source.
+
+The page degrades rather than failing. No rows, no centroids to plot, a blocked tile host or an offline browser all end at the same place: the card renders a sentence instead of a map, the country table carries the same numbers, and nothing raises. Leaflet keeps its own DOM and is driven imperatively rather than through a reactive binding, per `reference/frontend/alpine-server-rendered.md`.
+
+Clearing is the destructive control on that page and the only one with nothing behind it, so `POST /manage/logs/clear` checks the session, the CSRF pair, the origin and a typed `DELETE` before issuing `DELETE /api/logs/clear`. The modal is the affordance; the gate is the route. The card also shows the current audit row count, because an empty table and a table whose rows were just deleted look identical without a number.
 
 ### Environment (read-only)
 

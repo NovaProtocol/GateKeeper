@@ -53,7 +53,7 @@ Request → Caddy → Auth Gateway /api/authz/forward-auth
 | [Docker](docker.md) | Images, compose, healthchecks |
 | [Routes](routes.md) | DB-driven host→upstream |
 | [Rules](rules.md) | Groups, actions, shadowing |
-| [Logs & Warnings](logs.md) | Audit, per-visitor view, top pages, settings, dry-run |
+| [Logs & Audit](logs.md) | Audit, visitor country, the viewer map, top pages, settings, dry-run |
 
 ## House Reference
 

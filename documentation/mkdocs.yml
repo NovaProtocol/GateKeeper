@@ -70,5 +70,5 @@ nav:
   - Docker: docker.md
   - Routes: routes.md
   - Rules & Rule Groups: rules.md
-  - Logs & Warnings: logs.md
+  - Logs & Audit: logs.md
   - Backup & Restore: backup.md
