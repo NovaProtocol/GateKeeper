@@ -71,3 +71,4 @@ nav:
   - Routes: routes.md
   - Rules & Rule Groups: rules.md
   - Logs & Warnings: logs.md
+  - Backup & Restore: backup.md

@@ -13,7 +13,7 @@ import uuid
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
+from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy import String, Text, delete, func, select, text
@@ -21,6 +21,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from shared.backup import SECTIONS, apply_backup, build_backup, config_warnings
+from shared.backup import validate as validate_backup
+from shared.backup import verify as verify_backup
 from shared.config import get_config
 from shared.db import Base, get_db, get_engine, get_sessionmaker
 from shared.gate import DEFAULT_UNMATCHED_ACTION, UNMATCHED_ACTIONS
@@ -943,6 +946,83 @@ def create_app() -> FastAPI:
         await db.commit()
         await db.refresh(obj)
         return {"key": obj.key, "value": obj.value, "updated_at": obj.updated_at}
+
+    @app.get("/api/backup", dependencies=[Depends(_require_internal)])
+    async def export_backup(db=Depends(get_db)):  # type: ignore[no-untyped-def]
+        """The whole configuration as signed plain JSON, as a download."""
+        blob = await build_backup(db)
+        # Recording the export is the only write here, and the manage page needs
+        # it to show when the last one happened. An export never fails on it.
+        try:
+            res = await db.execute(select(Setting).where(Setting.key == "backup_exported_at"))
+            row = res.scalars().first()
+            if row:
+                row.value = blob["created_at"]  # type: ignore[assignment]
+            else:
+                db.add(Setting(key="backup_exported_at", value=blob["created_at"]))
+            await db.commit()
+        except Exception:
+            await db.rollback()
+        stamp = dt.datetime.now(dt.UTC).strftime("%Y%m%d-%H%M%S")
+        filename = f"gatekeeper-config-{stamp}.json"
+        return Response(
+            content=json.dumps(blob, indent=2, sort_keys=True),
+            media_type="application/json",
+            headers={"Content-Disposition": f"attachment; filename={filename}"},
+        )
+
+    @app.post("/api/backup/restore", dependencies=[Depends(_require_internal)])
+    async def restore_backup(  # type: ignore[no-untyped-def]
+        payload: dict = Body(...),
+        dry_run: int = Query(default=0),
+        db=Depends(get_db),
+    ):
+        """Verify a backup file, then replace the configuration with it.
+
+        `?dry_run=1` stops after verification and validation. Nothing is written
+        on any refusal path, and a real run is a single transaction.
+        """
+        ok, reason = verify_backup(payload)
+        if not ok:
+            status = 409 if reason == "bad-sig" else 400
+            refusal = {"ok": False, "sig": False, "reason": reason, "problems": []}
+            refusal.update({"counts": {}, "warnings": []})
+            return JSONResponse(status_code=status, content=refusal)
+        config = payload["config"]
+        problems = validate_backup(config)
+        if problems:
+            body = {"ok": False, "sig": True, "reason": "invalid-config"}
+            body.update({"counts": {}, "warnings": [], "problems": problems})
+            return JSONResponse(status_code=400, content=body)
+        counts = {section: len(config[section]) for section in SECTIONS}
+        # Shape problems the gate refuses but the API allows. Shown, not fatal.
+        warnings = config_warnings(config)
+        if dry_run:
+            return {
+                "ok": True,
+                "sig": True,
+                "reason": "ok",
+                "problems": [],
+                "warnings": warnings,
+                "counts": counts,
+                "detached_logs": {},
+            }
+        try:
+            result = await apply_backup(db, config)
+        except Exception as e:
+            _log("backup_restore_failed", error=str(e))
+            failed = {"ok": False, "sig": True, "reason": "apply-failed", "counts": counts}
+            failed.update({"warnings": warnings, "problems": [str(e)]})
+            return JSONResponse(status_code=400, content=failed)
+        return {
+            "ok": True,
+            "sig": True,
+            "reason": "ok",
+            "problems": [],
+            "warnings": warnings,
+            "counts": result["counts"],
+            "detached_logs": result["detached_logs"],
+        }
 
     @app.post("/api/auth/check-rate-limit", dependencies=[Depends(_require_internal)])
     async def check_rate_limit(payload: dict, db=Depends(get_db)):  # type: ignore[no-untyped-def]

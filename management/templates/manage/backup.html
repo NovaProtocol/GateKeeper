@@ -1,13 +1,145 @@
 {% extends "base.html" %}
 {% block title %}Backup · GateKeeper{% endblock %}
+{% block head_extra %}
+<style>
+.plaintext-warning{display:flex;gap:.75rem;align-items:flex-start;background:var(--danger-dim);border:1px solid var(--danger);border-radius:8px;padding:.85rem 1rem;margin-bottom:1.25rem}
+.plaintext-warning i{color:var(--danger);margin-top:.15rem}
+.plaintext-warning strong{color:var(--danger)}
+.backup-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:1.5rem}
+.backup-counts{width:100%;border-collapse:collapse;font-size:.85rem}
+.backup-counts th{text-align:left;font-size:.7rem;text-transform:uppercase;letter-spacing:.05em;color:var(--text-secondary);padding:.4rem 0;font-weight:600}
+.backup-counts td{font-family:'JetBrains Mono',monospace;padding:.35rem 0;border-top:1px solid var(--border)}
+.backup-counts td:last-child{text-align:right;color:var(--text-secondary)}
+.verdict{border-radius:8px;padding:.85rem 1rem;margin-bottom:1rem;font-size:.85rem;border:1px solid var(--border);background:var(--bg-primary)}
+.verdict.ok{border-color:var(--accent);background:var(--accent-dim)}
+.verdict.bad{border-color:var(--danger);background:var(--danger-dim)}
+.verdict ul{margin:.5rem 0 0 1.1rem;color:var(--text-secondary)}
+.verdict code{font-family:'JetBrains Mono',monospace;color:var(--accent)}
+.backup-actions{display:flex;gap:.6rem;flex-wrap:wrap;align-items:center;margin-top:1rem}
+.backup-note{color:var(--text-secondary);font-size:.8rem;margin-top:.75rem;line-height:1.5}
+</style>
+{% endblock %}
 {% block content %}
 <div class="container" style="padding:2rem;max-width:1100px">
-  <div class="card">
-    <div class="card-header"><h2><i class="fa-solid fa-floppy-disk"></i> Backup</h2></div>
-    <div class="card-body" style="color:var(--text-secondary);font-size:.9rem">
-      <p>Backup exports are available via the API: <span style="font-family:'JetBrains Mono',monospace;color:var(--accent)">GET /api/logs/export?format=csv</span> and DB volume snapshots.</p>
-      <a href="/manage/settings" class="btn" style="margin-top:.75rem;background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary)" title="Back to Settings" aria-label="Back to Settings"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i></a>
+  <div class="plaintext-warning">
+    <i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>
+    <div>
+      <strong>This file is plain text and contains every access code.</strong>
+      The signature proves the file came from this server and has not been altered. It does not hide anything.
+      Store it like a password: not in email, not in a shared folder, not in a chat.
+    </div>
+  </div>
+
+  <div class="backup-grid">
+    <div class="card">
+      <div class="card-header"><h2><i class="fa-solid fa-download" aria-hidden="true"></i> Export</h2></div>
+      <div class="card-body">
+        <p class="backup-note" style="margin-top:0">
+          Downloads the whole configuration as signed plain JSON: routes, rule groups, rules, access codes and settings.
+          Audit logs are not included; they are history, not configuration.
+        </p>
+        <table class="backup-counts">
+          <thead><tr><th>Section</th><th>Rows now</th></tr></thead>
+          <tbody>
+            <tr><td>routes</td><td>{{ counts.routes }}</td></tr>
+            <tr><td>groups</td><td>{{ counts.groups }}</td></tr>
+            <tr><td>rules</td><td>{{ counts.rules }}</td></tr>
+            <tr><td>codes</td><td>{{ counts.codes }}</td></tr>
+            <tr><td>settings</td><td>{{ counts.settings }}</td></tr>
+          </tbody>
+        </table>
+        <div class="backup-actions">
+          <a class="btn btn-accent" href="/manage/backup/download" title="Download signed configuration export" aria-label="Download signed configuration export"><i class="fa-solid fa-download" aria-hidden="true"></i> Download backup</a>
+        </div>
+        <p class="backup-note">
+          {% if last_export %}Last export taken {{ last_export }}.{% else %}No export has been taken from this panel yet.{% endif %}
+        </p>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><h2><i class="fa-solid fa-upload" aria-hidden="true"></i> Restore</h2></div>
+      <div class="card-body">
+        <p class="backup-note" style="margin-top:0">
+          Restoring replaces <strong>all</strong> routes, groups, rules, codes and settings with the contents of the file.
+          Anything added since that export is gone. Preview first; it writes nothing.
+        </p>
+        {% if error %}
+        <div class="verdict bad"><i class="fa-solid fa-circle-xmark" aria-hidden="true"></i> {{ error }}</div>
+        {% endif %}
+        {% if verdict %}
+        <div class="verdict {{ 'ok' if verdict.ok else 'bad' }}">
+          {% if verdict.ok %}
+            <i class="fa-solid fa-circle-check" aria-hidden="true"></i>
+            {% if stage == 'preview' %}Signature verified. Nothing has been written yet.{% else %}Configuration replaced.{% endif %}
+          {% else %}
+            <i class="fa-solid fa-circle-xmark" aria-hidden="true"></i> Refused: <code>{{ verdict.reason or 'invalid' }}</code>
+          {% endif %}
+          {% if verdict.counts %}
+          <ul>
+            {% for section in ['routes', 'groups', 'rules', 'codes', 'settings'] %}
+            <li>{{ section }}: {{ verdict.counts.get(section, 0) }}</li>
+            {% endfor %}
+          </ul>
+          {% endif %}
+          {% if verdict.detached_logs %}
+          <ul>
+            {% for column, count in verdict.detached_logs.items() %}
+            <li>audit rows detached from {{ column }}: {{ count }}</li>
+            {% endfor %}
+          </ul>
+          {% endif %}
+          {% if verdict.problems %}
+          <ul>
+            {% for problem in verdict.problems %}<li>{{ problem }}</li>{% endfor %}
+          </ul>
+          {% endif %}
+          {% if verdict.warnings %}
+          <ul>
+            {% for warning in verdict.warnings %}<li>shape: {{ warning }}</li>{% endfor %}
+          </ul>
+          {% endif %}
+        </div>
+        {% endif %}
+        <form method="post" action="/manage/backup/restore" enctype="multipart/form-data" id="restoreForm">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <div class="form-group">
+            <label for="backup-file">Backup file</label>
+            <input type="file" class="form-control" id="backup-file" name="file" accept=".json,application/json" required>
+          </div>
+          <div class="form-group">
+            <label for="backup-confirm">Type {{ confirm_word }} to confirm</label>
+            <input type="text" class="form-control" id="backup-confirm" name="confirm" autocomplete="off" placeholder="{{ confirm_word }}" required>
+            <small class="backup-note">Required for both preview and restore. It is checked on the server, not only here.</small>
+          </div>
+          <div class="backup-actions">
+            <button type="submit" name="stage" value="preview" class="btn" id="preview-btn" disabled style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary)" title="Check the file without writing" aria-label="Preview restore"><i class="fa-solid fa-magnifying-glass" aria-hidden="true"></i> Preview</button>
+            <button type="submit" name="stage" value="apply" class="btn btn-outline-danger" id="apply-btn" disabled title="Replace the configuration with this file" aria-label="Restore configuration"><i class="fa-solid fa-rotate-left" aria-hidden="true"></i> Restore</button>
+          </div>
+        </form>
+      </div>
     </div>
   </div>
 </div>
+<script>
+(function(){
+  const file=document.getElementById('backup-file');
+  const confirmField=document.getElementById('backup-confirm');
+  const previewBtn=document.getElementById('preview-btn');
+  const applyBtn=document.getElementById('apply-btn');
+  const word={{ confirm_word|tojson }};
+  function refresh(){
+    const ready=file.files.length>0 && confirmField.value.trim()===word;
+    previewBtn.disabled=!ready;
+    applyBtn.disabled=!ready;
+  }
+  file.addEventListener('change',refresh);
+  confirmField.addEventListener('input',refresh);
+  document.getElementById('restoreForm').addEventListener('submit',function(){
+    previewBtn.disabled=true;
+    applyBtn.disabled=true;
+  });
+})();
+</script>
 {% endblock %}
+

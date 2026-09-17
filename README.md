@@ -62,12 +62,20 @@ Visit `https://gatekeeper.projectnova.download/` (login) or `/manage/login` for 
 | `GET /manage/login`, `POST /manage/login` | — | Management login (sets `manage_session`) |
 | `GET /manage/logout` | manage | Clear session |
 | `GET /manage`, `/routing`, `/rules`, `/codes`, `/logs`, `/top-pages`, `/warnings` | manage | Admin pages |
+| `GET /manage/backup`, `/manage/backup/download`, `POST /manage/backup/restore` | manage | Configuration export and restore (`confirm=REPLACE`, `stage=preview\|apply`) |
 | `POST /manage/groups/{gid}/order`, `POST /manage/rules/{rid}/order` | manage | Reorder rule groups and rules up/down |
 | `POST /manage/groups/{gid}/edit`, `POST /manage/rules/{rid}/edit` | manage | Edit a rule group (`name`, `domain`) or a rule (`path`, `action`) |
 | `GET /api/routes`, `/groups`, `/rules`, `/codes`, `/logs`, `/settings`, `/warnings` | internal (`X-Internal-Api-Key` on `net-api`) | REST API |
 | `PUT /api/groups/{gid}`, `PUT /api/rules/{rid}` | internal (`X-Internal-Api-Key`) | Update a group or rule; each field is validated only when present in the body |
 | `PUT /api/settings/{key}` | internal (`X-Internal-Api-Key`) | Update a setting; `rate_limit_access_code_per_min` is `1..1000`, `unmatched_action` is `access_code`/`deny`/`none` |
+| `GET /api/backup`, `POST /api/backup/restore` | internal (`X-Internal-Api-Key`) | Export the configuration as signed plain JSON; restore it (`?dry_run=1` verifies without writing) |
 
 ## Domain Adaptation
 
 No hardcoded domains. Cookie domain is last two labels of host (`.example.com`). Fallback is `portfolio.<apex>`. `?redirect=` hosts validated against apex.
+
+## Backup
+
+Rules, groups, routes, codes and settings live only in the database volume, with no git history and no migration to undo. `/manage/backup` exports them as signed plain JSON and restores them from the same page.
+
+The signature (`HMAC-SHA256` over the canonicalised `config`, keyed by `SECRET_KEY`) proves the file came from this deployment and has not been altered. **It does not hide anything**: the file is plain text and contains every access code, so store it like a password. Restoring replaces all five sections in one transaction; audit references that no longer resolve are nulled rather than deleted.
