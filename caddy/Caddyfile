@@ -7,11 +7,16 @@
 		respond `{"status":"ok"}` 200
 	}
 
-	handle_path /documentation/* {
-		forward_auth gatekeeper_auth:8001 {
-			uri /api/authz/forward-auth
+	handle /documentation/* {
+		# route keeps literal order: a bare `uri strip_prefix` sibling would be
+		# sorted ahead of forward_auth and blind the gate to the prefix
+		route {
+			forward_auth gatekeeper_auth:8001 {
+				uri /api/authz/forward-auth
+			}
+			uri strip_prefix /documentation
+			reverse_proxy gatekeeper_documentation:8005
 		}
-		reverse_proxy gatekeeper_documentation:8005
 	}
 
 	handle {
