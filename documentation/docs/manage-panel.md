@@ -24,11 +24,13 @@ Every entry resolves to a page below. There is no second navigation: the dashboa
 |------|---------|
 | `GET /manage` | Dashboard — stat strip, warning banner, recent traffic, top pages, code health |
 | `GET/POST /manage/routing` | Routes CRUD (`host`, `path`, `proxy` upstream:port or `redirect` target:code) + `POST /{id}/test` |
+| `POST /manage/routing/test` | Probe the values currently in the route modal: upstream reachability, and the gate's verdict for the typed host and path |
 | `GET /manage/rules` | Rule groups list (▲/▼ reorder, ✎ edit) |
 | `POST /manage/groups` | Create group (`name`, `domain`) |
 | `POST /manage/groups/{gid}/edit` | Edit group (`name`, `domain`) — `domain` is disabled for the default group |
 | `POST /manage/groups/{gid}/order` | Move group up/down (`direction`) |
 | `GET /manage/rules/{gid}` | Rules in group (▲/▼ reorder, real positions) |
+| `POST /manage/rules/test` | Ask the gate what it would do with the typed host and path, before the rule is saved |
 | `POST /manage/groups/{gid}/rules` | Create rule (`path`, `action`, `custom_password`) — see `PUT /api/rules/{rid}` for edit |
 | `POST /manage/rules/{rid}/order` | Move rule up/down (`direction`); disabled on the catch-all, see `documentation/docs/rules.md` |
 | `GET /manage/codes` | Codes list + create/edit, activate/deactivate, permanent delete, `?include_inactive=1` |
@@ -43,7 +45,22 @@ Every entry resolves to a page below. There is no second navigation: the dashboa
 | `GET /manage/backup/download` | Streams the configuration export as a download |
 | `POST /manage/backup/restore` | Preview or apply a restore (`file` + `confirm=REPLACE` + `stage`) |
 
-All mutating `POST/PUT/DELETE` require `csrf_token` + `same_origin`.
+All mutating `POST/PUT/DELETE` require `csrf_token` + `same_origin`. Every relay to the API carries the internal key through one `_api_headers()` helper; it used to be defined twice in `management/app.py`, byte for byte, with the second silently shadowing the first, and the duplicate is gone so there is one place where that header is built.
+
+## Testing before saving
+
+Every add and edit modal in Routing and Rules has a **Test before saving** control, sitting immediately to the left of Save in the footer. It is icon-only like every other action, with `title` and `aria-label` carrying the words, and the verdict it produces renders in a `role="status" aria-live="polite"` slot at the leading edge of the same footer, so the answer appears next to the buttons that will act on it rather than somewhere else on the page.
+
+The button asks the server, it does not guess. On Routing it does two things at once with the values **as currently typed**, without saving anything:
+
+- **upstream**: relays to `POST /api/routes/test`, which connects to the named host and port and closes. Reported as `upstream: reachable` or `upstream: <reason>`.
+- **gate**: relays the typed host and path to `/manage/rules/test`, which runs `POST /api/dry-run` against the stored rules. Reported as `gate: <action> via <group> · <rule>`, or `shadowed: …` when the response carries a warning.
+
+On Rules the same button asks the gate about the typed path. A group has a domain but a rule does not, so the modal derives a probe host from the group: the group's hostname, or `probe.<suffix>` for a `*.<suffix>` group, or `probe.example.com` for the default `*.*/*` group. That is enough to answer "which rule wins for this path inside this group", which is the question the ordering arrows exist for. A shadowed path is thus visible **before** the rule is saved, instead of only on the dashboard banner afterwards.
+
+The verdict is advisory. Neither button writes anything: the draft probe is DB-free and the rule probe is a dry run, so pressing Test and then Save is exactly the same as pressing Save. Both management routes carry the usual three gates (manage session, CSRF pair, `same_origin`) and the same key-gated API calls the rest of the panel makes, and a failure to reach the API is rendered as the reason rather than raised.
+
+What reachability does **not** promise is documented in [Routes](routes.md): the probe proves something is listening, never that it is the right application. A form left untouched and saved unchecked behaves exactly as it did before this existed.
 
 ## Width and density
 
@@ -65,7 +82,9 @@ The action cell of every row is a real table cell — `<td class="actions-cell">
 
 `.card` keeps `overflow: hidden` for its rounded corners, so every table sits inside a `.table-scroll` wrapper that scrolls it: `tabindex="0"`, `role="region"` and an `aria-label`, because an unfocusable scroll box is itself an accessibility defect. Without it the clipped columns are not merely off-screen but unreachable — the document does not scroll at all.
 
-`base.html` loads `manage.css` with `?v=3`; bump that when the stylesheet changes so a cached copy cannot make a correct deploy look broken.
+`base.html` loads `manage.css` with `?v=4`; bump that when the stylesheet changes so a cached copy cannot make a correct deploy look broken.
+
+Form controls use one `.input` class. At `971500b`, `logs.html` carried 5 inputs with the control styles written inline and `routing.html` 20 more `<input>`/`<select>` elements the same way, every one of them spelling out the same `background`/`border`/`border-radius`/`padding`/`color` by hand, so a padding tweak meant 25 edits and a miss was invisible. `.input` holds the shared declarations and the modifiers are written compound (`.input.input-mono`, `.input.input-dense`, `.input.input-cap-left` / `-right` for the two halves of a `host:port` pair) so they outrank both `.input` and `.form-group input`, which is what makes a modifier take effect on a control inside a form group. Layout stays inline where it describes the row rather than the control. The font is deliberately not set on `.input`: the routing controls already inherit it from `.form-group` and its `<select>`s relied on that, so setting it would have silently resized them.
 
 Two blocks left the shared sheet in the same pass, because neither described a panel component. `.create-form` was 25 lines of rules referenced by no template: it is deleted. The four `.status-*` classes (`.status-card`, `.status-card-header`, `.status-label`, `.status-dot`) were used only by `landing.html`, the authenticated landing page rather than a `/manage/*` page: they moved into a page-local `<style>` block in that template, which is the same treatment `routing.html` and `logs.html` already give their page-specific rules.
 

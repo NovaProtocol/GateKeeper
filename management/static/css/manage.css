@@ -163,6 +163,65 @@
     color: var(--text-secondary);
   }
 
+  /* The one form-control style. `logs.html` and `routing.html` between them
+     carried ten inline copies of these declarations, which meant every padding
+     tweak had to be made ten times and a miss was invisible. `.input` is that
+     rule; layout (flex, width) stays inline because it describes the row, not
+     the control.
+
+     Font is deliberately NOT set here: `routing.html`'s controls sit inside a
+     `.form-group`, which already sets the family and size, and its `<select>`s
+     relied on inheriting the body font. Setting it here would have silently
+     resized those selects, which is not what consolidating a style should do.
+
+     The modifiers are written compound (`.input.input-dense`) so they outrank
+     both `.input` and `.form-group input`, which is what makes a modifier
+     actually take effect on a control inside a form group. */
+  .input {
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.6rem 0.875rem;
+    color: var(--text-primary);
+    outline: none;
+    transition: border-color 0.2s;
+  }
+
+  .input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-dim);
+  }
+
+  .input::placeholder {
+    color: var(--text-secondary);
+  }
+
+  /* The filter bar on `/manage/logs`: monospace values at a tighter padding so
+     the five controls fit in one row. */
+  .input.input-mono {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.85rem;
+  }
+
+  .input.input-sm {
+    font-size: 0.85rem;
+  }
+
+  .input.input-dense {
+    padding: 0.5rem 0.75rem;
+  }
+
+  /* Half of a `host:port` pair. The inner edges are square so the two controls
+     read as one field with the colon between them. */
+  .input.input-cap-left {
+    border-radius: 8px 0 0 8px;
+  }
+
+  .input.input-cap-right {
+    border-radius: 0 8px 8px 0;
+    padding: 0.6rem 0.5rem;
+  }
+
   .btn {
     display: inline-flex;
     align-items: center;

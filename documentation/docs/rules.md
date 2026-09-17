@@ -95,3 +95,20 @@ A rule added through the API takes effect on the first request: the catch-all is
 Order within a group is otherwise what it was. The migration renumbers each group's rules `0..n-1` in their existing ascending order with the catch-all moved to the end, and a catch-all that was already last produces no change at all.
 
 Shadowing is still possible and still reported: `GET /api/warnings` reports `/*` rules that hide later rules, and the dashboard renders the result as a banner that appears only when there is something to report. The old `/manage/warnings` page rendered two empty tables on a healthy gateway and is gone; the endpoint it read is unchanged.
+
+## Testing a rule before saving
+
+The add and edit modals on a group's page have a **Test before saving** control beside Save. It sends the typed path, and a host derived from the group, to `/manage/rules/test`, which runs the keyless `POST /api/dry-run` against the **stored** rules. The verdict renders in the modal footer:
+
+```
+gate: access_code via portfolio.projectnova.download · /private/*
+shadowed: /private/reports, /private/drafts
+```
+
+The first line is what the gate would do with that host and path right now. The second appears only when the response carries a warning, and it names the rules that would never fire.
+
+The host is derived because a rule has no host of its own: the group's hostname, or `probe.<suffix>` for a `*.<suffix>` group, or `probe.example.com` for the default `*.*/*` group. That is sufficient to answer "which rule wins for this path in this group", which is the question the arrows exist for.
+
+**Shadowed** means a rule above this path matches first and wins. Rules are evaluated top to bottom and the first match takes the request, so a rule placed below a broader one is dead: it is stored, it is listed, it has a position, and it never governs anything. There is no error anywhere when this happens, which is why the modal asks the question before the rule is saved rather than leaving the dashboard banner to report it afterwards.
+
+The button is advisory and changes nothing. It does not create the rule, and pressing Save afterwards behaves exactly as it would have without pressing Test.

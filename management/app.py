@@ -148,14 +148,6 @@ def _verify_csrf(request: Request, form_token: str | None) -> bool:
     return secrets.compare_digest(cookie_token, form_token)
 
 
-def _api_headers() -> dict[str, str]:
-    cfg = get_config()
-    h: dict[str, str] = {"Content-Type": "application/json"}
-    if cfg.INTERNAL_API_KEY:
-        h["X-Internal-Api-Key"] = cfg.INTERNAL_API_KEY
-    return h
-
-
 def _api_base() -> str:
     import os
     return os.environ.get("API_HTTP_ADDR", "http://api:8002")
@@ -284,6 +276,34 @@ def _api_headers() -> dict[str, str]:
     if cfg.INTERNAL_API_KEY:
         h["X-Internal-Api-Key"] = cfg.INTERNAL_API_KEY
     return h
+
+
+async def _json_body(request: Request) -> dict[str, Any]:
+    """The request body as a dict, or an empty dict for anything unparseable.
+
+    The two modal test routes are called by `fetch` with JSON, so a malformed
+    body is a client bug rather than something to turn into a 500. The caller's
+    own validation reports the missing fields, which gives a usable message
+    instead of a parse error.
+    """
+    try:
+        raw = await request.json()
+    except Exception:
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def _json_or_status(response: Any) -> dict[str, Any]:
+    """A relayed API response as a dict, keeping the API's own error detail.
+
+    `{"ok": false}` with the upstream's reason beats a bare status, because the
+    modal has somewhere to put the reason and no way to explain a number.
+    """
+    try:
+        payload = response.json()
+    except Exception:
+        return {"ok": False, "error": f"unexpected response ({response.status_code})"}
+    return payload if isinstance(payload, dict) else {"ok": False, "error": "unexpected response"}
 
 
 async def _api_proxy_get(path: str, params: dict[str, Any] | None = None) -> Any:
@@ -1032,6 +1052,83 @@ def create_app() -> FastAPI:
             return JSONResponse(result)
         routes = await _api_proxy_get("/api/routes")
         return await _render_manage(request, "manage/routing.html", {"routes": routes if isinstance(routes, list) else [], "test_result": result, "tested_id": rid})
+
+    @app.post("/manage/routing/test")
+    async def manage_routing_draft_test(request: Request) -> Response:
+        """Probe the values currently typed into the route modal, before Save.
+
+        The same three gates as every other manage POST (session, CSRF pair,
+        origin) and JSON out, because the modal calls it with `fetch` and
+        renders the verdict inline rather than reloading the page.
+
+        This is the pre-save half of the route test. The saved-route route above
+        can only be asked about a route that already exists, so it cannot catch
+        the mistake it would be best at catching: a wrong port or a misspelled
+        container name that has not been written yet.
+        """
+        _auth = await _require_manage_auth(request)
+        if _auth is not None:
+            return _auth
+        body = await _json_body(request)
+        token = str(body.get("csrf_token") or request.headers.get("X-CSRF-Token") or "")
+        if not _verify_csrf(request, token):
+            raise HTTPException(status_code=403, detail="Invalid CSRF")
+        payload = {
+            "route_type": body.get("route_type"),
+            "upstream": body.get("upstream"),
+            "port": body.get("port"),
+            "redirect_target": body.get("redirect_target"),
+        }
+        try:
+            client = _get_httpx()
+            r = await client.post(
+                "http://api:8002/api/routes/test",
+                json=payload,
+                headers=_api_headers(),
+                timeout=10.0,
+            )
+            result = _json_or_status(r)
+        except Exception as e:
+            _slog("route_draft_test_failed", error=str(e))
+            result = {"ok": False, "error": "the gateway API could not be reached"}
+        return JSONResponse(result)
+
+    @app.post("/manage/rules/test")
+    async def manage_rules_test(request: Request) -> Response:
+        """Ask the gate what it would do with a host and path, before saving.
+
+        Reads only: it reaches the keyless `POST /api/dry-run`, which walks the
+        stored rules and reports the match plus any shadowing warning. That makes
+        the ordering trap visible in the add/edit modal, which is the whole
+        reason the reorder arrows exist, instead of only on the dashboard banner
+        after the rule is already live.
+        """
+        _auth = await _require_manage_auth(request)
+        if _auth is not None:
+            return _auth
+        body = await _json_body(request)
+        token = str(body.get("csrf_token") or request.headers.get("X-CSRF-Token") or "")
+        if not _verify_csrf(request, token):
+            raise HTTPException(status_code=403, detail="Invalid CSRF")
+        host = str(body.get("host") or "").strip()
+        path = str(body.get("path") or "/").strip() or "/"
+        if not host:
+            raise HTTPException(status_code=400, detail="host required")
+        if not path.startswith("/"):
+            path = "/" + path
+        try:
+            client = _get_httpx()
+            r = await client.post(
+                "http://api:8002/api/dry-run",
+                json={"host": host, "path": path},
+                headers=_api_headers(),
+                timeout=5.0,
+            )
+            result = _json_or_status(r)
+        except Exception as e:
+            _slog("rule_draft_test_failed", error=str(e))
+            result = {"ok": False, "error": "the gateway API could not be reached"}
+        return JSONResponse(result)
 
     @app.get("/manage/rules", response_class=HTMLResponse)
     async def manage_rules(request: Request) -> Response:

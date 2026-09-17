@@ -1163,11 +1163,56 @@ def create_app() -> FastAPI:
         client = _get_httpx()
         try:
             rp = await client.request(request.method, upstream_url, headers=headers, content=body, follow_redirects=False)
-        except httpx.ConnectError:
-            return JSONResponse(status_code=502, content={"detail": "upstream unreachable"})
+        except httpx.ConnectError as e:
+            # The upstream container is not answering. A browser gets the themed
+            # page every other gateway error uses; an API caller still gets JSON.
+            # `_error_response` already branches on `wants_html`, so the only
+            # thing that changes here is which of the two it is asked to build.
+            _slog("proxy_unreachable", upstream=route.upstream, port=route.port, error=str(e))
+            return _error_response(
+                request,
+                502,
+                "Upstream unavailable",
+                "The application behind this address is not responding. It may be restarting, "
+                "or its container may not be running.",
+                f"{route.upstream}:{route.port} refused the connection",
+                host,
+                raw_path,
+                req_id,
+                apex,
+            )
+        except httpx.TimeoutException as e:
+            # A distinct status from ConnectError, because "nothing is listening"
+            # and "it accepted the connection and went quiet" are different
+            # problems with different fixes. Both used to collapse into the one
+            # `except Exception` below and report 502.
+            _slog("proxy_timeout", upstream=route.upstream, port=route.port, error=str(e))
+            return _error_response(
+                request,
+                504,
+                "Upstream timed out",
+                "The application behind this address accepted the connection but did not "
+                "answer in time. It may be under load or stuck.",
+                f"{route.upstream}:{route.port} did not respond in time",
+                host,
+                raw_path,
+                req_id,
+                apex,
+            )
         except Exception as e:
             _slog("proxy_error", error=str(e))
-            return JSONResponse(status_code=502, content={"detail": "proxy error"})
+            return _error_response(
+                request,
+                502,
+                "Upstream unavailable",
+                "The gateway could not complete the request to the application behind this "
+                "address.",
+                "proxy error",
+                host,
+                raw_path,
+                req_id,
+                apex,
+            )
 
         resp_headers = {k: v for k, v in rp.headers.items() if k.lower() not in hop_by_hop}
         if "content-encoding" in resp_headers:

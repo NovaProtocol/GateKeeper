@@ -16,11 +16,11 @@
     <div class="card-header"><h2><i class="fa-solid fa-chart-line"></i> Traffic Logs</h2><span class="header-badge" style="font-family:'JetBrains Mono',monospace">all ingress</span></div>
     <div class="card-body" style="padding:1.25rem;overflow:visible;position:relative">
       <form id="logs-filter" method="get" style="display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:1rem">
-        <input name="ip" value="{{ filters.ip or '' }}" placeholder="IP" style="background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:.5rem .75rem;color:var(--text-primary);font-family:'JetBrains Mono',monospace;font-size:.85rem">
-        <input name="code" value="{{ filters.code or '' }}" placeholder="code label/code" style="background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:.5rem .75rem;color:var(--text-primary);font-family:'JetBrains Mono',monospace;font-size:.85rem">
-        <input name="endpoint" value="{{ filters.endpoint or '' }}" placeholder="endpoint wildcard e.g. *.example.com/*" style="flex:1;min-width:220px;background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:.5rem .75rem;color:var(--text-primary);font-family:'JetBrains Mono',monospace;font-size:.85rem">
-        <input name="from" value="{{ filters.from or '' }}" placeholder="from YYYY-MM-DD" style="background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:.5rem .75rem;color:var(--text-primary);font-size:.85rem">
-        <input name="to" value="{{ filters.to or '' }}" placeholder="to YYYY-MM-DD" style="background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:.5rem .75rem;color:var(--text-primary);font-size:.85rem">
+        <input name="ip" value="{{ filters.ip or '' }}" placeholder="IP" class="input input-dense input-mono">
+        <input name="code" value="{{ filters.code or '' }}" placeholder="code label/code" class="input input-dense input-mono">
+        <input name="endpoint" value="{{ filters.endpoint or '' }}" placeholder="endpoint wildcard e.g. *.example.com/*" class="input input-dense input-mono" style="flex:1;min-width:220px">
+        <input name="from" value="{{ filters.from or '' }}" placeholder="from YYYY-MM-DD" class="input input-dense input-sm">
+        <input name="to" value="{{ filters.to or '' }}" placeholder="to YYYY-MM-DD" class="input input-dense input-sm">
         <button class="btn btn-accent icon-btn" type="submit" title="Filter" aria-label="Filter"><i class="fa-solid fa-filter" aria-hidden="true"></i></button>
       </form>
       <div class="table-scroll" tabindex="0" role="region" aria-label="Traffic logs">

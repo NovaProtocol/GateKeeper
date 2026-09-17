@@ -1,5 +1,16 @@
 {% extends "base.html" %}
 {% block title %}Rules · GateKeeper{% endblock %}
+{% block head_extra %}
+<style>
+/* The pre-save verdict, inline in the modal footer. `margin-right:auto` pushes
+   it to the leading edge so it sits away from the buttons it belongs to. */
+.test-result{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;margin-right:auto;font-size:.75rem;font-family:'JetBrains Mono',monospace}
+.test-result .test-ok{color:var(--accent)}
+.test-result .test-bad{color:var(--danger)}
+.test-result .test-warn{color:var(--text-secondary)}
+.test-result .test-pending{color:var(--text-secondary)}
+</style>
+{% endblock %}
 {% block content %}
 <div class="container">
   <div class="card">
@@ -71,11 +82,11 @@
   <form method="post" action="/manage/groups/{{ gid }}/rules">
     <div class="modal-body">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <div class="form-group"><label>Path</label><input name="path" placeholder="/ or /api/* or /projects/*" required style="width:100%;background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:.6rem .875rem;color:var(--text-primary)"><small style="color:var(--text-secondary)"><code>/*</code> is reserved: every group already has a catch-all carrying it.</small></div>
-      <div class="form-group"><label>Action</label><select name="action" id="rule-action" style="width:100%;background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:.6rem .875rem;color:var(--text-primary)"><option value="access_code">access_code</option><option value="none">none (public)</option><option value="deny">deny (403)</option><option value="custom_password">custom_password</option></select></div>
-      <div class="form-group" id="custom-pwd-group" style="display:none"><label>Custom Password</label><input name="custom_password" placeholder="password" style="width:100%;background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:.6rem .875rem;color:var(--text-primary)"></div>
+      <div class="form-group"><label>Path</label><input name="path" id="rule-path" placeholder="/ or /api/* or /projects/*" required class="input" style="width:100%"><small style="color:var(--text-secondary)"><code>/*</code> is reserved: every group already has a catch-all carrying it.</small></div>
+      <div class="form-group"><label>Action</label><select name="action" id="rule-action" class="input" style="width:100%"><option value="access_code">access_code</option><option value="none">none (public)</option><option value="deny">deny (403)</option><option value="custom_password">custom_password</option></select></div>
+      <div class="form-group" id="custom-pwd-group" style="display:none"><label>Custom Password</label><input name="custom_password" placeholder="password" class="input" style="width:100%"></div>
     </div>
-    <div class="modal-footer" style="border-color:var(--border)"><button type="button" class="btn icon-btn" data-dismiss="modal" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary)" title="Cancel" aria-label="Cancel"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button><button type="submit" class="btn btn-accent icon-btn" title="Add Rule" aria-label="Add Rule"><i class="fa-solid fa-plus" aria-hidden="true"></i></button></div>
+    <div class="modal-footer" style="border-color:var(--border)"><span id="add-test-result" class="test-result" role="status" aria-live="polite"></span><button type="button" class="btn icon-btn" onclick="testRuleDraft('add')" title="Test before saving" aria-label="Test before saving"><i class="fa-solid fa-plug" aria-hidden="true"></i></button><button type="button" class="btn icon-btn" data-dismiss="modal" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary)" title="Cancel" aria-label="Cancel"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button><button type="submit" class="btn btn-accent icon-btn" title="Add Rule" aria-label="Add Rule"><i class="fa-solid fa-plus" aria-hidden="true"></i></button></div>
   </form>
 </div></div></div>
 
@@ -84,11 +95,11 @@
   <form method="post" id="editRuleForm">
     <div class="modal-body">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <div class="form-group"><label>Path</label><input name="path" id="edit-rule-path" required style="width:100%;background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:.6rem .875rem;color:var(--text-primary)"><small id="edit-rule-path-help" style="color:var(--text-secondary)"></small></div>
-      <div class="form-group"><label>Action</label><select name="action" id="edit-rule-action" style="width:100%;background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:.6rem .875rem;color:var(--text-primary)"><option value="access_code">access_code</option><option value="none">none (public)</option><option value="deny">deny (403)</option><option value="custom_password">custom_password</option></select></div>
-      <div class="form-group" id="edit-custom-pwd-group" style="display:none"><label>Custom Password <span style="color:var(--text-secondary);font-weight:400">(leave blank to keep)</span></label><input name="custom_password" id="edit-rule-pwd" placeholder="new password" style="width:100%;background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:.6rem .875rem;color:var(--text-primary)"></div>
+      <div class="form-group"><label>Path</label><input name="path" id="edit-rule-path" required class="input" style="width:100%"><small id="edit-rule-path-help" style="color:var(--text-secondary)"></small></div>
+      <div class="form-group"><label>Action</label><select name="action" id="edit-rule-action" class="input" style="width:100%"><option value="access_code">access_code</option><option value="none">none (public)</option><option value="deny">deny (403)</option><option value="custom_password">custom_password</option></select></div>
+      <div class="form-group" id="edit-custom-pwd-group" style="display:none"><label>Custom Password <span style="color:var(--text-secondary);font-weight:400">(leave blank to keep)</span></label><input name="custom_password" id="edit-rule-pwd" placeholder="new password" class="input" style="width:100%"></div>
     </div>
-    <div class="modal-footer" style="border-color:var(--border)"><button type="button" class="btn icon-btn" data-dismiss="modal" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary)" title="Cancel" aria-label="Cancel"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button><button type="submit" class="btn btn-accent icon-btn" title="Save" aria-label="Save"><i class="fa-solid fa-floppy-disk" aria-hidden="true"></i></button></div>
+    <div class="modal-footer" style="border-color:var(--border)"><span id="edit-test-result" class="test-result" role="status" aria-live="polite"></span><button type="button" class="btn icon-btn" onclick="testRuleDraft('edit')" title="Test before saving" aria-label="Test before saving"><i class="fa-solid fa-plug" aria-hidden="true"></i></button><button type="button" class="btn icon-btn" data-dismiss="modal" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary)" title="Cancel" aria-label="Cancel"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button><button type="submit" class="btn btn-accent icon-btn" title="Save" aria-label="Save"><i class="fa-solid fa-floppy-disk" aria-hidden="true"></i></button></div>
   </form>
 </div></div></div>
 <script>
@@ -106,6 +117,49 @@ function openEditRule(id, path, action, isDefault){
   document.getElementById('edit-rule-pwd').value='';
   document.getElementById('editRuleForm').action='/manage/rules/'+id+'/edit';
   $('#editRuleModal').modal('show');
+}
+
+/* The pre-save rule test. Asks the gate what it would do with the path as it is
+   currently typed, which is also how a shadowing warning becomes visible before
+   the rule is saved rather than after it silently does nothing. */
+const _ruleCsrf="{{ csrf_token }}";
+const _ruleGroupDomain={{ (group.domain if group else '')|tojson }};
+function _ruleHost(){
+  const d=(_ruleGroupDomain||'').split('/')[0];
+  if(!d||d==='*.*') return 'probe.example.com';
+  if(d.indexOf('*.')===0) return 'probe.'+d.slice(2);
+  return d;
+}
+function _setRuleResult(which,parts){
+  const el=document.getElementById(which+'-test-result');
+  if(!el) return;
+  el.innerHTML=parts.map(function(p){return '<span class="test-'+p.state+'">'+p.label+'</span>';}).join(' ');
+}
+async function testRuleDraft(which){
+  const pathInput=document.getElementById(which==='add'?'rule-path':'edit-rule-path');
+  const path=pathInput?pathInput.value.trim():'';
+  if(!path){_setRuleResult(which,[{state:'bad',label:'enter a path first'}]);return;}
+  _setRuleResult(which,[{state:'pending',label:'testing…'}]);
+  let gate;
+  try{
+    const r=await fetch('/manage/rules/test',{method:'POST',
+      headers:{'Content-Type':'application/json','X-CSRF-Token':_ruleCsrf,'Accept':'application/json'},
+      body:JSON.stringify({csrf_token:_ruleCsrf,host:_ruleHost(),path:path})});
+    gate=await r.json().catch(()=>({ok:false,error:'bad response'}));
+  }catch(e){gate={ok:false,error:'request failed'};}
+  const parts=[];
+  if(gate.matched_group!==undefined||gate.action){
+    parts.push({state:gate.action==='none'?'ok':'warn',
+      label:'gate: '+(gate.action||'?')+' via '+(gate.matched_group||'(no group)')+' · '+(gate.matched_rule||'(no rule)')});
+    const w=Array.isArray(gate.warnings)?gate.warnings:[];
+    if(w.length){
+      parts.push({state:'bad',label:'shadowed: '+w.map(function(x){
+        return String(x.rule||x.path||x.message||JSON.stringify(x)).replace(/[<>&]/g,'');}).join(', ')});
+    }
+  }else{
+    parts.push({state:'bad',label:'gate: '+(gate.detail||gate.error||'no answer')});
+  }
+  _setRuleResult(which,parts);
 }
 </script>
 {% endblock %}

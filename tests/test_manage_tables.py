@@ -291,4 +291,4 @@ def test_single_add_buttons_are_icon_only(manage_client, monkeypatch, page, payl
 def test_stylesheet_is_cache_busted(manage_client, monkeypatch) -> None:
     """A stale cached stylesheet would make a correct deploy look broken."""
     html = _get(manage_client, "/manage/rules", monkeypatch, RULES_PAGE)
-    assert re.search(r'href="[^"]*manage\.css\?v=3"', html)
+    assert re.search(r'href="[^"]*manage\.css\?v=4"', html)
