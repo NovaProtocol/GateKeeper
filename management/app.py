@@ -295,6 +295,13 @@ async def _api_proxy_post(path: str, payload: dict[str, Any]) -> Any:
     return r
 
 
+async def _api_proxy_put(path: str, payload: dict[str, Any]) -> Any:
+    url = f"http://api:8002{path}"
+    client = _get_httpx()
+    r = await client.put(url, json=payload, headers=_api_headers(), timeout=5.0)
+    return r
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     yield
@@ -875,6 +882,62 @@ def create_app() -> FastAPI:
         except Exception:
             pass
         referer = request.headers.get("Referer") or "/manage/rules"
+        return RedirectResponse(url=referer, status_code=302)
+
+    @app.post("/manage/rules/{rid}/order", response_class=HTMLResponse)
+    async def manage_rules_order(request: Request, rid: int) -> Response:
+        _auth = await _require_manage_auth(request)
+        if _auth is not None:
+            return _auth
+        form = await request.form()
+        if not _verify_csrf(request, str(form.get("csrf_token") or "")):
+            raise HTTPException(status_code=403, detail="Invalid CSRF")
+        if not same_origin(request):
+            raise HTTPException(status_code=403, detail="Cross-site")
+        direction = str(form.get("direction") or "").strip().lower()
+        if direction not in ("up", "down"):
+            raise HTTPException(status_code=400, detail="direction must be up|down")
+        referer = request.headers.get("Referer") or "/manage/rules"
+        try:
+            r = await _api_proxy_put(f"/api/rules/{rid}/order", {"direction": direction})
+            if r.status_code >= 400:
+                _slog(
+                    "rule_order_refused",
+                    rid=rid,
+                    direction=direction,
+                    status=r.status_code,
+                    detail=r.text[:200],
+                )
+        except Exception as e:
+            _slog("rule_order_failed", rid=rid, direction=direction, error=str(e))
+        return RedirectResponse(url=referer, status_code=302)
+
+    @app.post("/manage/groups/{gid}/order", response_class=HTMLResponse)
+    async def manage_groups_order(request: Request, gid: int) -> Response:
+        _auth = await _require_manage_auth(request)
+        if _auth is not None:
+            return _auth
+        form = await request.form()
+        if not _verify_csrf(request, str(form.get("csrf_token") or "")):
+            raise HTTPException(status_code=403, detail="Invalid CSRF")
+        if not same_origin(request):
+            raise HTTPException(status_code=403, detail="Cross-site")
+        direction = str(form.get("direction") or "").strip().lower()
+        if direction not in ("up", "down"):
+            raise HTTPException(status_code=400, detail="direction must be up|down")
+        referer = request.headers.get("Referer") or "/manage/rules"
+        try:
+            r = await _api_proxy_put(f"/api/groups/{gid}/order", {"direction": direction})
+            if r.status_code >= 400:
+                _slog(
+                    "group_order_refused",
+                    gid=gid,
+                    direction=direction,
+                    status=r.status_code,
+                    detail=r.text[:200],
+                )
+        except Exception as e:
+            _slog("group_order_failed", gid=gid, direction=direction, error=str(e))
         return RedirectResponse(url=referer, status_code=302)
 
     @app.post("/manage/rules/{rid}/edit", response_class=HTMLResponse)

@@ -10,7 +10,25 @@
         <tbody>
         {% for g in groups %}
         <tr>
-          <td style="font-family:'JetBrains Mono',monospace">{{ g.display_order }}</td>
+          <td style="font-family:'JetBrains Mono',monospace">
+            <div style="display:flex;align-items:center;gap:.35rem">
+              <span title="display_order {{ g.display_order }}">{{ loop.index }}</span>
+              <span style="display:flex;flex-direction:column;gap:.15rem">
+                {% set can_up = not loop.first and not g.is_default and not loop.previtem.is_default %}
+                {% set can_down = not loop.last and not g.is_default and not loop.nextitem.is_default %}
+                <form method="post" action="/manage/groups/{{ g.id }}/order" style="display:inline;margin:0">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                  <input type="hidden" name="direction" value="up">
+                  <button class="btn" title="Move up"{% if not can_up %} disabled{% endif %} style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary);padding:0 .3rem;font-size:.65rem;line-height:1.1"><i class="fa-solid fa-chevron-up"></i></button>
+                </form>
+                <form method="post" action="/manage/groups/{{ g.id }}/order" style="display:inline;margin:0">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                  <input type="hidden" name="direction" value="down">
+                  <button class="btn" title="Move down"{% if not can_down %} disabled{% endif %} style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary);padding:0 .3rem;font-size:.65rem;line-height:1.1"><i class="fa-solid fa-chevron-down"></i></button>
+                </form>
+              </span>
+            </div>
+          </td>
           <td><a href="/manage/rules/{{ g.id }}" style="color:var(--accent)">{{ g.name }}</a>{% if g.is_default %} <span class="tag tag-inactive">default</span>{% endif %}</td>
           <td style="font-family:'JetBrains Mono',monospace;font-size:.8rem">{{ g.domain }}</td>
           <td><span class="tag tag-active">{{ g.rules_count }}</span></td>

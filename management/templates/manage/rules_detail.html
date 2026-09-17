@@ -10,7 +10,23 @@
         <tbody>
         {% for r in rules %}
         <tr>
-          <td style="font-family:'JetBrains Mono',monospace">{{ r.display_order }}</td>
+          <td style="font-family:'JetBrains Mono',monospace">
+            <div style="display:flex;align-items:center;gap:.35rem">
+              <span title="display_order {{ r.display_order }}">{{ loop.index }}</span>
+              <span style="display:flex;flex-direction:column;gap:.15rem">
+                <form method="post" action="/manage/rules/{{ r.id }}/order" style="display:inline;margin:0">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                  <input type="hidden" name="direction" value="up">
+                  <button class="btn" title="Move up"{% if loop.first %} disabled{% endif %} style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary);padding:0 .3rem;font-size:.65rem;line-height:1.1"><i class="fa-solid fa-chevron-up"></i></button>
+                </form>
+                <form method="post" action="/manage/rules/{{ r.id }}/order" style="display:inline;margin:0">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                  <input type="hidden" name="direction" value="down">
+                  <button class="btn" title="Move down"{% if loop.last %} disabled{% endif %} style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary);padding:0 .3rem;font-size:.65rem;line-height:1.1"><i class="fa-solid fa-chevron-down"></i></button>
+                </form>
+              </span>
+            </div>
+          </td>
           <td style="font-family:'JetBrains Mono',monospace">{{ r.path }}</td>
           <td><span class="tag {% if r.action=='deny' %}tag-inactive{% else %}tag-active{% endif %}" style="{% if r.action=='deny' %}background:var(--danger-dim);color:var(--danger){% endif %}">{{ r.action }}</span></td>
           <td style="font-size:.8rem;color:var(--text-secondary)">{{ r.rate_limit or '-' }}</td>
@@ -26,6 +42,12 @@
       </table>
     </div>
   </div>
+  <p style="color:var(--text-secondary);font-size:.8rem;margin-top:.75rem">
+    The table is read top to bottom: the first matching rule wins. New rules are added
+    <strong>last</strong>, so a broader rule above them — <code>/*</code> in particular — will
+    match first and the new rule will never fire. If a rule you just added has no effect,
+    move it up with the arrows until it sits above the rule that is shadowing it.
+  </p>
 </div>
 
 <div class="modal fade" id="addRuleModal" tabindex="-1"><div class="modal-dialog"><div class="modal-content" style="background:var(--bg-card);border:1px solid var(--border);color:var(--text-primary)">
