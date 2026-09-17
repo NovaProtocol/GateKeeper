@@ -14,10 +14,12 @@
 |------|---------|
 | `GET /manage` | Dashboard — stats (routes/groups/codes) + warnings |
 | `GET/POST /manage/routing` | Routes CRUD (`host`, `path`, `proxy` upstream:port or `redirect` target:code) + `POST /{id}/test` |
-| `GET /manage/rules` | Rule groups list |
+| `GET /manage/rules` | Rule groups list (▲/▼ reorder) |
 | `POST /manage/groups` | Create group (`name`, `domain`) |
-| `GET /manage/rules/{gid}` | Rules in group |
+| `POST /manage/groups/{gid}/order` | Move group up/down (`direction`) |
+| `GET /manage/rules/{gid}` | Rules in group (▲/▼ reorder, real positions) |
 | `POST /manage/groups/{gid}/rules` | Create rule (`path`, `action`, `custom_password`) — see `PUT /api/rules/{rid}` for edit |
+| `POST /manage/rules/{rid}/order` | Move rule up/down (`direction`) — the fix when a new rule is masked |
 | `GET /manage/codes` | Codes list + create/revoke/edit |
 | `GET /manage/logs` | Audit logs (filters host/ip/action/endpoint) |
 | `GET /manage/top-pages` | Top paths by hits |
