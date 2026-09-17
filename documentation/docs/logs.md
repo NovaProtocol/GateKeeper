@@ -15,7 +15,7 @@ GET|PUT /api/settings[/{key}] # settings table — PUT needs X-Internal-Api-Key
 
 - Host/path filters use `LIKE%` glob; `code` matches `code_label/code_value/attempted_code`.
 - `X-Total-Count` header for pagination; `/manage/logs` does infinite scroll (`IntersectionObserver` → `GET /manage/logs?format=json&page=N` → `X-Total-Count`).
-- `GET /manage/monitoring` shows `GET /api/logs/by-ip` grouped by `X-Forwarded-For[0]` — recent pages + access code per IP.
+- `GET /manage/monitoring` shows `GET /api/logs/by-ip` grouped by the visitor IP — recent pages + access code per IP (`shared/client_ip.py` resolves it from `CF-Connecting-IP`, not `X-Forwarded-For` — see Auth Flow → Visitor IP).
 - `GET /manage/settings` is DB-backed (`settings` table `rate_limit_access_code_per_min` tries/min); `POST /manage/settings` validates `1..1000` with `csrf_token` + `same_origin`.
 
 `GET /api/warnings` — shadowed groups/rules.
@@ -26,3 +26,4 @@ GET|PUT /api/settings[/{key}] # settings table — PUT needs X-Internal-Api-Key
 - `RequestIDMiddleware` → `X-Request-ID` (echoed).
 - `structlog` JSON on gateway.
 - `CSPMiddleware` (`default-src self`) + `ProxyFixMiddleware` + `X-Forwarded-*`.
+- `audit_logs.ip` holds the **visitor** address (max 64 chars) — resolved by `shared/client_ip.py`, never the cloudflared container's bridge address.

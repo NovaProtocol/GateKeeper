@@ -18,6 +18,7 @@ from shared.jwt import create_access_token, create_custom_token, create_manage_t
 from sqlalchemy import select
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from shared.client_ip import get_client_ip
 from shared.config import get_config
 from shared.models import Code
 from shared.error_pages import render_error_html, wants_html
@@ -44,13 +45,9 @@ try:
     from slowapi import Limiter
     from slowapi.errors import RateLimitExceeded
     from slowapi.middleware import SlowAPIMiddleware
-    from slowapi.util import get_remote_address
 
     def _key_func(request: Request) -> str:
-        xff = request.headers.get("X-Forwarded-For", "")
-        if xff:
-            return xff.split(",")[0].strip()
-        return get_remote_address(request)
+        return get_client_ip(request)
 
     limiter = Limiter(key_func=_key_func, default_limits=[])
     _has_slowapi = True
