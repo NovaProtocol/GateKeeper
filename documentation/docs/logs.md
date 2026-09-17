@@ -18,6 +18,10 @@ GET|PUT /api/settings[/{key}] # settings table — PUT needs X-Internal-Api-Key
 - `GET /manage/monitoring` shows `GET /api/logs/by-ip` grouped by the visitor IP — recent pages + access code per IP (`shared/client_ip.py` resolves it from `CF-Connecting-IP`, not `X-Forwarded-For` — see Auth Flow → Visitor IP).
 - `GET /manage/settings` is DB-backed (`settings` table `rate_limit_access_code_per_min` tries/min); `POST /manage/settings` validates `1..1000` with `csrf_token` + `same_origin`.
 
+### Fallback rows
+
+When no rule matched, the row carries `matched_action` = the governing fallback (`access_code`, `deny`, or `none`, i.e. the `unmatched_action` setting) with `rule_id` and `rule_group_id` both null, and `action` = what happened (`no_cookie_redirect`, `deny`, `none_gate`). So `action='no_cookie_redirect'` with `matched_action='access_code'` and no `rule_id` is a request that was refused because nothing matched, not because a rule asked for it. A group that matched the host without a matching rule reports the same `matched_action='access_code'` regardless of the setting, because that state is always refused (see Rules → When nothing matches).
+
 `GET /api/warnings` — shadowed groups/rules.
 `POST /api/dry-run {host,path}` — preview what rule would match.
 

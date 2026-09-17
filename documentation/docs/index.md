@@ -15,7 +15,7 @@ FastAPI gateway that protects every web app on one apex domain behind a signed a
 | **MySQL** | `gatekeeper_db` | `:3306` | Primary store | `net-data` |
 | **Documentation** | `gatekeeper_documentation` | `:8005` | MkDocs (FastAPI + granian) | `default` |
 
-Shared layer `shared/` holds `config.py` (pydantic-settings), `jwt.py` (`PyJWT HS256` `iss=gatekeeper` `aud=projectnova.download` `exp 12h/8h/12h`), `models.py` (6 tables + `settings` + `audit_logs` with `method/status_code/attempted_code`), `security.py` (pbkdf2, host/path match), `error_pages.py`; `shared/db.py` (async engine) is imported only by `api:8002` (`net-data` sole writer `gatekeeper_data` + `mysql_data`).
+Shared layer `shared/` holds `config.py` (pydantic-settings), `jwt.py` (`PyJWT HS256` `iss=gatekeeper` `aud=projectnova.download` `exp 12h/8h/12h`), `models.py` (6 tables + `settings` + `audit_logs` with `method/status_code/attempted_code`), `security.py` (pbkdf2, host/path match), `gate.py` (rule dispatch + the unmatched-request decision, shared by both gate paths), `error_pages.py`; `shared/db.py` (async engine) is imported only by `api:8002` (`net-data` sole writer `gatekeeper_data` + `mysql_data`).
 
 ```mermaid
 graph TB
@@ -35,7 +35,8 @@ Request → Caddy → Auth Gateway /api/authz/forward-auth
  ├─ valid gatekeeper_token → 200 → proxy to Route upstream
  ├─ valid ?access_code= → 302 + Set-Cookie (apex)
  ├─ valid custom_password → 200 (per rule)
- └─ neither → 302 → https://gatekeeper.<apex>/login?redirect=<original>
+ ├─ no rule matched in a matching group → 302 (always, see Rules)
+ └─ no group matched the host → `unmatched_action` (default 302)
 ```
 
 ## Quick Links

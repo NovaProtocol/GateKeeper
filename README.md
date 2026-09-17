@@ -9,10 +9,13 @@ Request → Caddy :7000 → Auth Gateway :8001 /api/authz/forward-auth
                           ├─ valid gatekeeper_token        → 200 → proxy to Route upstream
                           ├─ valid ?access_code=           → 302 + Set-Cookie (stripped)
                           ├─ valid custom_password → 200
-                          └─ neither                       → 302 → https://gatekeeper.<apex>/login?redirect=<original>
+                          ├─ group matched, no rule matched → 302 → login (always)
+                          └─ no group matched              → `unmatched_action` (default 302)
 ```
 
 Any gated URL can carry `?access_code=<code>` as a magic link — stripped after setting the cookie.
+
+Rule resolution and the unmatched-request decision live in `shared/gate.py` and are used by **both** gate paths, so `forward_auth` and the wildcard proxy cannot reach different verdicts about the same request. A host that is in no rule group follows `settings.unmatched_action`: `access_code` (default, redirect to login), `deny` (403), or `none` (proxy without auth). A group that matched the host with no matching rule is always refused, whatever the setting says.
 
 **Stack:** Python 3.14 · FastAPI + Granian · SQLAlchemy 2 (async) · MySQL 8.4 / SQLite · Caddy 2 · PyJWT
 
@@ -63,6 +66,7 @@ Visit `https://gatekeeper.projectnova.download/` (login) or `/manage/login` for 
 | `POST /manage/groups/{gid}/edit`, `POST /manage/rules/{rid}/edit` | manage | Edit a rule group (`name`, `domain`) or a rule (`path`, `action`) |
 | `GET /api/routes`, `/groups`, `/rules`, `/codes`, `/logs`, `/settings`, `/warnings` | internal (`X-Internal-Api-Key` on `net-api`) | REST API |
 | `PUT /api/groups/{gid}`, `PUT /api/rules/{rid}` | internal (`X-Internal-Api-Key`) | Update a group or rule; each field is validated only when present in the body |
+| `PUT /api/settings/{key}` | internal (`X-Internal-Api-Key`) | Update a setting; `rate_limit_access_code_per_min` is `1..1000`, `unmatched_action` is `access_code`/`deny`/`none` |
 
 ## Domain Adaptation
 

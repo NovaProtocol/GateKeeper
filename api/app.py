@@ -23,6 +23,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from shared.config import get_config
 from shared.db import Base, get_db, get_engine, get_sessionmaker
+from shared.gate import DEFAULT_UNMATCHED_ACTION, UNMATCHED_ACTIONS
 from shared.models import AuditLog, Code, Route, Rule, RuleGroup, Setting
 from shared.security import (
     hash_custom_password,
@@ -248,6 +249,13 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
             res = await s.execute(select(Setting).where(Setting.key == "rate_limit_access_code_per_min"))
             if not res.scalars().first():
                 s.add(Setting(key="rate_limit_access_code_per_min", value="5"))
+                await s.commit()
+        except Exception:
+            pass
+        try:
+            res = await s.execute(select(Setting).where(Setting.key == "unmatched_action"))
+            if not res.scalars().first():
+                s.add(Setting(key="unmatched_action", value=DEFAULT_UNMATCHED_ACTION))
                 await s.commit()
         except Exception:
             pass
@@ -920,6 +928,11 @@ def create_app() -> FastAPI:
             if not (1 <= n <= 1000):
                 raise HTTPException(status_code=400, detail="must be 1..1000")
             val = str(n)
+        elif key == "unmatched_action":
+            if val not in UNMATCHED_ACTIONS:
+                raise HTTPException(
+                    status_code=400, detail="must be one of access_code, deny, none"
+                )
         res = await db.execute(select(Setting).where(Setting.key == key))
         obj = res.scalars().first()
         if obj:
