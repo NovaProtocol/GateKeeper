@@ -94,4 +94,4 @@ A rule added through the API takes effect on the first request: the catch-all is
 
 Order within a group is otherwise what it was. The migration renumbers each group's rules `0..n-1` in their existing ascending order with the catch-all moved to the end, and a catch-all that was already last produces no change at all.
 
-Shadowing is still possible and still reported: `GET /api/warnings` reports `/*` rules that hide later rules, and `/manage/warnings` renders it.
+Shadowing is still possible and still reported: `GET /api/warnings` reports `/*` rules that hide later rules, and the dashboard renders the result as a banner that appears only when there is something to report. The old `/manage/warnings` page rendered two empty tables on a healthy gateway and is gone; the endpoint it read is unchanged.

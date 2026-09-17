@@ -714,10 +714,52 @@ def create_app() -> FastAPI:
             return _auth
         routes = await _api_proxy_get("/api/routes")
         groups = await _api_proxy_get("/api/groups")
-        codes = await _api_proxy_get("/api/codes")
+        codes = await _api_proxy_get("/api/codes", {"include_inactive": "true"})
         warnings = await _api_proxy_get("/api/warnings")
-        stats = {"routes": len(routes) if isinstance(routes, list) else 0, "groups": len(groups) if isinstance(groups, list) else 0, "codes": len(codes) if isinstance(codes, list) else 0}
-        return await _render_manage(request, "manage/dashboard.html", {"stats": stats, "routes": routes if isinstance(routes, list) else [], "groups": groups if isinstance(groups, list) else [], "codes": codes if isinstance(codes, list) else [], "warnings": warnings})
+        recent = await _api_proxy_get("/api/logs", {"per_page": 10})
+        top = await _api_proxy_get("/api/logs/top", {"limit": 5})
+
+        routes = routes if isinstance(routes, list) else []
+        groups = groups if isinstance(groups, list) else []
+        codes = codes if isinstance(codes, list) else []
+        recent = recent if isinstance(recent, list) else []
+        top = top if isinstance(top, list) else []
+
+        active_codes = [c for c in codes if c.get("active")]
+        # `/api/groups` reports only `rules_count`, so the catch-all census needs
+        # one rules call per group. The panel already does this on the backup
+        # page for the same reason, and the group count is small.
+        catch_alls = 0
+        for g in groups:
+            rows = await _api_proxy_get(f"/api/groups/{g.get('id')}/rules")
+            if isinstance(rows, list):
+                catch_alls += sum(1 for r in rows if r.get("path") == "/*")
+        last_used = max(
+            (str(c.get("last_accessed")) for c in codes if c.get("last_accessed")),
+            default=None,
+        )
+        stats = {
+            "routes": len(routes),
+            "groups": len(groups),
+            "codes_total": len(codes),
+            "codes_active": len(active_codes),
+            "codes_inactive": len(codes) - len(active_codes),
+            "catch_alls": catch_alls,
+        }
+        max_calls = max((x.get("calls", 0) for x in top), default=0)
+        for x in top:
+            x["percent"] = int(x.get("calls", 0) / max_calls * 100) if max_calls else 0
+        return await _render_manage(
+            request,
+            "manage/dashboard.html",
+            {
+                "stats": stats,
+                "warnings": warnings,
+                "recent": recent,
+                "top": top,
+                "last_used": last_used,
+            },
+        )
 
     @app.get("/manage/routing", response_class=HTMLResponse)
     async def manage_routing(request: Request) -> Response:
@@ -1240,8 +1282,9 @@ def create_app() -> FastAPI:
             logs = []
         return await _render_manage(request, "manage/logs.html", {"logs": logs, "filters": params})
 
-    @app.get("/manage/monitoring", response_class=HTMLResponse)
-    async def manage_monitoring(request: Request) -> Response:
+    @app.get("/manage/audit", response_class=HTMLResponse)
+    async def manage_audit(request: Request) -> Response:
+        """Per-visitor view: which IP saw which pages, with which code."""
         _auth = await _require_manage_auth(request)
         if _auth is not None:
             return _auth
@@ -1249,7 +1292,12 @@ def create_app() -> FastAPI:
         data = await _api_proxy_get("/api/logs/by-ip", {"limit": limit})
         if not isinstance(data, list):
             data = []
-        return await _render_manage(request, "manage/monitoring.html", {"items": data})
+        return await _render_manage(request, "manage/audit.html", {"items": data})
+
+    @app.get("/manage/monitoring", response_class=HTMLResponse)
+    async def manage_monitoring_alias(request: Request) -> Response:
+        """The old address, kept as a redirect so existing bookmarks still land."""
+        return RedirectResponse(url="/manage/audit", status_code=302)
 
     @app.get("/manage/top-pages", response_class=HTMLResponse)
     async def manage_top_pages(request: Request) -> Response:
@@ -1263,16 +1311,6 @@ def create_app() -> FastAPI:
         for x in top:
             x["percent"] = int((x.get("calls", 0) / max_calls * 100)) if max_calls else 0
         return await _render_manage(request, "manage/top_pages.html", {"pages": top})
-
-    @app.get("/manage/warnings", response_class=HTMLResponse)
-    async def manage_warnings(request: Request) -> Response:
-        _auth = await _require_manage_auth(request)
-        if _auth is not None:
-            return _auth
-        warnings = await _api_proxy_get("/api/warnings")
-        if not isinstance(warnings, dict):
-            warnings = {"groups": [], "rules": []}
-        return await _render_manage(request, "manage/warnings.html", {"warnings": warnings})
 
     @app.get("/manage/settings", response_class=HTMLResponse)
     async def manage_settings(request: Request) -> Response:

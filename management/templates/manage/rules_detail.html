@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Rules · GateKeeper{% endblock %}
 {% block content %}
-<div class="container" style="padding:2rem;max-width:1100px">
+<div class="container">
   <div class="card">
     <div class="card-header" style="display:flex;justify-content:space-between;align-items:center"><h2>{% if group %}{{ group.name }} · {{ group.domain }}{% else %}Rules #{{ gid }}{% endif %}</h2><div style="display:flex;gap:.5rem"><button class="btn btn-accent icon-btn" data-toggle="modal" data-target="#addRuleModal" title="Add Rule" aria-label="Add Rule"><i class="fa-solid fa-plus" aria-hidden="true"></i></button><a href="/manage/rules" class="btn icon-btn" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary)" title="Back to rule groups" aria-label="Back to rule groups"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i></a></div></div>
     <div class="card-body" style="padding:0">

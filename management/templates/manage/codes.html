@@ -1,11 +1,11 @@
 {% extends "base.html" %}
 {% block title %}Codes · GateKeeper{% endblock %}
 {% block content %}
-<div class="container" style="padding:2rem;max-width:1100px">
-  <div class="stats-row" style="display:grid;grid-template-columns:repeat(3,1fr);gap:1rem;margin-bottom:1.5rem">
-    <div class="stat-card"><div class="stat-number">{{ active_count + inactive_count }}</div><div class="stat-label">Total Codes</div></div>
-    <div class="stat-card"><div class="stat-number">{{ active_count }}</div><div class="stat-label">Active</div></div>
-    <div class="stat-card"><div class="stat-number">{{ inactive_count }}</div><div class="stat-label">Inactive</div></div>
+<div class="container">
+  <div class="stat-strip">
+    <div class="stat"><span class="stat-label">Total codes</span> <span class="stat-value">{{ active_count + inactive_count }}</span></div>
+    <div class="stat"><span class="stat-label">Active</span> <span class="stat-value">{{ active_count }}</span></div>
+    <div class="stat"><span class="stat-label">Inactive</span> <span class="stat-value">{{ inactive_count }}</span></div>
   </div>
   <div class="card">
     <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.75rem">
