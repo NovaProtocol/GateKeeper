@@ -125,24 +125,33 @@ mirror the create endpoints:
 |---|---|
 | `routes` | `host` present, `path` starts `/`, `route_type` ∈ `proxy`/`redirect`, proxy needs `upstream` and `port` 1..65535, redirect needs `redirect_target` and `redirect_code` ∈ 301/302/307/308, no duplicate host+path |
 | `groups` | `name` present and unique, `domain` present, `display_order` an integer, **exactly one** group `is_default` |
-| `rules` | `group_id` must exist in the same file, `path` starts `/`, `action` ∈ `access_code`/`none`/`custom_password`/`deny`, a `custom_password` rule must carry both hash and salt, `display_order` an integer |
+| `rules` | `group_id` must exist in the same file, `path` starts `/`, `action` ∈ `access_code`/`none`/`custom_password`/`deny`, a `custom_password` rule must carry both hash and salt, `display_order` an integer, **every group has a `/*` catch-all** |
 | `codes` | `code` present and unique, `active` boolean |
 | `settings` | `key` present and unique, `value` a string |
 
 ### Warnings, not refusals
 
-Three shapes are reported without blocking the restore, because they can be
-produced through the API today and refusing them would mean a file the panel
-cannot put back:
+Two shapes are reported without blocking the restore, because the API can still
+produce them and refusing them would mean a file the panel cannot put back:
 
 - a group whose `domain` matches no host shape, so its rules never run;
-- a group with **no** `/*` catch-all, so every request for its host is refused
-  until one is added;
 - a group with **more than one** `/*` catch-all, where only the first can ever
   match.
 
-All three are fail-closed at the gate. They are named in the preview so the
-operator sees them; they do not stop the restore.
+Both are fail-closed at the gate. They are named in the preview so the operator
+sees them; they do not stop the restore. A restore also renumbers each group so
+its catch-all sorts last, because `display_order` is what the gate walks and a
+restored file whose catch-all sat in the middle would reinstate the exact shape
+the invariant forbids.
+
+### A group with no catch-all is a refusal
+
+This one *does* block the restore, and it is the only rule that is checked at
+that severity. Since `/*` became a reserved path, a group without a catch-all
+cannot be repaired through the panel at all: the group has to be deleted and
+recreated. A file carrying such a group is refused with the reason, while the
+operator can still fix the file, rather than applied into a host that answers
+nothing. The check reads the file, not the database, so it holds for any file.
 
 ## Rolling back a risky change
 

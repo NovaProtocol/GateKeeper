@@ -345,10 +345,11 @@ def test_a_bad_domain_is_a_warning_not_a_refusal(client) -> None:
     assert any("matches no host" in n for n in r.json()["warnings"])
 
 
-def test_a_group_without_a_catch_all_is_restorable(client) -> None:
-    """A group created through the API today has no catch-all, and Phase 3 has
-    not landed yet. Its export must restore, or the panel cannot put back its
-    own file. The gap is refused by the gate and reported, not rejected."""
+def test_a_group_without_a_catch_all_is_refused(client) -> None:
+    """Since `/*` became a reserved path, a group without a catch-all cannot be
+    repaired through the panel — only deleted and recreated. So a file carrying
+    one is refused, with the reason, rather than applied into a host that
+    answers nothing."""
     gid = client.post(
         "/api/groups",
         json={
@@ -359,19 +360,47 @@ def test_a_group_without_a_catch_all_is_restorable(client) -> None:
     ).json()["id"]
 
     config = _current_config(client)
-    assert [r for r in config["rules"] if r["group_id"] == gid] == []
-    assert validate(config) == []
+    assert [r for r in config["rules"] if r["group_id"] == gid], "the group seeds a catch-all"
 
-    notes = config_warnings(config)
-    assert any(f"group {gid}: no /* catch-all" in n for n in notes)
+    stripped = copy.deepcopy(config)
+    stripped["rules"] = [r for r in stripped["rules"] if r["group_id"] != gid]
 
-    r = _restore(client, _resign(config))
-    assert r.status_code == 200, r.text
-    assert gid in [g["id"] for g in _current_config(client)["groups"]]
+    problems = validate(stripped)
+    assert any(f"group {gid}: no /* catch-all" in p for p in problems)
+
+    r = _restore(client, _resign(stripped))
+    assert r.status_code == 400, r.text
+    assert any("no /* catch-all" in p for p in r.json()["problems"])
+
+
+def test_a_loaded_group_with_no_catch_all_is_still_refused(client) -> None:
+    """The check reads the file, not the database, so it holds for any file."""
+    config = {
+        "routes": [],
+        "groups": [
+            {"id": 1, "name": "a", "domain": "a.test", "display_order": 0, "is_default": False},
+            {"id": 2, "name": "b", "domain": "b.test", "display_order": 1, "is_default": True},
+        ],
+        "rules": [
+            {"id": 1, "group_id": 1, "path": "/named/*", "action": "none", "display_order": 0},
+            {"id": 2, "group_id": 2, "path": "/*", "action": "access_code", "display_order": 0},
+        ],
+        "codes": [],
+        "settings": [],
+    }
+    problems = validate(config)
+    assert any("group 1: no /* catch-all" in p for p in problems)
+    assert not any("group 2" in p for p in problems)
 
 
 def test_two_catch_alls_are_restorable_and_reported(client) -> None:
-    """Only the first catch-all can ever match, so the second is dead weight."""
+    """Only the first catch-all can ever match, so the second is dead weight.
+
+    Reported rather than refused: the API cannot create a second `/*` any more,
+    but the gate tolerates one (the first wins), so a file carrying one is not
+    dangerous and refusing it would strand an operator with no way to load it.
+    A restore renumbers the group so the catch-all sorts last.
+    """
     config = copy.deepcopy(_current_config(client))
     gid = config["groups"][0]["id"]
     clone = copy.deepcopy(
@@ -384,6 +413,44 @@ def test_two_catch_alls_are_restorable_and_reported(client) -> None:
     assert validate(config) == []
     assert any(f"group {gid}: 2 /* catch-alls" in n for n in config_warnings(config))
     assert _restore(client, _resign(config)).status_code == 200
+
+    restored = _current_config(client)
+    ordered = sorted(
+        (r for r in restored["rules"] if r["group_id"] == gid),
+        key=lambda r: r["display_order"],
+    )
+    assert ordered[-1]["path"] == "/*", "the catch-all still sorts last after a restore"
+
+
+def test_a_restore_puts_the_catch_all_last(client) -> None:
+    """A file whose catch-all sits above a narrower rule restores renumbered.
+
+    `display_order` is what the gate walks, so restoring the order verbatim
+    would reinstate the exact shape the invariant forbids: the narrower rule
+    behind the catch-all could never fire.
+    """
+    config = copy.deepcopy(_current_config(client))
+    gid = config["groups"][0]["id"]
+    catch_all = next(r for r in config["rules"] if r["group_id"] == gid and r["path"] == "/*")
+    catch_all["display_order"] = 0
+    other = {
+        "id": max(r["id"] for r in config["rules"]) + 1,
+        "group_id": gid,
+        "path": "/named/*",
+        "action": "deny",
+        "display_order": 1,
+    }
+    config["rules"].append(other)
+
+    assert validate(config) == []
+    assert _restore(client, _resign(config)).status_code == 200
+
+    # `/api/backup` lists rules by id, so the order has to be read off
+    # `display_order`, which is what the gate actually walks.
+    restored = [r for r in _current_config(client)["rules"] if r["group_id"] == gid]
+    ordered = sorted(restored, key=lambda r: r["display_order"])
+    assert [r["path"] for r in ordered] == ["/named/*", "/*"]
+    assert [r["display_order"] for r in ordered] == [0, 1]
 
 
 def test_a_clean_config_has_no_warnings() -> None:
@@ -695,7 +762,12 @@ def test_restore_leaves_resolvable_code_references_alone(client) -> None:
 
 
 def test_restore_nulls_dangling_rule_and_group_references(client) -> None:
-    """The same policy as `code_id`, for the other two foreign keys."""
+    """The same policy as `code_id`, for the other two foreign keys.
+
+    The reference has to point at a rule the restored file no longer contains,
+    so the file is stripped of the whole group (and, with it, that group's
+    catch-all, which the validator would otherwise refuse).
+    """
     gid = client.post(
         "/api/groups",
         json={"name": f"ref-{uuid.uuid4().hex[:8]}", "domain": f"{uuid.uuid4().hex[:8]}.ref.test"},
@@ -716,7 +788,7 @@ def test_restore_nulls_dangling_rule_and_group_references(client) -> None:
     )
 
     blob = _export(client)
-    blob["config"]["rules"] = [row for row in blob["config"]["rules"] if row["id"] != rid]
+    blob["config"]["rules"] = [row for row in blob["config"]["rules"] if row["group_id"] != gid]
     blob["config"]["groups"] = [row for row in blob["config"]["groups"] if row["id"] != gid]
 
     body = _restore(client, _resign(blob["config"])).json()

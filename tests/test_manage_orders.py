@@ -56,26 +56,29 @@ RULES: list[dict[str, Any]] = [
     {
         "id": 1,
         "group_id": 10,
-        "path": "/*",
-        "action": "none",
+        "path": "/documentation/*",
+        "action": "access_code",
         "rate_limit": None,
         "display_order": 0,
+        "is_default": False,
     },
     {
         "id": 2,
         "group_id": 10,
-        "path": "/documentation/*",
-        "action": "access_code",
+        "path": "/api/*",
+        "action": "deny",
         "rate_limit": None,
         "display_order": 1,
+        "is_default": False,
     },
     {
         "id": 3,
         "group_id": 10,
-        "path": "/api/*",
-        "action": "deny",
+        "path": "/*",
+        "action": "none",
         "rate_limit": None,
         "display_order": 2,
+        "is_default": True,
     },
 ]
 
@@ -145,17 +148,19 @@ def _order_controls(html: str) -> list[dict[str, Any]]:
     """Pull (position, up-disabled, down-disabled) out of each rendered row."""
     rows: list[dict[str, Any]] = []
     for row in re.findall(r"<tr>(.*?)</tr>", html, re.S):
-        if 'title="Move up"' not in row:
+        if 'title="Move up' not in row:
             continue
         position = re.search(r'<span title="display_order (\d+)">(\d+)</span>', row)
-        up = re.search(r'title="Move up"([^>]*)>', row)
-        down = re.search(r'title="Move down"([^>]*)>', row)
+        up = re.search(r'title="Move up([^"]*)"([^>]*)>', row)
+        down = re.search(r'title="Move down([^"]*)"([^>]*)>', row)
         rows.append(
             {
                 "raw_order": position.group(1) if position else None,
                 "position": position.group(2) if position else None,
-                "up_disabled": "disabled" in (up.group(1) if up else ""),
-                "down_disabled": "disabled" in (down.group(1) if down else ""),
+                "up_title": up.group(1) if up else "",
+                "down_title": down.group(1) if down else "",
+                "up_disabled": "disabled" in (up.group(2) if up else ""),
+                "down_disabled": "disabled" in (down.group(2) if down else ""),
             }
         )
     return rows
@@ -280,7 +285,7 @@ def test_rule_order_redirects_even_when_api_refuses(
     assert client.calls[0][0] == "PUT"
 
 
-def test_rules_page_shows_real_positions_and_disables_the_ends(
+def test_rules_page_disables_the_catch_all_and_keeps_real_positions(
     manage_client, fake_api: _FakeClient
 ) -> None:
     r = manage_client.get("/manage/rules/10", cookies={"manage_session": SESSION})
@@ -293,10 +298,25 @@ def test_rules_page_shows_real_positions_and_disables_the_ends(
 
     assert controls[0]["up_disabled"] is True
     assert controls[0]["down_disabled"] is False
+    # The rule above the catch-all cannot swap down into it, and says why.
     assert controls[1]["up_disabled"] is False
-    assert controls[1]["down_disabled"] is False
-    assert controls[2]["up_disabled"] is False
+    assert controls[1]["down_disabled"] is True
+    assert "the catch-all is below" in controls[1]["down_title"]
+    # The catch-all itself is pinned: it cannot move, and nothing can move past it.
+    assert controls[2]["up_disabled"] is True
     assert controls[2]["down_disabled"] is True
+    assert "the catch-all is forced last" in controls[2]["up_title"]
+    assert "the catch-all is forced last" in controls[2]["down_title"]
+
+
+def test_rules_page_shows_the_default_tag_on_the_catch_all(
+    manage_client, fake_api: _FakeClient
+) -> None:
+    r = manage_client.get("/manage/rules/10", cookies={"manage_session": SESSION})
+    assert r.status_code == 200
+    assert 'class="tag tag-inactive">default<' in r.text
+    assert "forced last" in r.text
+    assert "cannot be moved, renamed or deleted" in r.text
 
 
 def test_rules_page_explains_that_new_rules_land_last(manage_client, fake_api: _FakeClient) -> None:
@@ -320,6 +340,9 @@ def test_groups_page_disables_arrows_at_the_ends_and_on_default(
     # Neighbour of the pinned default group: down would be refused by the API.
     assert controls[1]["up_disabled"] is False
     assert controls[1]["down_disabled"] is True
-    # The default group itself never moves.
+    assert "the default group is below" in controls[1]["down_title"]
+    # The default group itself never moves, and the tooltip says why.
     assert controls[2]["up_disabled"] is True
     assert controls[2]["down_disabled"] is True
+    assert "the default group is pinned last" in controls[2]["up_title"]
+    assert "the default group is pinned last" in controls[2]["down_title"]

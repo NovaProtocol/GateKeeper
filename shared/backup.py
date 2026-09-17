@@ -208,6 +208,7 @@ def _has_password(row: dict[str, Any]) -> bool:
 
 def _validate_rules(rows: list[dict[str, Any]], gids: set[int], problems: list[str]) -> None:
     _check_ids(rows, "rules", problems)
+    catches: dict[int, int] = {gid: 0 for gid in gids}
     for idx, row in enumerate(rows):
         where = f"rules[{idx}]"
         gid = _int(row.get("group_id"))
@@ -218,6 +219,8 @@ def _validate_rules(rows: list[dict[str, Any]], gids: set[int], problems: list[s
         path = _text(row.get("path"))
         if not path.startswith("/"):
             problems.append(f"{where}: path must start with /")
+        if path == "/*" and gid in catches:
+            catches[gid] += 1
         action = _text(row.get("action"))
         if action not in ACTIONS:
             problems.append(f"{where}: action must be one of {', '.join(ACTIONS)}")
@@ -227,17 +230,30 @@ def _validate_rules(rows: list[dict[str, Any]], gids: set[int], problems: list[s
             problems.append(f"{where}: custom_password rule needs custom_password_hash and salt")
         if _int(row.get("display_order")) is None:
             problems.append(f"{where}: display_order must be an integer")
+    # A group with no catch-all refuses every path it does not name, and since
+    # `/*` became a reserved path there is no way to add one afterwards through
+    # the panel: the group would have to be deleted and recreated. Refused here,
+    # where the operator can still fix the file, rather than applied into a host
+    # that answers nothing.
+    for gid in sorted(catches):
+        if catches[gid] == 0:
+            problems.append(
+                f"group {gid}: no /* catch-all, so every request for its host would be refused"
+            )
 
 
 def config_warnings(config: dict[str, Any]) -> list[str]:
-    """Shape problems that are refused by the gate but not by the API.
+    """Shape problems the gate tolerates but the operator should still see.
 
-    A group whose domain `is_valid_host` rejects, a group with no ``/*``
-    catch-all, or a group with more than one: all three can be produced through
-    ``POST /api/groups`` and ``POST /api/groups/{gid}/rules`` today, so refusing
-    them here would mean an export the panel cannot put back. Each is fail-closed
-    at the gate instead. Reported so the operator sees them, not used to reject
-    the file.
+    A group whose domain `is_valid_host` rejects, or a group carrying more than
+    one ``/*`` catch-all: both can be produced through the API, so refusing them
+    would mean an export the panel cannot put back. The gate never matches a
+    malformed host, and only the first catch-all of a group can ever match, so
+    each is fail-closed rather than dangerous. Reported, not used to reject.
+
+    A group with **no** catch-all is a different case and is a fatal problem in
+    `validate()`: since ``/*`` became a reserved path, such a group cannot be
+    repaired through the panel, only deleted and recreated.
     """
     notes: list[str] = []
     per_group: dict[int, list[str]] = {}
@@ -256,14 +272,8 @@ def config_warnings(config: dict[str, Any]) -> list[str]:
         domain = _text(row.get("domain"))
         if domain and not is_valid_host(domain):
             notes.append(f"group {gid}: domain '{domain}' matches no host, so its rules never run")
-        paths = per_group.get(gid, [])
-        catches = paths.count("/*")
-        if catches == 0:
-            notes.append(
-                f"group {gid}: no /* catch-all, so every request for its host is refused "
-                "until one is added"
-            )
-        elif catches > 1:
+        catches = per_group.get(gid, []).count("/*")
+        if catches > 1:
             notes.append(f"group {gid}: {catches} /* catch-alls, only the first can ever match")
     return notes
 
@@ -432,6 +442,34 @@ async def build_backup(db: AsyncSession, secret: str | None = None) -> dict[str,
     return {"version": VERSION, "created_at": created_at, "config": config, "sig": signature}
 
 
+def _ordered_rules(rules: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Renumber each group's rules so its catch-all sorts last.
+
+    The same shape the migration backfill establishes, applied to a restored
+    file: order within a group is otherwise preserved, and relative order is
+    what `display_order` means, so a file whose catch-all sits in the middle
+    would otherwise restore the very state the invariant forbids.
+    """
+    out: list[dict[str, Any]] = []
+    by_group: dict[int | None, list[dict[str, Any]]] = {}
+    for row in rules:
+        by_group.setdefault(_int(row.get("group_id")), []).append(row)
+    for gid, rows in by_group.items():
+        if gid is None:
+            out.extend(rows)
+            continue
+        catches = [r for r in rows if _text(r.get("path")) == "/*"]
+        rest = [r for r in rows if _text(r.get("path")) != "/*"]
+        ordered = sorted(rest, key=lambda r: _int(r.get("display_order")) or 0)
+        if catches:
+            ordered.append(max(catches, key=lambda r: _int(r.get("display_order")) or 0))
+        for index, row in enumerate(ordered):
+            renumbered = dict(row)
+            renumbered["display_order"] = index
+            out.append(renumbered)
+    return out
+
+
 def _insert_all(db: AsyncSession, config: dict[str, Any]) -> None:
     """Stage every restored row. Groups first: rules carry a group_id."""
     for row in config["groups"]:
@@ -444,7 +482,10 @@ def _insert_all(db: AsyncSession, config: dict[str, Any]) -> None:
                 is_default=bool(row.get("is_default")),
             )
         )
-    rules = derive_rule_defaults(config["rules"]) if RULES_HAVE_IS_DEFAULT else config["rules"]
+    rules = config["rules"]
+    if RULES_HAVE_IS_DEFAULT:
+        rules = derive_rule_defaults(rules)
+    rules = _ordered_rules(rules)
     for row in rules:
         rule = Rule(
             id=_int(row.get("id")),

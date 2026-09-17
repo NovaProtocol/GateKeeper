@@ -16,7 +16,7 @@ from typing import Any
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
-from sqlalchemy import String, Text, delete, func, select, text
+from sqlalchemy import String, Text, delete, func, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -28,6 +28,14 @@ from shared.config import get_config
 from shared.db import Base, get_db, get_engine, get_sessionmaker
 from shared.gate import DEFAULT_UNMATCHED_ACTION, UNMATCHED_ACTIONS
 from shared.models import AuditLog, Code, Route, Rule, RuleGroup, Setting
+from shared.rule_defaults import (
+    CATCH_ALL,
+    add_is_default_column,
+    apply_rule_defaults,
+    invariant_problems,
+)
+from shared.rule_defaults import DEFAULT_ACTION as DEFAULT_CATCH_ALL_ACTION
+from shared.rule_defaults import load as rule_defaults_load
 from shared.security import (
     hash_custom_password,
     host_matches,
@@ -201,6 +209,11 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
                 pass
 
         await conn.run_sync(_migrate_audit)
+
+        def _migrate_rules(sync_conn):  # type: ignore[no-untyped-def]
+            add_is_default_column(sync_conn)
+
+        await conn.run_sync(_migrate_rules)
     async with get_sessionmaker()() as s:
         res = await s.execute(select(RuleGroup).where(RuleGroup.is_default == True))  # noqa: E712
         grp = res.scalars().first()
@@ -242,6 +255,17 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
             if g.display_order != idx:
                 g.display_order = idx
         await s.commit()
+        report = await apply_rule_defaults(s)
+        await s.commit()
+        if report["inserted"] or report["changed"]:
+            _log(
+                "rule_defaults_backfill",
+                inserted=report["inserted"],
+                changed=report["changed"],
+            )
+        groups_now, rules_now = await rule_defaults_load(s)
+        for problem in invariant_problems(groups_now, rules_now):
+            _log("rule_defaults_invariant", problem=problem)
         cfg = get_config()
         if cfg.BACKUP_CODE:
             res = await s.execute(select(Code).where(Code.code == cfg.BACKUP_CODE))
@@ -442,6 +466,22 @@ def create_app() -> FastAPI:
         except IntegrityError:
             await db.rollback()
             raise HTTPException(status_code=409, detail="group exists")
+        # Every group needs its catch-all from the moment it exists, or the gate
+        # refuses every path the group does not name and the invariant is broken
+        # until someone notices. Gating is the default: a public group has to be
+        # a deliberate `none`.
+        catch_all = Rule(
+            group_id=g.id,
+            path=CATCH_ALL,
+            action=DEFAULT_CATCH_ALL_ACTION,
+            display_order=0,
+            is_default=True,
+        )
+        db.add(catch_all)
+        try:
+            await db.commit()
+        except Exception:
+            await db.rollback()
         return {"id": g.id, "name": g.name, "domain": g.domain, "display_order": g.display_order}
 
     @app.put("/api/groups/{gid}", dependencies=[Depends(_require_internal)])
@@ -531,7 +571,7 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="group not found")
         res = await db.execute(select(Rule).where(Rule.group_id == gid).order_by(Rule.display_order))
         rows = res.scalars().all()
-        return [{"id": r.id, "group_id": r.group_id, "path": r.path, "action": r.action, "allow_ip": r.allow_ip, "allow_time": r.allow_time, "rate_limit": r.rate_limit, "display_order": r.display_order} for r in rows]
+        return [{"id": r.id, "group_id": r.group_id, "path": r.path, "action": r.action, "allow_ip": r.allow_ip, "allow_time": r.allow_time, "rate_limit": r.rate_limit, "display_order": r.display_order, "is_default": bool(r.is_default)} for r in rows]
 
     @app.post("/api/groups/{gid}/rules", dependencies=[Depends(_require_internal)])
     async def create_rule(gid: int, payload: dict, db=Depends(get_db)):  # type: ignore[no-untyped-def]
@@ -543,6 +583,10 @@ def create_app() -> FastAPI:
         action = str(payload.get("action", "")).strip()
         if not path.startswith("/"):
             raise HTTPException(status_code=400, detail="path must start with /")
+        if path == CATCH_ALL:
+            # Reserved: the invariant is one catch-all per group, flagged and
+            # last. A second one would sit behind the first and never fire.
+            raise HTTPException(status_code=400, detail="path /* is reserved")
         if action not in ("access_code", "none", "custom_password", "deny"):
             raise HTTPException(status_code=400, detail="invalid action")
         if action == "custom_password":
@@ -553,11 +597,23 @@ def create_app() -> FastAPI:
             custom_hash, custom_salt = h, s
         else:
             custom_hash, custom_salt = None, None
-        res = await db.execute(select(func.max(Rule.display_order)).where(Rule.group_id == gid))
-        max_ord = res.scalar()
-        order = (max_ord + 1) if max_ord is not None else 0
-        r = Rule(group_id=gid, path=path, action=action, custom_password_hash=custom_hash, custom_password_salt=custom_salt, allow_ip=payload.get("allow_ip"), allow_time=payload.get("allow_time"), rate_limit=payload.get("rate_limit"), display_order=order)
+        res = await db.execute(
+            select(Rule).where(Rule.group_id == gid).order_by(Rule.display_order)
+        )
+        rows = list(res.scalars().all())
+        movable = sorted(
+            (row for row in rows if not row.is_default), key=lambda row: row.display_order
+        )
+        r = Rule(group_id=gid, path=path, action=action, custom_password_hash=custom_hash, custom_password_salt=custom_salt, allow_ip=payload.get("allow_ip"), allow_time=payload.get("allow_time"), rate_limit=payload.get("rate_limit"), display_order=len(movable) + 1)
         db.add(r)
+        # A new rule lands last, i.e. below the catch-all, which would leave it
+        # permanently unreachable. Renumber so the catch-all stays last and the
+        # new rule takes effect immediately.
+        for index, other in enumerate([*movable, r]):
+            other.display_order = index
+        for other in rows:
+            if other.is_default:
+                other.display_order = len(movable) + 1
         await db.commit()
         await db.refresh(r)
         return {"id": r.id, "path": r.path, "action": r.action, "display_order": r.display_order}
@@ -569,6 +625,10 @@ def create_app() -> FastAPI:
         cur = res.scalars().first()
         if not cur:
             raise HTTPException(status_code=404, detail="not found")
+        if cur.is_default:
+            # It is forced last, so any move would either displace it or push a
+            # rule behind it that could then never match.
+            raise HTTPException(status_code=400, detail="cannot move default rule")
         res = await db.execute(select(Rule).where(Rule.group_id == cur.group_id).order_by(Rule.display_order))
         lst = res.scalars().all()
         idx = next((i for i, x in enumerate(lst) if x.id == rid), None)
@@ -578,11 +638,15 @@ def create_app() -> FastAPI:
             if idx == 0:
                 return {"ok": True}
             other = lst[idx - 1]
+            if other.is_default:
+                raise HTTPException(status_code=400, detail="cannot swap with default rule")
             cur.display_order, other.display_order = other.display_order, cur.display_order
         elif direction == "down":
             if idx >= len(lst) - 1:
                 return {"ok": True}
             other = lst[idx + 1]
+            if other.is_default:
+                raise HTTPException(status_code=400, detail="cannot swap with default rule")
             cur.display_order, other.display_order = other.display_order, cur.display_order
         else:
             raise HTTPException(status_code=400, detail="direction must be up|down")
@@ -595,6 +659,9 @@ def create_app() -> FastAPI:
         obj = res.scalars().first()
         if not obj:
             raise HTTPException(status_code=404, detail="not found")
+        if obj.is_default:
+            # Deleting the group is the sanctioned way to remove its catch-all.
+            raise HTTPException(status_code=400, detail="cannot delete default rule")
         await db.delete(obj)
         await db.commit()
         return {"ok": True}
@@ -609,6 +676,12 @@ def create_app() -> FastAPI:
             path = str(payload.get("path", "")).strip()
             if not path.startswith("/"):
                 raise HTTPException(status_code=400, detail="path must start with /")
+            if obj.is_default and path != obj.path:
+                # The catch-all is what the group falls back to; renaming it
+                # would leave the group without one.
+                raise HTTPException(status_code=400, detail="cannot change default rule path")
+            if path == CATCH_ALL and not obj.is_default:
+                raise HTTPException(status_code=400, detail="path /* is reserved")
             obj.path = path  # type: ignore[assignment]
         if "action" in payload:
             action = str(payload.get("action", "")).strip()
@@ -663,8 +736,15 @@ def create_app() -> FastAPI:
         }
 
     @app.get("/api/codes")
-    async def list_codes(db=Depends(get_db)):  # type: ignore[no-untyped-def]
-        res = await db.execute(select(Code).order_by(Code.id.desc()))
+    async def list_codes(  # type: ignore[no-untyped-def]
+        include_inactive: bool = False, db=Depends(get_db)
+    ):
+        # Inactive codes are hidden unless asked for: a revoked code is noise in
+        # the default view, but it still has to be reachable to turn back on.
+        stmt = select(Code).order_by(Code.id.desc())
+        if not include_inactive:
+            stmt = stmt.where(Code.active)
+        res = await db.execute(stmt)
         rows = res.scalars().all()
         return [{"id": c.id, "code": c.code, "label": c.label, "display_name": c.display_name, "active": c.active, "created_at": c.created_at, "last_accessed": c.last_accessed} for c in rows]
 
@@ -710,6 +790,19 @@ def create_app() -> FastAPI:
         label = payload.get("label")
         display_name = payload.get("display_name")
         new_code = payload.get("code")
+        if "active" in payload:
+            # Accepts true/false, 1/0 and their string spellings: the panel posts
+            # a form value, other callers send JSON, and every spelling has to
+            # reach the same column. Anything else is refused rather than guessed.
+            raw = payload.get("active")
+            if isinstance(raw, bool):
+                obj.active = raw  # type: ignore[assignment]
+            elif isinstance(raw, str) and raw.strip().lower() in ("true", "false", "1", "0"):
+                obj.active = raw.strip().lower() in ("true", "1")  # type: ignore[assignment]
+            elif isinstance(raw, int):
+                obj.active = bool(raw)  # type: ignore[assignment]
+            else:
+                raise HTTPException(status_code=400, detail="active must be true or false")
         if label is not None:
             obj.label = str(label).strip() or None  # type: ignore[assignment]
             obj.display_name = str(display_name or label).strip() or None  # type: ignore[assignment]
@@ -725,6 +818,26 @@ def create_app() -> FastAPI:
         await db.commit()
         await db.refresh(obj)
         return {"id": obj.id, "code": obj.code, "label": obj.label, "display_name": obj.display_name, "active": obj.active}
+
+    @app.delete("/api/codes/{cid}", dependencies=[Depends(_require_internal)])
+    async def delete_code(cid: int, db=Depends(get_db)):  # type: ignore[no-untyped-def]
+        """Permanently remove a code, leaving nothing behind.
+
+        Audit rows are history and are never deleted: the reference is nulled
+        instead, the same policy a backup restore applies, so the row survives
+        with its host, path and action intact and only stops naming a code that
+        is gone.
+        """
+        res = await db.execute(select(Code).where(Code.id == cid))
+        obj = res.scalars().first()
+        if not obj:
+            raise HTTPException(status_code=404, detail="not found")
+        detached = await db.execute(
+            update(AuditLog).where(AuditLog.code_id == cid).values({AuditLog.code_id: None})
+        )
+        await db.delete(obj)
+        await db.commit()
+        return {"ok": True, "detached_logs": detached.rowcount or 0}
 
     @app.get("/api/logs")
     async def list_logs(  # type: ignore[no-untyped-def]

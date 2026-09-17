@@ -20,8 +20,8 @@
 | `POST /manage/groups/{gid}/order` | Move group up/down (`direction`) |
 | `GET /manage/rules/{gid}` | Rules in group (▲/▼ reorder, real positions) |
 | `POST /manage/groups/{gid}/rules` | Create rule (`path`, `action`, `custom_password`) — see `PUT /api/rules/{rid}` for edit |
-| `POST /manage/rules/{rid}/order` | Move rule up/down (`direction`) — the fix when a new rule is masked |
-| `GET /manage/codes` | Codes list + create/revoke/edit |
+| `POST /manage/rules/{rid}/order` | Move rule up/down (`direction`); disabled on the catch-all, see `documentation/docs/rules.md` |
+| `GET /manage/codes` | Codes list + create/edit, activate/deactivate, permanent delete, `?include_inactive=1` |
 | `GET /manage/logs` | Audit logs (filters host/ip/action/endpoint) |
 | `GET /manage/top-pages` | Top paths by hits |
 | `GET /manage/warnings` | Shadowed rules/groups |
@@ -34,7 +34,7 @@ All mutating `POST/PUT/DELETE` require `csrf_token` + `same_origin`.
 
 ## Actions are icons, not words
 
-Every action control in the manage UI is icon-only, with `title` **and** `aria-label` carrying the old visible label (`aria-hidden` on the glyph) — removing the word removes the accessible name, so it has to come from somewhere. The one deliberate exception is the card header on `/manage/routing`, where `Add Proxy Route` and `Add Redirect Route` sit adjacent and two bare `+` glyphs would be indistinguishable; `Add Group`, `Add Rule` and `Add Code` are icon-only because each page has exactly one. `Delete` and `Revoke` keep their `confirm()` step — icon-ifying a destructive action without it would be a safety regression.
+Every action control in the manage UI is icon-only, with `title` **and** `aria-label` carrying the old visible label (`aria-hidden` on the glyph), because removing the word removes the accessible name, so it has to come from somewhere. The one deliberate exception is the card header on `/manage/routing`, where `Add Proxy Route` and `Add Redirect Route` sit adjacent and two bare `+` glyphs would be indistinguishable; `Add Group`, `Add Rule` and `Add Code` are icon-only because each page has exactly one. Destructive actions keep their confirmation step: a `confirm()` for the reversible ones and a typed confirmation checked server-side for the irreversible ones. Icon-ifying a destructive action without any confirmation would be a safety regression.
 
 This also pays off structurally: dropping the widest column's text is part of what removes the narrow-width clipping described below.
 
@@ -46,9 +46,22 @@ The action cell of every row is a real table cell — `<td class="actions-cell">
 
 `base.html` loads `manage.css` with `?v=2`; bump that when the stylesheet changes so a cached copy cannot make a correct deploy look broken.
 
+Controls that the server would refuse are rendered `disabled` with a `title` that says why (`aria-disabled="true"` alongside), rather than hidden. The default group's delete button and the group catch-all's delete button are the two cases: a control that is simply absent tells an operator nothing, while a greyed-out one that explains itself answers the question they were about to ask.
+
 ## Codes
 
-`label`/`display_name`/`active`/`last_accessed`. Creating requires explicit `code` value (`POST /api/codes {"code": "...", "label": "..."}` `X-Internal-Api-Key`).
+`label`/`display_name`/`active`/`last_accessed`. Creating requires an explicit `code` value (`POST /api/codes {"code": "...", "label": "..."}` with `X-Internal-Api-Key`).
+
+A code has two different endings and the difference is the point:
+
+- **Deactivate** (`POST /manage/codes/{cid}/active` proxying `PUT /api/codes/{cid}` with `active`) flips the flag and keeps the row, so it can be turned back on. This is the reversible kill switch, and it is the same column the gate reads, so deactivation takes effect on the next request.
+- **Permanent delete** (`POST /manage/codes/{cid}/delete`) removes the row. Audit rows are history and are never deleted: `audit_logs.code_id` is nulled instead, the same policy a restore applies, so the row survives with its host, path and action intact. The response reports how many rows were detached.
+
+Inactive codes are hidden by default. The **Show inactive** toggle on the codes card re-requests the page with `?include_inactive=1`, which the API honours server-side (`GET /api/codes` filters inactive rows unless asked). Inactive rows render with the `tag-inactive` style and an **activate** control instead of a deactivate one.
+
+The **Permanent delete** toggle turns each row's deactivate button into a delete button that opens a modal asking for the code to be typed out. The typed confirmation is re-checked on the **server**, against the code read back from the API with `secrets.compare_digest`, so a modal alone cannot be bypassed by a stale tab, a replayed form post or a script. A mismatch is `400`.
+
+`POST /api/codes/{cid}/revoke` still exists and still works; it is the older, deactivate-only spelling of the same flag. `PUT /api/codes/{cid}` accepts `active` as a boolean, an integer or the strings `"true"`/`"false"`/`"1"`/`"0"`, because the panel posts form values while other callers send JSON. Anything else is refused with `400 active must be true or false` rather than guessed at.
 
 ## Logs — live scroll + monitoring
 

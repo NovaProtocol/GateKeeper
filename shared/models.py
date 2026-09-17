@@ -45,6 +45,10 @@ class Rule(Base):
     allow_time: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     rate_limit: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     display_order: Mapped[int] = mapped_column(Integer, index=True)
+    #: The group's `/*` catch-all. Exactly one per group, always last, and the
+    #: only rule that cannot be deleted or moved. See `shared/backup.py` for the
+    #: reading used when a configuration predates the column.
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, server_default=func.now())
     group: Mapped[RuleGroup] = relationship("RuleGroup", back_populates="rules")
 
