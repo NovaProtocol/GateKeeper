@@ -1,14 +1,112 @@
 {% extends "base.html" %}
 {% block title %}Audit · GateKeeper{% endblock %}
+{% block head_extra %}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" crossorigin="anonymous">
+<script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js" crossorigin="anonymous"></script>
+<style>
+.audit-map{height:420px;width:100%;max-width:100%;background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;z-index:0}
+.audit-map-fallback{background:var(--bg-primary);border:1px dashed var(--border);border-radius:8px;padding:1.25rem;font-size:.85rem;color:var(--text-secondary)}
+.map-summary{margin:.75rem 0 0;font-size:.85rem;color:var(--text-secondary)}
+.map-legend{display:flex;gap:1rem;flex-wrap:wrap;margin-top:.75rem;font-size:.75rem;color:var(--text-secondary)}
+.map-legend span{display:inline-flex;align-items:center;gap:.4rem}
+.map-legend i{width:.6rem;height:.6rem;border-radius:50%;background:var(--accent);display:inline-block}
+.leaflet-container{background:var(--bg-primary);font-family:inherit}
+.set-verdict{border:1px solid var(--accent);background:var(--accent-dim);border-radius:8px;padding:.85rem 1rem;margin-bottom:1rem;font-size:.85rem}
+</style>
+{% endblock %}
 {% block content %}
 <div class="container">
+  <div class="stat-strip">
+    <div class="stat"><span class="stat-label">countries</span><span class="stat-value">{{ points|length }}</span></div>
+    <div class="stat"><span class="stat-label">{{ mode }}</span><span class="stat-value">{{ geo_total }}</span></div>
+    <div class="stat"><span class="stat-label">log rows</span><span class="stat-value">{{ remaining }}</span></div>
+    <div class="stat"><span class="stat-label">visitor IPs</span><span class="stat-value">{{ items|length }}</span></div>
+  </div>
+
+  {% if prune or clear_verdict %}
+  <div class="set-verdict">
+    {% if prune %}
+      {% if prune.ok %}
+        Deleted {{ prune.deleted }} audit row{{ '' if prune.deleted == 1 else 's' }} older than the
+        retention window; {{ prune.remaining }} remain.
+      {% else %}
+        Prune failed: {{ prune.detail or 'unknown error' }}.
+      {% endif %}
+    {% elif clear_verdict.ok %}
+      Every audit row was deleted. The table records only traffic from this point on.
+    {% else %}
+      Clear failed: {{ clear_verdict.detail or 'unknown error' }}.
+    {% endif %}
+  </div>
+  {% endif %}
+
   <div class="card">
-    <div class="card-header"><h2><i class="fa-solid fa-satellite-dish"></i> Audit — IPs & Pages</h2><span class="header-badge">{{ items|length }} IPs</span></div>
+    <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.75rem">
+      <h2><i class="fa-solid fa-earth-europe" aria-hidden="true"></i> Where visitors came from</h2>
+      <div class="header-actions">
+        <form method="get" action="/manage/audit" style="display:flex;gap:.5rem;align-items:center;margin:0">
+          <label for="geo-mode" style="font-size:.72rem;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.05em">Measure</label>
+          <select id="geo-mode" name="mode" title="Which count the marker sizes show" aria-label="Aggregation mode" style="background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:.45rem .6rem;color:var(--text-primary);font-size:.85rem">
+            {% for option in modes %}
+            <option value="{{ option }}" {% if mode == option %}selected{% endif %}>{{ option }}</option>
+            {% endfor %}
+          </select>
+          <button class="btn btn-accent icon-btn" type="submit" title="Re-plot with this measure" aria-label="Apply aggregation"><i class="fa-solid fa-rotate" aria-hidden="true"></i></button>
+        </form>
+        <a class="btn btn-ghost btn-sm" href="/manage/settings" title="Open the settings page to change the retention window" aria-label="Open the settings page to change the retention window"><i class="fa-solid fa-gear" aria-hidden="true"></i> Retention</a>
+        <button class="btn btn-ghost icon-btn" data-toggle="modal" data-target="#pruneLogsModal" title="Delete audit rows older than the retention window" aria-label="Prune old audit rows"><i class="fa-solid fa-broom" aria-hidden="true"></i></button>
+        <button class="btn btn-outline-danger icon-btn" data-toggle="modal" data-target="#clearLogsModal" title="Delete every audit row" aria-label="Clear all logs"><i class="fa-solid fa-trash" aria-hidden="true"></i></button>
+      </div>
+    </div>
     <div class="card-body" style="padding:1.25rem">
-      <p style="color:var(--text-secondary);font-size:.85rem;margin-bottom:1rem">Grouped by <code>X-Forwarded-For[0]</code> — recent pages + access code per IP. Source: <code>GET /api/logs/by-ip</code>.</p>
+      <p style="color:var(--text-secondary);font-size:.85rem;margin-bottom:1rem">
+        Country level only, read from <code>CF-IPCountry</code> as the tunnel forwards it: no city,
+        no coordinates derived from the visitor address, no lookup service. Rows recorded before
+        this was captured, and requests where the header never arrived, are counted as
+        <strong>Unknown</strong> and are not plotted.
+      </p>
+
+      {% if plotted %}
+      <div id="audit-map" class="audit-map" role="img" aria-label="Visitors by country. {{ summary }}"></div>
+      <p class="map-summary">{{ summary }}</p>
+      <div class="map-legend">
+        <span><i aria-hidden="true"></i> circle area scales with the count</span>
+        <span>{{ plotted|length }} plotted</span>
+        {% if points|length > plotted|length %}<span>{{ points|length - plotted|length }} with no centroid</span>{% endif %}
+      </div>
+      {% else %}
+      <div class="audit-map-fallback">
+        <strong>Nothing to plot yet.</strong> {{ summary }}
+      </div>
+      {% endif %}
+
+      {% if points %}
+      <div class="table-scroll" tabindex="0" role="region" aria-label="Country totals" style="margin-top:1rem">
+        <table class="codes-table" style="width:100%">
+          <thead><tr><th scope="col">Country</th><th scope="col">Code</th><th scope="col">Count</th><th scope="col">Share</th></tr></thead>
+          <tbody>
+          {% for p in points %}
+          <tr>
+            <td>{{ p.name }}</td>
+            <td style="font-family:'JetBrains Mono',monospace">{{ p.cc or '—' }}</td>
+            <td style="font-family:'JetBrains Mono',monospace">{{ p.count }}</td>
+            <td style="font-family:'JetBrains Mono',monospace">{{ '%.1f'|format((p.share or 0) * 100) }}%</td>
+          </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><h2><i class="fa-solid fa-satellite-dish" aria-hidden="true"></i> Audit: IPs &amp; Pages</h2><span class="header-badge">{{ items|length }} IPs</span></div>
+    <div class="card-body" style="padding:1.25rem">
+      <p style="color:var(--text-secondary);font-size:.85rem;margin-bottom:1rem">Grouped by the visitor address that <code>shared/client_ip.py</code> resolves (Cloudflare's <code>CF-Connecting-IP</code>, never the tunnel's <code>X-Forwarded-For</code>): recent pages + access code per IP. Source: <code>GET /api/logs/by-ip</code>.</p>
       <div class="table-scroll" tabindex="0" role="region" aria-label="IPs and pages">
       <table class="codes-table" style="width:100%">
-        <thead><tr><th>IP</th><th>Calls</th><th>Recent Pages</th><th>Codes Seen</th></tr></thead>
+        <thead><tr><th scope="col">IP</th><th scope="col">Calls</th><th scope="col">Recent Pages</th><th scope="col">Codes Seen</th></tr></thead>
         <tbody>
         {% for it in items %}
         <tr>
@@ -22,7 +120,7 @@
           <td style="font-size:.8rem">{{ it.codes|join(', ') if it.codes else '—' }}</td>
         </tr>
         {% else %}
-        <tr><td colspan="4" style="text-align:center;color:var(--text-secondary);padding:1.5rem">No data</td></tr>
+        <tr><td colspan="4" style="text-align:center;color:var(--text-secondary);padding:1.5rem">No traffic recorded yet</td></tr>
         {% endfor %}
         </tbody>
       </table>
@@ -30,4 +128,114 @@
     </div>
   </div>
 </div>
+
+<div class="modal fade" id="pruneLogsModal" tabindex="-1" role="dialog" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered" role="document">
+    <div class="modal-content" style="background:var(--bg-card);border:1px solid var(--border);border-radius:8px">
+      <form method="post" action="/manage/logs/prune">
+        <input type="hidden" name="back" value="audit">
+        <div class="modal-header" style="border-bottom:1px solid var(--border)">
+          <h5 class="modal-title" style="color:var(--text-primary)">Prune old audit rows</h5>
+          <button type="button" class="close" data-dismiss="modal" aria-label="Close" style="color:var(--text-secondary)"><span aria-hidden="true">&times;</span></button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <p style="color:var(--text-secondary);font-size:.9rem">
+            Deletes audit rows older than the retention window set on the settings page, and
+            keeps everything inside it. This is the smaller of the two controls: nothing
+            recent is lost, and the count it reports is shown back on this page.
+          </p>
+          <p style="font-size:.9rem">Type <code>{{ confirm_word }}</code> to confirm.</p>
+          <div class="form-group">
+            <label for="prune-confirm-audit" style="color:var(--text-secondary);font-size:.85rem">Confirmation</label>
+            <input type="text" name="confirm" class="form-control" id="prune-confirm-audit" autocomplete="off" placeholder="{{ confirm_word }}" title="Type {{ confirm_word }} to enable the button" aria-label="Prune confirmation word">
+          </div>
+        </div>
+        <div class="modal-footer" style="border-top:1px solid var(--border)">
+          <button type="button" class="btn btn-secondary icon-btn" data-dismiss="modal" title="Cancel" aria-label="Cancel"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
+          <button type="submit" class="btn btn-outline-danger icon-btn" title="Delete audit rows past the retention window" aria-label="Prune old audit rows"><i class="fa-solid fa-broom" aria-hidden="true"></i></button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<div class="modal fade" id="clearLogsModal" tabindex="-1" role="dialog" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered" role="document">
+    <div class="modal-content" style="background:var(--bg-card);border:1px solid var(--border);border-radius:8px">
+      <form method="post" action="/manage/logs/clear">
+        <div class="modal-header" style="border-bottom:1px solid var(--border)">
+          <h5 class="modal-title" style="color:var(--danger)">Delete every audit row</h5>
+          <button type="button" class="close" data-dismiss="modal" aria-label="Close" style="color:var(--text-secondary)"><span aria-hidden="true">&times;</span></button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <p style="color:var(--text-secondary);font-size:.9rem">
+            This deletes all {{ remaining }} audit rows and cannot be undone. Nothing behind it can
+            put them back: if the history matters, export it from the log page first.
+          </p>
+          <p style="color:var(--text-secondary);font-size:.9rem">
+            The reason it exists is legibility rather than tidiness. The table filled up with the
+            tunnel's own bridge address before the visitor address was resolved correctly, and a
+            fresh table is how new visitor addresses become visible instead of being lost among the
+            old ones.
+          </p>
+          <p style="font-size:.9rem">Type <code>{{ confirm_word }}</code> to confirm.</p>
+          <div class="form-group">
+            <label for="clear-confirm" style="color:var(--text-secondary);font-size:.85rem">Confirmation</label>
+            <input type="text" name="confirm" class="form-control" id="clear-confirm" autocomplete="off" placeholder="{{ confirm_word }}" title="Type {{ confirm_word }} to enable the button" aria-label="Clear confirmation word">
+          </div>
+        </div>
+        <div class="modal-footer" style="border-top:1px solid var(--border)">
+          <button type="button" class="btn btn-secondary icon-btn" data-dismiss="modal" title="Cancel" aria-label="Cancel"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
+          <button type="submit" class="btn btn-outline-danger icon-btn" title="Delete every audit row" aria-label="Delete every audit row"><i class="fa-solid fa-trash" aria-hidden="true"></i></button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+{% if plotted %}
+<script>
+/* Leaflet keeps its own DOM, so it is driven imperatively rather than through a
+   reactive binding. The data is country level only, so the markers are circles
+   whose AREA scales with the count (radius proportional to the square root): a
+   linear radius would exaggerate the busiest country by its own square. There is
+   deliberately no heat layer, which over one centroid per country would draw the
+   shape of the centroid table and imply a per-visitor density the data does not
+   contain. */
+(function(){
+  var data = {{ plotted|tojson }};
+  var total = {{ geo_total }};
+  var node = document.getElementById('audit-map');
+  if(!node || typeof L === 'undefined' || !data.length){ return; }
+  try {
+    var map = L.map(node, {worldCopyJump:false, scrollWheelZoom:false});
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 6,
+      minZoom: 1,
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+    }).addTo(map);
+    var bounds = [];
+    data.forEach(function(p){
+      var marker = L.circleMarker([p.lat, p.lon], {
+        radius: p.radius || 4, color: '#64ffda', weight: 1, opacity: 0.9,
+        fillColor: '#64ffda', fillOpacity: 0.35
+      }).addTo(map);
+      var share = total ? ((p.count / total) * 100).toFixed(1) : '0.0';
+      marker.bindPopup('<strong>' + p.name + '</strong><br>' + p.count + ' (' + share + '%)');
+      bounds.push([p.lat, p.lon]);
+    });
+    if(bounds.length > 1){ map.fitBounds(bounds, {padding: [30, 30], maxZoom: 4}); }
+    else { map.setView(bounds[0], 3); }
+  } catch (e) {
+    /* A blocked tile host, an offline browser or an unexpected Leaflet shape
+       must not leave a grey box or break the rest of the page: the country
+       totals table below already carries the same numbers as text. */
+    node.className = 'audit-map-fallback';
+    node.textContent = 'The map could not be drawn here. The country totals are listed below.';
+  }
+})();
+</script>
+{% endif %}
 {% endblock %}

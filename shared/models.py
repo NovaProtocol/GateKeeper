@@ -79,6 +79,11 @@ class AuditLog(Base):
     host: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
     path: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True, index=True)
     action: Mapped[Optional[str]] = mapped_column(String(32), nullable=True, index=True)
+    #: The visitor's country, as the tunnel reported it. Country only: no city and
+    #: no coordinates are derived from the visitor's own address. Rows written
+    #: before this column existed stay NULL and are reported as "Unknown"
+    #: rather than guessed at from the address.
+    country: Mapped[str | None] = mapped_column(String(2), nullable=True, index=True)
     code_id: Mapped[Optional[int]] = mapped_column(ForeignKey("codes.id"), nullable=True, index=True)
     rule_group_id: Mapped[Optional[int]] = mapped_column(ForeignKey("rule_groups.id"), nullable=True)
     rule_id: Mapped[Optional[int]] = mapped_column(ForeignKey("rules.id"), nullable=True)

@@ -44,6 +44,7 @@ MANAGE_FIELDS = (
     "maintenance_mode",
     "maintenance_message",
     "log_retention_days",
+    "geo_lookup_enabled",
 )
 
 UNMATCHED_ACTION = "unmatched_action"
@@ -52,6 +53,7 @@ SESSION_LIFETIME_HOURS = "session_lifetime_hours"
 MAINTENANCE_MODE = "maintenance_mode"
 MAINTENANCE_MESSAGE = "maintenance_message"
 LOG_RETENTION_DAYS = "log_retention_days"
+GEO_LOOKUP_ENABLED = "geo_lookup_enabled"
 
 #: The longest maintenance notice the page will render.
 MAINTENANCE_MESSAGE_MAX = 200
@@ -159,6 +161,7 @@ SETTING_SPECS: dict[str, SettingSpec] = {
         _validate_retention,
         env_var="LOG_RETENTION_DAYS",
     ),
+    GEO_LOOKUP_ENABLED: SettingSpec(GEO_LOOKUP_ENABLED, "true", _validate_bool),
 }
 
 

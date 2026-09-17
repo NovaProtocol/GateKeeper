@@ -22,6 +22,10 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from shared.client_ip import get_client_ip
 from shared.config import get_config
+from shared.geo import DEFAULT_GEO_MODE, GEO_MODES
+from shared.geo import plot_points as plot_geo_points
+from shared.geo import summarize as summarize_geo
+from shared.geo import totals as geo_totals
 from shared.models import Code
 from shared.error_pages import render_error_html, wants_html
 from shared.security import apex_domain as shared_apex, mask_code
@@ -242,7 +246,7 @@ class ProxyFixMiddleware(BaseHTTPMiddleware):
 class CSPMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):  # type: ignore[no-untyped-def]
         resp = await call_next(request)
-        resp.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://stackpath.bootstrapcdn.com https://cdnjs.cloudflare.com https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://stackpath.bootstrapcdn.com https://fonts.googleapis.com https://cdnjs.cloudflare.com; font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com; img-src 'self' data:; connect-src 'self'; frame-src 'self' https://*.projectnova.download https://portfolio.projectnova.download; frame-ancestors 'self' https://portfolio.projectnova.download https://*.projectnova.download"
+        resp.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://stackpath.bootstrapcdn.com https://cdnjs.cloudflare.com https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://stackpath.bootstrapcdn.com https://fonts.googleapis.com https://cdnjs.cloudflare.com; font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com; img-src 'self' data: https://cdn.jsdelivr.net https://tile.openstreetmap.org https://*.tile.openstreetmap.org; connect-src 'self'; frame-src 'self' https://*.projectnova.download https://portfolio.projectnova.download; frame-ancestors 'self' https://portfolio.projectnova.download https://*.projectnova.download"
         resp.headers["X-Content-Type-Options"] = "nosniff"
         resp.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         return resp
@@ -316,6 +320,14 @@ RESTORE_CONFIRM = "REPLACE"
 #: The word an operator types before audit rows are deleted.
 PRUNE_CONFIRM = "PRUNE"
 
+#: The word an operator types before every audit row is deleted.
+CLEAR_CONFIRM = "DELETE"
+
+#: Where a prune renders its verdict, as a closed set of names. A form posts one
+#: of these rather than a URL, so nothing about the request can redirect the
+#: response somewhere else.
+PRUNE_RETURNS = ("settings", "audit")
+
 #: Counts shown on the backup page, keyed the same way the export is.
 BACKUP_SECTIONS = ("routes", "groups", "rules", "codes", "settings")
 
@@ -384,6 +396,61 @@ async def _settings_context(errors: list[str] | None = None) -> dict[str, Any]:
         "environment": environment,
         "stored_keys": sorted(stored),
         "confirm_word": PRUNE_CONFIRM,
+    }
+
+
+async def _audit_log_count() -> int:
+    """How many audit rows exist, from the API's own pagination header.
+
+    Read from `X-Total-Count` rather than by counting a page of results: the
+    number is what makes a clear legible, and a page-shaped count would always
+    answer "25" or less. An unreachable API reports 0 rather than failing the
+    page, because the count is context, not the content.
+    """
+    try:
+        client = _get_httpx()
+        r = await client.get(
+            "http://api:8002/api/logs",
+            headers=_api_headers(),
+            params={"per_page": "1"},
+            timeout=5.0,
+        )
+        return int(r.headers.get("X-Total-Count", "0") or "0")
+    except Exception as e:
+        _slog("audit_count_failed", error=str(e))
+        return 0
+
+
+async def _audit_context(
+    mode: str | None = None, verdict: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Everything the audit page renders: the map points, the IP view, the count.
+
+    The map data and the per-IP view are separate calls because they answer
+    different questions, and the residual count is a third: it is what makes a
+    clear or a prune legible, since an empty table and a table that lost its rows
+    look identical without a number.
+    """
+    selected = str(mode or DEFAULT_GEO_MODE).strip().lower()
+    if selected not in GEO_MODES:
+        selected = DEFAULT_GEO_MODE
+    points = await _api_proxy_get("/api/logs/geo", {"mode": selected})
+    if not isinstance(points, list):
+        points = []
+    items = await _api_proxy_get("/api/logs/by-ip", {"limit": "50"})
+    if not isinstance(items, list):
+        items = []
+    return {
+        "items": items,
+        "points": points,
+        "plotted": plot_geo_points(points),
+        "mode": selected,
+        "modes": GEO_MODES,
+        "summary": summarize_geo(points),
+        "geo_total": geo_totals(points),
+        "remaining": await _audit_log_count(),
+        "confirm_word": CLEAR_CONFIRM,
+        "clear_verdict": verdict,
     }
 
 
@@ -1361,15 +1428,55 @@ def create_app() -> FastAPI:
 
     @app.get("/manage/audit", response_class=HTMLResponse)
     async def manage_audit(request: Request) -> Response:
-        """Per-visitor view: which IP saw which pages, with which code."""
+        """Per-visitor view: which IP saw which pages, and where visitors came from."""
         _auth = await _require_manage_auth(request)
         if _auth is not None:
             return _auth
-        limit = request.query_params.get("limit", "50")
-        data = await _api_proxy_get("/api/logs/by-ip", {"limit": limit})
-        if not isinstance(data, list):
-            data = []
-        return await _render_manage(request, "manage/audit.html", {"items": data})
+        return await _render_manage(
+            request, "manage/audit.html", await _audit_context(request.query_params.get("mode"))
+        )
+
+    @app.post("/manage/logs/clear", response_class=HTMLResponse)
+    async def manage_logs_clear(request: Request) -> Response:
+        """Delete every audit row, confirmed against a typed word.
+
+        The confirmation is checked here, not in the modal, for the same reason
+        the code delete is: a modal is an affordance, not a gate, and this is the
+        one action on the page with nothing behind it. Its purpose is not
+        housekeeping but observability: the audit trail filled up with the
+        tunnel's own bridge address before `shared/client_ip.py` resolved the
+        visitor, and clearing is how fresh addresses become visible instead of
+        being lost in ten thousand identical rows.
+        """
+        _auth = await _require_manage_auth(request)
+        if _auth is not None:
+            return _auth
+        form = await request.form()
+        if not _verify_csrf(request, str(form.get("csrf_token") or "")):
+            raise HTTPException(status_code=403, detail="Invalid CSRF")
+        if not same_origin(request):
+            raise HTTPException(status_code=403, detail="Cross-site")
+        supplied = str(form.get("confirm") or "").strip()
+        if not secrets.compare_digest(supplied, CLEAR_CONFIRM):
+            raise HTTPException(status_code=403, detail=f"Type {CLEAR_CONFIRM} to confirm")
+        verdict: dict[str, Any]
+        try:
+            client = _get_httpx()
+            r = await client.delete(
+                "http://api:8002/api/logs/clear", headers=_api_headers(), timeout=30.0
+            )
+            if r.status_code >= 400:
+                _slog("logs_clear_refused", status=r.status_code, detail=r.text[:200])
+                verdict = {"ok": False, "detail": f"clear refused ({r.status_code})"}
+            else:
+                _slog("logs_cleared", by="manage panel")
+                verdict = {"ok": True}
+        except Exception as e:
+            _slog("logs_clear_failed", error=str(e))
+            verdict = {"ok": False, "detail": "clear failed"}
+        return await _render_manage(
+            request, "manage/audit.html", await _audit_context(None, verdict)
+        )
 
     @app.get("/manage/monitoring", response_class=HTMLResponse)
     async def manage_monitoring_alias(request: Request) -> Response:
@@ -1449,6 +1556,13 @@ def create_app() -> FastAPI:
             verdict = {"ok": False, "detail": "prune failed"}
         if not isinstance(verdict, dict):
             verdict = {"ok": False, "detail": "prune failed"}
+        # The same route serves both pages that offer the control. The form names
+        # one of two pages rather than a URL, so the response cannot be pointed
+        # anywhere a caller chooses.
+        if str(form.get("back") or "") == "audit":
+            ctx = await _audit_context(None)
+            ctx["prune"] = verdict
+            return await _render_manage(request, "manage/audit.html", ctx)
         ctx = await _settings_context()
         ctx["prune"] = verdict
         return await _render_manage(request, "manage/settings.html", ctx)

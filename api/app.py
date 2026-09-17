@@ -27,6 +27,13 @@ from shared.backup import verify as verify_backup
 from shared.config import get_config
 from shared.db import Base, get_db, get_engine, get_sessionmaker
 from shared.gate import DEFAULT_UNMATCHED_ACTION
+from shared.geo import (
+    BLOCKED_ACTIONS,
+    DEFAULT_GEO_MODE,
+    GEO_MODES,
+    build_points,
+    normalize_country,
+)
 from shared.models import AuditLog, Code, Route, Rule, RuleGroup, Setting
 from shared.rule_defaults import (
     CATCH_ALL,
@@ -152,6 +159,63 @@ def _parse_dt(s: str | None) -> dt.datetime | None:
     return None
 
 
+def _migrate_audit(sync_conn: Any) -> None:
+    """Add the audit columns a live table may be missing, guarded and idempotent.
+
+    Module level rather than a closure inside the lifespan so the same function
+    the app runs at boot can be run against a throwaway database in a test. The
+    pattern is unchanged from the original inline version: `PRAGMA table_info`
+    first, then `ALTER TABLE ... ADD COLUMN` only for what is absent, inside a
+    `try/except` that never stops the API from starting.
+
+    No backfill. A row written before a column existed keeps a NULL in it, which
+    is honest: for `country` it means "recorded before this was captured", and
+    inventing a value from the address would be a guess stored as a record.
+    """
+    try:
+        res = sync_conn.execute(text("PRAGMA table_info(audit_logs)"))
+        cols = {row[1] for row in res.fetchall()}
+        if "method" not in cols:
+            sync_conn.execute(text("ALTER TABLE audit_logs ADD COLUMN method VARCHAR(10)"))
+        if "status_code" not in cols:
+            sync_conn.execute(text("ALTER TABLE audit_logs ADD COLUMN status_code INTEGER"))
+        if "attempted_code" not in cols:
+            sync_conn.execute(text("ALTER TABLE audit_logs ADD COLUMN attempted_code VARCHAR(64)"))
+        # Country only, and no backfill: rows written before this column existed
+        # stay NULL and are reported as Unknown.
+        if "country" not in cols:
+            sync_conn.execute(text("ALTER TABLE audit_logs ADD COLUMN country VARCHAR(2)"))
+        if "ip" in cols:
+            sync_conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_logs_ip ON audit_logs (ip)"))
+        if "action" in cols:
+            sync_conn.execute(
+                text("CREATE INDEX IF NOT EXISTS ix_audit_logs_action ON audit_logs (action)")
+            )
+        # Re-read rather than testing the set above: `cols` predates the ALTER, so
+        # on the first boot it does not yet contain `country` and the index would
+        # silently not be created until the next restart.
+        added = {
+            row[1]
+            for row in sync_conn.execute(text("PRAGMA table_info(audit_logs)")).fetchall()
+        }
+        if "country" in added:
+            sync_conn.execute(
+                text("CREATE INDEX IF NOT EXISTS ix_audit_logs_country ON audit_logs (country)")
+            )
+    except Exception:
+        pass
+    try:
+        sync_conn.execute(
+            text(
+                "CREATE TABLE IF NOT EXISTS settings "
+                "(key VARCHAR(64) PRIMARY KEY, value TEXT NOT NULL, "
+                "updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)"
+            )
+        )
+    except Exception:
+        pass
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
     engine = get_engine()
@@ -196,27 +260,6 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
             except Exception:
                 pass
         await conn.run_sync(_migrate_routes)
-
-        def _migrate_audit(sync_conn):  # type: ignore[no-untyped-def]
-            try:
-                res = sync_conn.execute(text("PRAGMA table_info(audit_logs)"))
-                cols = {row[1] for row in res.fetchall()}
-                if "method" not in cols:
-                    sync_conn.execute(text("ALTER TABLE audit_logs ADD COLUMN method VARCHAR(10)"))
-                if "status_code" not in cols:
-                    sync_conn.execute(text("ALTER TABLE audit_logs ADD COLUMN status_code INTEGER"))
-                if "attempted_code" not in cols:
-                    sync_conn.execute(text("ALTER TABLE audit_logs ADD COLUMN attempted_code VARCHAR(64)"))
-                if "ip" in cols:
-                    sync_conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_logs_ip ON audit_logs (ip)"))
-                if "action" in cols:
-                    sync_conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_logs_action ON audit_logs (action)"))
-            except Exception:
-                pass
-            try:
-                sync_conn.execute(text("CREATE TABLE IF NOT EXISTS settings (key VARCHAR(64) PRIMARY KEY, value TEXT NOT NULL, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)"))
-            except Exception:
-                pass
 
         await conn.run_sync(_migrate_audit)
 
@@ -945,7 +988,7 @@ def create_app() -> FastAPI:
             for c in cres.scalars().all():
                 code_map[c.id] = c
         response.headers["X-Total-Count"] = str(total)
-        return [{"id": r.id, "ts": r.ts, "ip": r.ip, "host": r.host, "path": r.path, "action": r.action, "matched_action": r.matched_action, "request_id": r.request_id, "code_id": r.code_id, "code_label": (code_map[r.code_id].display_name or code_map[r.code_id].label) if r.code_id and r.code_id in code_map else None, "code_value": code_map[r.code_id].code if r.code_id and r.code_id in code_map else None, "code_active": code_map[r.code_id].active if r.code_id and r.code_id in code_map else None, "method": r.method, "status_code": r.status_code, "attempted_code": r.attempted_code, "user_agent": r.user_agent, "referer": r.referer, "latency_ms": r.latency_ms, "rule_group_id": r.rule_group_id, "rule_id": r.rule_id} for r in rows]
+        return [{"id": r.id, "ts": r.ts, "ip": r.ip, "host": r.host, "path": r.path, "country": r.country, "action": r.action, "matched_action": r.matched_action, "request_id": r.request_id, "code_id": r.code_id, "code_label": (code_map[r.code_id].display_name or code_map[r.code_id].label) if r.code_id and r.code_id in code_map else None, "code_value": code_map[r.code_id].code if r.code_id and r.code_id in code_map else None, "code_active": code_map[r.code_id].active if r.code_id and r.code_id in code_map else None, "method": r.method, "status_code": r.status_code, "attempted_code": r.attempted_code, "user_agent": r.user_agent, "referer": r.referer, "latency_ms": r.latency_ms, "rule_group_id": r.rule_group_id, "rule_id": r.rule_id} for r in rows]
 
     @app.get("/api/logs/top")
     async def logs_top(  # type: ignore[no-untyped-def]
@@ -968,6 +1011,53 @@ def create_app() -> FastAPI:
         res = await db.execute(q)
         rows = res.all()
         return [{"host": r[0], "path": r[1], "calls": r[2]} for r in rows]
+
+    @app.get("/api/logs/geo")
+    async def logs_geo(  # type: ignore[no-untyped-def]
+        mode: str = Query(default=DEFAULT_GEO_MODE),
+        host: str | None = None,
+        from_: str | None = Query(default=None, alias="from"),
+        to: str | None = Query(default=None, alias="to"),
+        db=Depends(get_db),
+    ):
+        """Per-country totals, ready to plot.
+
+        The four modes answer four different questions about the same rows:
+        ``views`` counts requests, ``visitors`` counts distinct addresses,
+        ``gated`` counts the requests a code was presented for, and ``blocked``
+        counts the ones the gate turned away. They are separate modes because a
+        single blended weight would hide the difference between an audience and
+        a scan.
+
+        Only the grouping happens in SQL. Ordering, share, radius and the
+        Unknown bucket are decided by :func:`shared.geo.build_points`, which is
+        pure, so the presentation is unit-testable without a browser.
+        """
+        if mode not in GEO_MODES:
+            raise HTTPException(
+                status_code=400, detail="mode must be one of " + ", ".join(GEO_MODES)
+            )
+        # A single aggregate expression chosen per mode: distinct addresses for
+        # `visitors`, rows for everything else.
+        counter = func.count(func.distinct(AuditLog.ip)) if mode == "visitors" else func.count()
+        q = select(AuditLog.country, counter).group_by(AuditLog.country)
+        if mode == "gated":
+            q = q.where(AuditLog.code_id.is_not(None))
+        elif mode == "blocked":
+            q = q.where(AuditLog.action.in_(BLOCKED_ACTIONS))
+        if host:
+            if "*" in host or "?" in host:
+                q = q.where(AuditLog.host.like(_glob_to_like(host), escape="\\"))
+            else:
+                q = q.where(AuditLog.host == host)
+        dt_from = _parse_dt(from_) if from_ else None
+        dt_to = _parse_dt(to) if to else None
+        if dt_from:
+            q = q.where(AuditLog.ts >= dt_from)
+        if dt_to:
+            q = q.where(AuditLog.ts <= dt_to)
+        rows = (await db.execute(q)).all()
+        return build_points([(row[0], row[1]) for row in rows])
 
     @app.get("/api/logs/export")
     async def logs_export(format: str = Query(default="csv"), db=Depends(get_db)):  # type: ignore[no-untyped-def]  # noqa: A002
@@ -1243,10 +1333,15 @@ def create_app() -> FastAPI:
             ts = _parse_dt(str(ts_raw)) if ts_raw else dt.datetime.utcnow()
             if ts is None:
                 ts = dt.datetime.utcnow()
+            # `country` is optional in the payload so a gateway container that
+            # has not been rebuilt yet cannot break logging: a missing key is a
+            # NULL cell, not a rejected row. Anything that is not a real country
+            # code is discarded the same way rather than stored as a claim.
             obj = AuditLog(
                 ts=ts,
                 ip=str(payload.get("ip") or "")[:64] or None,
                 host=str(payload.get("host") or "")[:255] or None,
+                country=normalize_country(payload.get("country")),
                 path=str(payload.get("path") or "")[:1024] or None,
                 action=str(payload.get("action") or "")[:32] or None,
                 code_id=payload.get("code_id"),

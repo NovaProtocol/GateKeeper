@@ -91,6 +91,14 @@ Per-rule `custom_password_hash/salt` (`pbkdf2_hmac sha512 100k`). Checked as:
 
 Trust model: only the tunnel may reach the origin (`gatekeeper_caddy` is the sole `cloudflared-tunnel` member and its port is loopback-bound to `127.0.0.1:7000`), so an inbound request cannot arrive from anywhere but Cloudflare. These headers are plain strings — if the origin ever becomes directly reachable they are forgeable.
 
+## Visitor country
+
+`audit_logs.country` holds the visitor's country, resolved by `shared/geo.py:get_country()` from `CF-IPCountry`, the same edge header family as `CF-Connecting-IP`. Country level only: two uppercase letters, `XX` (Cloudflare's unknown) and `T1` (a Tor exit) treated as absent, everything else discarded rather than trimmed into shape. No city, no coordinates derived from the visitor address, no lookup service.
+
+The gateway reads it once per request, gated by the `geo_lookup_enabled` setting (default `true`), and sends it with the audit payload; `api` stores it after the same validation. Both ends tolerate the key being absent, so a gateway container that predates the column cannot break logging, and a stale one cannot store a value the reader would refuse.
+
+**Unverified:** that cloudflared forwards `CF-IPCountry` to the origin was not testable from the build environment. The design degrades to `NULL`, which the audit page reports as `Unknown`; see [Logs & Audit](logs.md) for the fallback and the post-deploy check.
+
 ## Rate Limit (access_code tries/min)
 
 `settings` `rate_limit_access_code_per_min` (default 5) enforced per-IP in `auth-gateway` via `POST /api/auth/check-rate-limit {ip}` on `api:8002` (`internal:true` `X-Internal-Api-Key`) — counts `audit_logs` last 60s. On deny → `429`.

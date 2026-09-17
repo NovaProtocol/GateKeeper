@@ -24,10 +24,12 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from shared.client_ip import get_client_ip
 from shared.config import get_config
 from shared.gate import DEFAULT_UNMATCHED_ACTION, find_group_rule, resolve_rule_action
+from shared.geo import get_country
 from shared.models import Code, Route, Rule, RuleGroup
 from shared.security import apex_domain as shared_apex_domain
 from shared.security import host_matches, mask_code, verify_custom_password
 from shared.settings_spec import (
+    GEO_LOOKUP_ENABLED,
     MAINTENANCE_MESSAGE,
     MAINTENANCE_MODE,
     SESSION_LIFETIME_HOURS,
@@ -384,6 +386,19 @@ async def _setting_bool(key: str) -> bool:
     return as_bool(key, raw)
 
 
+async def _visitor_country(request: Request) -> str | None:
+    """The visitor's country, or ``None`` when capture is off or absent.
+
+    The switch is checked first so turning it off stops the header being read at
+    all, and the header read never raises: `geo_lookup_enabled` defaults to on
+    because an unreadable row must not be able to make the gateway stop
+    recording where visitors came from.
+    """
+    if not await _setting_bool(GEO_LOOKUP_ENABLED):
+        return None
+    return get_country(request)
+
+
 #: Hosts where the maintenance switch must never apply to, because they are how
 #: the operator turns it back off. Matched on the hostname, ignoring any port.
 _MANAGE_HOSTS = ("gatekeeper", "gatekeeper.projectnova.download", "localhost", "127.0.0.1")
@@ -450,6 +465,7 @@ async def _queue_maintenance_audit(
         host=host,
         path=path,
         ip=ip,
+        country=await _visitor_country(request),
         action="maintenance_mode",
         matched_action="maintenance_mode",
         rule_group_id=None,
@@ -545,12 +561,14 @@ async def _audit_log_async(
     method: str | None = None,
     status_code: int | None = None,
     attempted_code: str | None = None,
+    country: str | None = None,
 ) -> None:
     payload = {
         "ts": __import__("datetime").datetime.utcnow().isoformat(),
         "host": host,
         "path": path,
         "ip": ip,
+        "country": country,
         "action": action,
         "matched_action": matched_action,
         "rule_group_id": rule_group_id,
@@ -841,6 +859,9 @@ def create_app() -> FastAPI:
         matched_action = action if rule is None else rule.action
         ip = _get_ip(request)
         req_id = getattr(request.state, "request_id", uuid.uuid4().hex)
+        # Read once per request: the header is the same on every audit row a
+        # request writes, and the setting lookup is cached.
+        country = await _visitor_country(request)
 
         async def _log(action: str, code_id: int | None = None, status_code: int | None = None, attempted_code: str | None = None) -> None:
             lat = int((time.monotonic() - t0) * 1000)
@@ -849,6 +870,7 @@ def create_app() -> FastAPI:
                 host=host,
                 path=path,
                 ip=ip,
+                country=country,
                 action=action,
                 matched_action=matched_action,
                 rule_group_id=grp.id if grp else None,
@@ -983,6 +1005,7 @@ def create_app() -> FastAPI:
         matched_action = action if rule is None else rule.action
         ip = _get_ip(request)
         req_id = getattr(request.state, "request_id", uuid.uuid4().hex)
+        country = await _visitor_country(request)
         code_id: int | None = None
         need_custom_cookie = False
         custom_cookie_rule: Rule | None = None
@@ -994,6 +1017,7 @@ def create_app() -> FastAPI:
                 host=host,
                 path=raw_path,
                 ip=ip,
+                country=country,
                 action=action,
                 matched_action=matched_action,
                 rule_group_id=grp.id if grp else None,
