@@ -60,7 +60,9 @@ Visit `https://gatekeeper.projectnova.download/` (login) or `/manage/login` for 
 | `GET /manage/logout` | manage | Clear session |
 | `GET /manage`, `/routing`, `/rules`, `/codes`, `/logs`, `/top-pages`, `/warnings` | manage | Admin pages |
 | `POST /manage/groups/{gid}/order`, `POST /manage/rules/{rid}/order` | manage | Reorder rule groups and rules up/down |
+| `POST /manage/groups/{gid}/edit`, `POST /manage/rules/{rid}/edit` | manage | Edit a rule group (`name`, `domain`) or a rule (`path`, `action`) |
 | `GET /api/routes`, `/groups`, `/rules`, `/codes`, `/logs`, `/settings`, `/warnings` | internal (`X-Internal-Api-Key` on `net-api`) | REST API |
+| `PUT /api/groups/{gid}`, `PUT /api/rules/{rid}` | internal (`X-Internal-Api-Key`) | Update a group or rule; each field is validated only when present in the body |
 
 ## Domain Adaptation
 

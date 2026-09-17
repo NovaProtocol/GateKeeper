@@ -7,17 +7,21 @@
     <div class="card-body">
       {% if warnings.groups %}
       <h3 style="font-size:.9rem;font-weight:700;margin-bottom:.5rem">Groups shadowed</h3>
+      <div class="table-scroll" tabindex="0" role="region" aria-label="Shadowed groups">
       <table class="codes-table" style="margin-bottom:1.5rem">
         <thead><tr><th>ID</th><th>Name</th><th>Reason</th></tr></thead>
         <tbody>{% for g in warnings.groups %}<tr><td style="font-family:'JetBrains Mono',monospace">{{ g.id }}</td><td>{{ g.name }}</td><td style="font-size:.8rem;color:var(--text-secondary)">{{ g.reason }}</td></tr>{% endfor %}</tbody>
       </table>
+      </div>
       {% else %}<p style="color:var(--text-secondary);font-size:.9rem">No shadowed groups ✓</p>{% endif %}
       {% if warnings.rules %}
       <h3 style="font-size:.9rem;font-weight:700;margin-bottom:.5rem">Rules shadowed</h3>
+      <div class="table-scroll" tabindex="0" role="region" aria-label="Shadowed rules">
       <table class="codes-table">
         <thead><tr><th>ID</th><th>Path</th><th>Reason</th></tr></thead>
         <tbody>{% for r in warnings.rules %}<tr><td style="font-family:'JetBrains Mono',monospace">{{ r.id }}</td><td style="font-family:'JetBrains Mono',monospace">{{ r.path }}</td><td style="font-size:.8rem;color:var(--text-secondary)">{{ r.reason }}</td></tr>{% endfor %}</tbody>
       </table>
+      </div>
       {% else %}<p style="color:var(--text-secondary);font-size:.9rem;margin-top:.75rem">No shadowed rules ✓</p>{% endif %}
     </div>
   </div>

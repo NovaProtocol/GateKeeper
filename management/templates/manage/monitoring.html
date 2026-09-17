@@ -6,6 +6,7 @@
     <div class="card-header"><h2><i class="fa-solid fa-satellite-dish"></i> Monitoring — IPs & Pages</h2><span class="header-badge">{{ items|length }} IPs</span></div>
     <div class="card-body" style="padding:1.25rem">
       <p style="color:var(--text-secondary);font-size:.85rem;margin-bottom:1rem">Grouped by <code>X-Forwarded-For[0]</code> — recent pages + access code per IP. Source: <code>GET /api/logs/by-ip</code>.</p>
+      <div class="table-scroll" tabindex="0" role="region" aria-label="IPs and pages">
       <table class="codes-table" style="width:100%">
         <thead><tr><th>IP</th><th>Calls</th><th>Recent Pages</th><th>Codes Seen</th></tr></thead>
         <tbody>
@@ -25,6 +26,7 @@
         {% endfor %}
         </tbody>
       </table>
+      </div>
     </div>
   </div>
 </div>

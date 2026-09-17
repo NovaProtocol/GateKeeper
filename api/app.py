@@ -24,7 +24,13 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from shared.config import get_config
 from shared.db import Base, get_db, get_engine, get_sessionmaker
 from shared.models import AuditLog, Code, Route, Rule, RuleGroup, Setting
-from shared.security import hash_custom_password, host_matches, mask_code, path_matches
+from shared.security import (
+    hash_custom_password,
+    host_matches,
+    is_valid_host,
+    mask_code,
+    path_matches,
+)
 
 try:
     import structlog
@@ -192,7 +198,7 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
 
         await conn.run_sync(_migrate_audit)
     async with get_sessionmaker()() as s:
-        res = await s.execute(select(RuleGroup).where(RuleGroup.name == "*.*/*"))
+        res = await s.execute(select(RuleGroup).where(RuleGroup.is_default == True))  # noqa: E712
         grp = res.scalars().first()
         if not grp:
             grp = RuleGroup(name="*.*/*", domain="*.*/*", display_order=9999, is_default=True)
@@ -426,6 +432,40 @@ def create_app() -> FastAPI:
             await db.rollback()
             raise HTTPException(status_code=409, detail="group exists")
         return {"id": g.id, "name": g.name, "domain": g.domain, "display_order": g.display_order}
+
+    @app.put("/api/groups/{gid}", dependencies=[Depends(_require_internal)])
+    async def update_group(gid: int, payload: dict, db=Depends(get_db)):  # type: ignore[no-untyped-def]
+        res = await db.execute(select(RuleGroup).where(RuleGroup.id == gid))
+        obj = res.scalars().first()
+        if not obj:
+            raise HTTPException(status_code=404, detail="not found")
+        if "domain" in payload and obj.is_default:
+            raise HTTPException(status_code=400, detail="cannot change default domain")
+        if "name" in payload:
+            name = str(payload.get("name", "")).strip()
+            if not name:
+                raise HTTPException(status_code=400, detail="name required")
+            obj.name = name  # type: ignore[assignment]
+        if "domain" in payload:
+            domain = str(payload.get("domain", "")).strip()
+            if not domain:
+                raise HTTPException(status_code=400, detail="domain required")
+            if not is_valid_host(domain):
+                raise HTTPException(status_code=400, detail="invalid domain")
+            obj.domain = domain  # type: ignore[assignment]
+        try:
+            await db.commit()
+            await db.refresh(obj)
+        except IntegrityError:
+            await db.rollback()
+            raise HTTPException(status_code=409, detail="group exists")
+        return {
+            "id": obj.id,
+            "name": obj.name,
+            "domain": obj.domain,
+            "display_order": obj.display_order,
+            "is_default": obj.is_default,
+        }
 
     @app.put("/api/groups/{gid}/order", dependencies=[Depends(_require_internal)])
     async def order_group(gid: int, payload: dict, db=Depends(get_db)):  # type: ignore[no-untyped-def]

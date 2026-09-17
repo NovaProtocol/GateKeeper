@@ -10,11 +10,12 @@
   <div class="card">
     <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
       <h2>Access Codes</h2>
-      <button class="btn btn-accent" data-toggle="modal" data-target="#addCodeModal"><i class="fa-solid fa-plus"></i> Add Code</button>
+      <button class="btn btn-accent icon-btn" data-toggle="modal" data-target="#addCodeModal" title="Add Code" aria-label="Add Code"><i class="fa-solid fa-plus" aria-hidden="true"></i></button>
     </div>
     <div class="card-body" style="padding:0">
+      <div class="table-scroll" tabindex="0" role="region" aria-label="Access codes">
       <table class="codes-table">
-        <thead><tr><th>Code</th><th>Label</th><th>Status</th><th>Created</th><th>Last Accessed</th><th></th></tr></thead>
+        <thead><tr><th>Code</th><th>Label</th><th>Status</th><th>Created</th><th>Last Accessed</th><th aria-label="Actions"></th></tr></thead>
         <tbody>
         {% for c in codes %}
         <tr>
@@ -23,14 +24,16 @@
           <td><span class="tag {{ 'tag-active' if c.active else 'tag-inactive' }}">{{ 'Active' if c.active else 'Inactive' }}</span></td>
           <td class="date-value">{{ c.created_at }}</td>
           <td class="date-value">{{ c.last_accessed or 'never' }}</td>
-          <td style="text-align:right;padding-right:1rem;display:flex;gap:.4rem;justify-content:flex-end;align-items:center">
-            <button class="btn" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary);padding:.3rem .6rem;font-size:.75rem" onclick="openEditCode({{ c.id }}, '{{ c.label or '' }}', '{{ c.display_name or c.label or '' }}', '{{ c.code }}')" title="Edit"><i class="fa-solid fa-pen"></i></button>
+          <td class="actions-cell" style="text-align:right;padding-right:1rem">
+            <div class="actions">
+            <button class="btn icon-btn" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary);font-size:.75rem" onclick="openEditCode({{ c.id }}, '{{ c.label or '' }}', '{{ c.display_name or c.label or '' }}', '{{ c.code }}')" title="Edit code" aria-label="Edit code"><i class="fa-solid fa-pen" aria-hidden="true"></i></button>
             {% if c.active %}
             <form method="post" action="/manage/codes/{{ c.id }}/revoke" style="display:inline">
               <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-              <button type="submit" class="btn btn-outline-danger" style="padding:.3rem .6rem;font-size:.75rem" onclick="return confirm('Revoke this code?')">Revoke</button>
+              <button type="submit" class="btn btn-outline-danger icon-btn" style="font-size:.75rem" onclick="return confirm('Revoke this code?')" title="Revoke code" aria-label="Revoke code"><i class="fa-solid fa-ban" aria-hidden="true"></i></button>
             </form>
             {% endif %}
+            </div>
           </td>
         </tr>
         {% else %}
@@ -38,6 +41,7 @@
         {% endfor %}
         </tbody>
       </table>
+      </div>
     </div>
   </div>
 </div>
@@ -68,8 +72,8 @@
           </div>
         </div>
         <div class="modal-footer" style="border-top:1px solid var(--border)">
-          <button type="button" class="btn btn-secondary" data-dismiss="modal">Cancel</button>
-          <button type="submit" class="btn btn-accent">Create</button>
+          <button type="button" class="btn btn-secondary icon-btn" data-dismiss="modal" title="Cancel" aria-label="Cancel"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
+          <button type="submit" class="btn btn-accent icon-btn" title="Create" aria-label="Create"><i class="fa-solid fa-plus" aria-hidden="true"></i></button>
         </div>
       </form>
     </div>
@@ -96,8 +100,8 @@
           </div>
         </div>
         <div class="modal-footer" style="border-top:1px solid var(--border)">
-          <button type="button" class="btn btn-secondary" data-dismiss="modal">Cancel</button>
-          <button type="submit" class="btn btn-accent">Save</button>
+          <button type="button" class="btn btn-secondary icon-btn" data-dismiss="modal" title="Cancel" aria-label="Cancel"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
+          <button type="submit" class="btn btn-accent icon-btn" title="Save" aria-label="Save"><i class="fa-solid fa-floppy-disk" aria-hidden="true"></i></button>
         </div>
       </form>
     </div>
