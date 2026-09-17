@@ -12,6 +12,8 @@ __pycache__/
 gatekeeper.db
 *.db-wal
 *.db-shm
+core
+core.*
 .vscode/
 .idea/
 *.code-workspace
