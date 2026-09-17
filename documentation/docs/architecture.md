@@ -22,6 +22,7 @@ project/
 │ ├── jwt.py # PyJWT HS256 iss=gatekeeper aud=projectnova.download exp 12h/8h/12h + jti
 │ ├── models.py # 6 tables + settings + audit_logs (routes, rule_groups, rules, codes, settings, audit_logs with method/status_code/attempted_code)
 │ ├── security.py # pbkdf2_hmac sha512 100k, host_matches, path_matches, mask_code, apex_domain
+│ ├── backup.py # signed plain-JSON export/restore of the config tables (HMAC-SHA256 over `config`)
 │ ├── error_pages.py # wants_html, render_error_html (dark theme)
 │ └── db.py # create_async_engine, async_sessionmaker, get_db() — imported only by api:8002 (net-data)
 ├── auth-gateway/app.py # :8001 — RequestID, ProxyFix, CSP, slowapi, wildcard proxy (net-api → api:8002, no DB)
@@ -56,6 +57,20 @@ All healthchecks: `python -c "import urllib.request; urllib.request.urlopen('htt
 | `audit_logs` | `ts, ip, host, path, action, code_id, rule_group_id, rule_id, method, status_code, attempted_code, latency_ms, request_id, user_agent, referer` |
 
 `allow_ip / allow_time / rate_limit` on `rules` are **reserved** (stored, not enforced on hot path).
+
+### Configuration vs history
+
+The five tables above (`routes`, `rule_groups`, `rules`, `codes`, `settings`) are
+**configuration**: they hold only in the `gatekeeper_data` volume, are not seeded
+from git, and have no migration to undo. `audit_logs` is **history** and is never
+touched by a configuration change.
+
+`shared/backup.py` exports the configuration as signed plain JSON and restores it
+in one transaction. The signature (HMAC-SHA256 over the canonicalised `config`,
+keyed by `SECRET_KEY`) covers integrity only: the file contains every access code
+in cleartext. Row ids are preserved so `audit_logs.code_id` / `rule_id` /
+`rule_group_id` keep resolving; a reference the restored configuration no longer
+satisfies is nulled, never cascaded into a deleted log row. See Backup & Restore.
 
 ### DB Init
 

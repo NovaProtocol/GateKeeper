@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import secrets
 import uuid
@@ -300,6 +301,49 @@ async def _api_proxy_put(path: str, payload: dict[str, Any]) -> Any:
     client = _get_httpx()
     r = await client.put(url, json=payload, headers=_api_headers(), timeout=5.0)
     return r
+
+
+#: The word an operator types before a configuration replace goes ahead.
+RESTORE_CONFIRM = "REPLACE"
+
+#: Counts shown on the backup page, keyed the same way the export is.
+BACKUP_SECTIONS = ("routes", "groups", "rules", "codes", "settings")
+
+
+async def _backup_context(
+    verdict: dict[str, Any] | None = None,
+    stage: str = "",
+    error: str = "",
+) -> dict[str, Any]:
+    """What the backup page renders: current counts and the last export time."""
+    counts = {section: 0 for section in BACKUP_SECTIONS}
+    groups = await _api_proxy_get("/api/groups")
+    counts["groups"] = len(groups) if isinstance(groups, list) else 0
+    rules = 0
+    if isinstance(groups, list):
+        for g in groups:
+            rows = await _api_proxy_get(f"/api/groups/{g.get('id')}/rules")
+            if isinstance(rows, list):
+                rules += len(rows)
+    counts["rules"] = rules
+    for section, path in (("routes", "/api/routes"), ("codes", "/api/codes")):
+        rows = await _api_proxy_get(path)
+        counts[section] = len(rows) if isinstance(rows, list) else 0
+    settings = await _api_proxy_get("/api/settings")
+    counts["settings"] = len(settings) if isinstance(settings, list) else 0
+    last_export = None
+    if isinstance(settings, list):
+        last_export = next(
+            (s.get("value") for s in settings if s.get("key") == "backup_exported_at"), None
+        )
+    return {
+        "counts": counts,
+        "last_export": last_export,
+        "verdict": verdict,
+        "stage": stage,
+        "error": error,
+        "confirm_word": RESTORE_CONFIRM,
+    }
 
 
 @asynccontextmanager
@@ -1186,7 +1230,83 @@ def create_app() -> FastAPI:
         _auth = await _require_manage_auth(request)
         if _auth is not None:
             return _auth
-        return await _render_manage(request, "manage/backup.html", {})
+        return await _render_manage(request, "manage/backup.html", await _backup_context())
+
+    @app.get("/manage/backup/download")
+    async def manage_backup_download(request: Request) -> Response:
+        """Stream the API's signed export straight through, byte for byte."""
+        _auth = await _require_manage_auth(request)
+        if _auth is not None:
+            return _auth
+        client = _get_httpx()
+        try:
+            r = await client.get("http://api:8002/api/backup", headers=_api_headers(), timeout=30.0)
+        except Exception as e:
+            _slog("backup_download_failed", error=str(e))
+            raise HTTPException(status_code=502, detail="backup export failed") from e
+        if r.status_code >= 400:
+            raise HTTPException(status_code=502, detail=f"backup export failed ({r.status_code})")
+        disposition = r.headers.get("content-disposition")
+        fallback = "attachment; filename=gatekeeper-config.json"
+        headers = {"Content-Disposition": disposition or fallback}
+        return Response(content=r.content, media_type="application/json", headers=headers)
+
+    @app.post("/manage/backup/restore", response_class=HTMLResponse)
+    async def manage_backup_restore(request: Request) -> Response:
+        """Two-step restore: preview the verdict, then apply it."""
+        _auth = await _require_manage_auth(request)
+        if _auth is not None:
+            return _auth
+        form = await request.form()
+        if not _verify_csrf(request, str(form.get("csrf_token") or "")):
+            raise HTTPException(status_code=403, detail="Invalid CSRF")
+        if not same_origin(request):
+            raise HTTPException(status_code=403, detail="Cross-site")
+        if str(form.get("confirm") or "").strip() != RESTORE_CONFIRM:
+            raise HTTPException(status_code=403, detail=f"Type {RESTORE_CONFIRM} to confirm")
+        stage = str(form.get("stage") or "preview").strip().lower()
+        if stage not in ("preview", "apply"):
+            raise HTTPException(status_code=400, detail="stage must be preview or apply")
+        upload = form.get("file")
+        raw = await upload.read() if upload is not None and hasattr(upload, "read") else b""
+        if not raw:
+            return await _render_manage(
+                request,
+                "manage/backup.html",
+                await _backup_context(error="Choose a backup file first"),
+            )
+        try:
+            blob = json.loads(raw.decode("utf-8"))
+        except Exception:
+            blob = None
+        if not isinstance(blob, dict) or "config" not in blob:
+            return await _render_manage(
+                request,
+                "manage/backup.html",
+                await _backup_context(error="That file is not a GateKeeper backup"),
+            )
+        client = _get_httpx()
+        try:
+            r = await client.post(
+                "http://api:8002/api/backup/restore",
+                params={"dry_run": 1} if stage == "preview" else None,
+                json=blob,
+                headers=_api_headers(),
+                timeout=30.0,
+            )
+            verdict = r.json()
+        except Exception as e:
+            _slog("backup_restore_failed", error=str(e))
+            verdict = {
+                "ok": False,
+                "sig": False,
+                "problems": ["The API could not be reached"],
+                "counts": {},
+            }
+        _slog("backup_restore", stage=stage, ok=verdict.get("ok"))
+        return await _render_manage(
+            request, "manage/backup.html", await _backup_context(verdict=verdict, stage=stage)
+        )
 
     return app
 

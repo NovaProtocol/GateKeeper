@@ -26,7 +26,9 @@
 | `GET /manage/top-pages` | Top paths by hits |
 | `GET /manage/warnings` | Shadowed rules/groups |
 | `GET /manage/settings` | Settings |
-| `GET /manage/backup` | Backup |
+| `GET /manage/backup` | Backup — signed plain-JSON export, and a two-step restore |
+| `GET /manage/backup/download` | Streams the configuration export as a download |
+| `POST /manage/backup/restore` | Preview or apply a restore (`file` + `confirm=REPLACE` + `stage`) |
 
 All mutating `POST/PUT/DELETE` require `csrf_token` + `same_origin`.
 
