@@ -3,14 +3,30 @@
 {% block content %}
 <div class="container" style="padding:2rem;max-width:1100px">
   <div class="stats-row" style="display:grid;grid-template-columns:repeat(3,1fr);gap:1rem;margin-bottom:1.5rem">
-    <div class="stat-card"><div class="stat-number">{{ codes|length }}</div><div class="stat-label">Total Codes</div></div>
-    <div class="stat-card"><div class="stat-number">{{ codes|selectattr('active')|list|length }}</div><div class="stat-label">Active</div></div>
-    <div class="stat-card"><div class="stat-number">{{ codes|rejectattr('active')|list|length }}</div><div class="stat-label">Inactive</div></div>
+    <div class="stat-card"><div class="stat-number">{{ active_count + inactive_count }}</div><div class="stat-label">Total Codes</div></div>
+    <div class="stat-card"><div class="stat-number">{{ active_count }}</div><div class="stat-label">Active</div></div>
+    <div class="stat-card"><div class="stat-number">{{ inactive_count }}</div><div class="stat-label">Inactive</div></div>
   </div>
   <div class="card">
-    <div class="card-header" style="display:flex;justify-content:space-between;align-items:center">
+    <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.75rem">
       <h2>Access Codes</h2>
-      <button class="btn btn-accent icon-btn" data-toggle="modal" data-target="#addCodeModal" title="Add Code" aria-label="Add Code"><i class="fa-solid fa-plus" aria-hidden="true"></i></button>
+      <div class="header-actions">
+        <div class="toggle-wrapper">
+          <label class="toggle" title="Show codes that have been deactivated">
+            <input type="checkbox" id="show-inactive" {% if include_inactive %}checked{% endif %} aria-label="Show inactive codes">
+            <span class="toggle-slider"></span>
+          </label>
+          <span>Show inactive</span>
+        </div>
+        <div class="toggle-wrapper">
+          <label class="toggle" title="Turn the deactivate button into a permanent delete">
+            <input type="checkbox" id="delete-mode" aria-label="Permanent delete mode">
+            <span class="toggle-slider"></span>
+          </label>
+          <span>Permanent delete</span>
+        </div>
+        <button class="btn btn-accent icon-btn" data-toggle="modal" data-target="#addCodeModal" title="Add Code" aria-label="Add Code"><i class="fa-solid fa-plus" aria-hidden="true"></i></button>
+      </div>
     </div>
     <div class="card-body" style="padding:0">
       <div class="table-scroll" tabindex="0" role="region" aria-label="Access codes">
@@ -18,7 +34,7 @@
         <thead><tr><th>Code</th><th>Label</th><th>Status</th><th>Created</th><th>Last Accessed</th><th aria-label="Actions"></th></tr></thead>
         <tbody>
         {% for c in codes %}
-        <tr>
+        <tr{% if not c.active %} class="inactive"{% endif %}>
           <td><span class="code-value">{{ c.code }}</span></td>
           <td><span class="label-value{% if not c.label and not c.display_name %} empty{% endif %}">{{ c.display_name or c.label or '—' }}</span></td>
           <td><span class="tag {{ 'tag-active' if c.active else 'tag-inactive' }}">{{ 'Active' if c.active else 'Inactive' }}</span></td>
@@ -28,16 +44,24 @@
             <div class="actions">
             <button class="btn icon-btn" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary);font-size:.75rem" onclick="openEditCode({{ c.id }}, '{{ c.label or '' }}', '{{ c.display_name or c.label or '' }}', '{{ c.code }}')" title="Edit code" aria-label="Edit code"><i class="fa-solid fa-pen" aria-hidden="true"></i></button>
             {% if c.active %}
-            <form method="post" action="/manage/codes/{{ c.id }}/revoke" style="display:inline">
+            <form method="post" action="/manage/codes/{{ c.id }}/active" style="display:inline">
               <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-              <button type="submit" class="btn btn-outline-danger icon-btn" style="font-size:.75rem" onclick="return confirm('Revoke this code?')" title="Revoke code" aria-label="Revoke code"><i class="fa-solid fa-ban" aria-hidden="true"></i></button>
+              <input type="hidden" name="active" value="0">
+              <input type="hidden" name="code_value" value="{{ c.code }}">
+              <button type="submit" class="btn btn-outline-danger icon-btn js-deactivate" style="font-size:.75rem" data-cid="{{ c.id }}" data-code="{{ c.code }}" onclick="return switchAction(this, {{ c.id }}, 'Deactivate this code?')" title="Deactivate code" aria-label="Deactivate code"><i class="fa-solid fa-ban" aria-hidden="true"></i></button>
+            </form>
+            {% else %}
+            <form method="post" action="/manage/codes/{{ c.id }}/active" style="display:inline">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <input type="hidden" name="active" value="1">
+              <button type="submit" class="btn icon-btn" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary);font-size:.75rem" title="Activate code" aria-label="Activate code"><i class="fa-solid fa-toggle-off" aria-hidden="true"></i></button>
             </form>
             {% endif %}
             </div>
           </td>
         </tr>
         {% else %}
-        <tr><td colspan="6" style="text-align:center;color:var(--text-secondary);padding:1.5rem">No codes</td></tr>
+        <tr><td colspan="6" style="text-align:center;color:var(--text-secondary);padding:1.5rem">{{ 'No codes' if include_inactive else 'No active codes' }}</td></tr>
         {% endfor %}
         </tbody>
       </table>
@@ -108,6 +132,36 @@
   </div>
 </div>
 
+<div class="modal fade" id="deleteCodeModal" tabindex="-1" role="dialog" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered" role="document">
+    <div class="modal-content" style="background:var(--bg-card);border:1px solid var(--border);border-radius:8px">
+      <form method="post" id="deleteCodeForm" action="">
+        <div class="modal-header" style="border-bottom:1px solid var(--border)">
+          <h5 class="modal-title" style="color:var(--danger)">Delete code permanently</h5>
+          <button type="button" class="close" data-dismiss="modal" aria-label="Close" style="color:var(--text-secondary)"><span aria-hidden="true">&times;</span></button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <p style="color:var(--text-secondary);font-size:.9rem">
+            This removes the code from the database. Nothing is left behind: it cannot be
+            reactivated, and no backup of it exists here. Audit rows are kept, but they stop
+            naming the code.
+          </p>
+          <p style="font-size:.9rem">Type <code id="delete-code-shown" style="color:var(--danger)"></code> to confirm.</p>
+          <div class="form-group">
+            <label for="delete-code-typed" style="color:var(--text-secondary);font-size:.85rem">Code</label>
+            <input type="text" name="confirm_code" class="form-control" id="delete-code-typed" autocomplete="off" placeholder="type the code exactly">
+          </div>
+        </div>
+        <div class="modal-footer" style="border-top:1px solid var(--border)">
+          <button type="button" class="btn btn-secondary icon-btn" data-dismiss="modal" title="Cancel" aria-label="Cancel"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
+          <button type="submit" class="btn btn-outline-danger icon-btn" title="Delete permanently" aria-label="Delete permanently"><i class="fa-solid fa-trash" aria-hidden="true"></i></button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
 <script>
 function genDice(){
   const chars='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
@@ -121,5 +175,36 @@ function openEditCode(id, label, display, code){
   document.getElementById('editCodeForm').action='/manage/codes/'+id+'/edit';
   $('#editCodeModal').modal('show');
 }
+function deleteModeOn(){
+  return document.getElementById('delete-mode').checked;
+}
+/* The permanent-delete switch turns the row's deactivate control into a delete
+   control: same button, same position, different outcome, and the label changes
+   with the mode so the intent is visible before the click. The server re-checks
+   the typed code regardless; the modal is the affordance, not the guard. */
+function switchAction(button, cid, deactivateText){
+  if(!deleteModeOn()){ return confirm(deactivateText); }
+  document.getElementById('deleteCodeForm').action='/manage/codes/'+cid+'/delete';
+  document.getElementById('delete-code-typed').value='';
+  document.getElementById('delete-code-shown').textContent=button.getAttribute('data-code');
+  $('#deleteCodeModal').modal('show');
+  return false;
+}
+document.getElementById('show-inactive')?.addEventListener('change',function(){
+  var url=new URL(window.location.href);
+  if(this.checked){ url.searchParams.set('include_inactive','1'); }
+  else { url.searchParams.delete('include_inactive'); }
+  window.location.href=url.toString();
+});
+document.getElementById('delete-mode')?.addEventListener('change',function(){
+  document.body.classList.toggle('delete-mode', this.checked);
+  document.querySelectorAll('.actions-cell .js-deactivate').forEach(function(btn){
+    var icon=btn.querySelector('i');
+    if(!icon){ return; }
+    icon.className=this.checked ? 'fa-solid fa-trash' : 'fa-solid fa-ban';
+    btn.title=this.checked ? 'Delete permanently' : 'Deactivate code';
+    btn.setAttribute('aria-label', btn.title);
+  }, this);
+});
 </script>
 {% endblock %}

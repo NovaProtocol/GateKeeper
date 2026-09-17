@@ -50,18 +50,20 @@ GROUP_RULES: list[dict[str, Any]] = [
     {
         "id": 1,
         "group_id": 10,
-        "path": "/*",
-        "action": "none",
+        "path": "/documentation/*",
+        "action": "access_code",
         "rate_limit": None,
         "display_order": 0,
+        "is_default": False,
     },
     {
         "id": 2,
         "group_id": 10,
-        "path": "/documentation/*",
-        "action": "access_code",
+        "path": "/*",
+        "action": "none",
         "rate_limit": None,
         "display_order": 1,
+        "is_default": True,
     },
 ]
 
@@ -235,11 +237,29 @@ def test_destructive_row_controls_keep_their_confirm(manage_client, monkeypatch)
     detail_html = _get(manage_client, "/manage/rules/10", monkeypatch, DETAIL_PAGE)
     assert "return confirm('Delete rule?')" in detail_html
 
+    # Codes: deactivation is reversible, so one confirm is enough. The permanent
+    # delete is a separate, typed confirmation checked on the server.
     codes_html = _get(manage_client, "/manage/codes", monkeypatch, CODES_PAGE)
-    assert "return confirm('Revoke this code?')" in codes_html
+    assert "return switchAction(this, 3, 'Deactivate this code?')" in codes_html
+    assert 'id="deleteCodeForm"' in codes_html
+    assert 'name="confirm_code"' in codes_html
 
     routing_html = _get(manage_client, "/manage/routing", monkeypatch, ROUTING_PAGE)
     assert "return confirm('Delete route?')" in routing_html
+
+
+def test_default_group_and_catch_all_controls_are_disabled_not_hidden(
+    manage_client, monkeypatch
+) -> None:
+    """A hidden control explains nothing; a disabled one carries its reason."""
+    rules_html = _get(manage_client, "/manage/rules", monkeypatch, RULES_PAGE)
+    assert 'title="The default group cannot be deleted"' in rules_html
+    assert 'aria-disabled="true"' in rules_html
+
+    detail_html = _get(manage_client, "/manage/rules/10", monkeypatch, DETAIL_PAGE)
+    assert 'title="The catch-all cannot be deleted — delete the group instead"' in detail_html
+    # The catch-all's own delete form must be gone, not merely disabled.
+    assert 'class="tag tag-inactive">default<' in detail_html
 
 
 def test_routing_card_header_keeps_the_adjacent_add_labels(manage_client, monkeypatch) -> None:

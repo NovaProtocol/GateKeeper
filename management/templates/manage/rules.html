@@ -20,12 +20,12 @@
                 <form method="post" action="/manage/groups/{{ g.id }}/order" style="display:inline;margin:0">
                   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                   <input type="hidden" name="direction" value="up">
-                  <button class="btn" title="Move up"{% if not can_up %} disabled{% endif %} style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary);padding:0 .3rem;font-size:.65rem;line-height:1.1"><i class="fa-solid fa-chevron-up"></i></button>
+                  <button class="btn" title="Move up{{ ' (the default group is pinned last)' if g.is_default else (' (already first)' if loop.first else (' (the default group is above)' if loop.previtem.is_default else '')) }}"{% if not can_up %} disabled aria-disabled="true"{% endif %} style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary);padding:0 .3rem;font-size:.65rem;line-height:1.1"><i class="fa-solid fa-chevron-up"></i></button>
                 </form>
                 <form method="post" action="/manage/groups/{{ g.id }}/order" style="display:inline;margin:0">
                   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                   <input type="hidden" name="direction" value="down">
-                  <button class="btn" title="Move down"{% if not can_down %} disabled{% endif %} style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary);padding:0 .3rem;font-size:.65rem;line-height:1.1"><i class="fa-solid fa-chevron-down"></i></button>
+                  <button class="btn" title="Move down{{ ' (the default group is pinned last)' if g.is_default else (' (already last)' if loop.last else (' (the default group is below)' if loop.nextitem.is_default else '')) }}"{% if not can_down %} disabled aria-disabled="true"{% endif %} style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary);padding:0 .3rem;font-size:.65rem;line-height:1.1"><i class="fa-solid fa-chevron-down"></i></button>
                 </form>
               </span>
             </div>
@@ -39,6 +39,8 @@
             <button class="btn icon-btn" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary)" onclick="openEditGroup({{ g.id }}, '{{ g.name }}', '{{ g.domain }}', {{ 'true' if g.is_default else 'false' }})" title="Edit group" aria-label="Edit group"><i class="fa-solid fa-pen" aria-hidden="true"></i></button>
             {% if not g.is_default %}
             <form method="post" action="/manage/groups/{{ g.id }}/delete" onsubmit="return confirm('Delete group?')" style="display:inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn btn-outline-danger icon-btn" title="Delete group" aria-label="Delete group"><i class="fa-solid fa-trash" aria-hidden="true"></i></button></form>
+            {% else %}
+            <button class="btn btn-outline-danger icon-btn" disabled aria-disabled="true" title="The default group cannot be deleted" aria-label="The default group cannot be deleted"><i class="fa-solid fa-trash" aria-hidden="true"></i></button>
             {% endif %}
             </div>
           </td>

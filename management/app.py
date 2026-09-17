@@ -1059,10 +1059,28 @@ def create_app() -> FastAPI:
         _auth = await _require_manage_auth(request)
         if _auth is not None:
             return _auth
-        codes = await _api_proxy_get("/api/codes")
+        include_inactive = str(request.query_params.get("include_inactive") or "").lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+        codes = await _api_proxy_get(
+            "/api/codes", params={"include_inactive": "true"} if include_inactive else None
+        )
         if not isinstance(codes, list):
             codes = []
-        return await _render_manage(request, "manage/codes.html", {"codes": codes})
+        active_codes = await _api_proxy_get("/api/codes")
+        active_count = len(active_codes) if isinstance(active_codes, list) else 0
+        return await _render_manage(
+            request,
+            "manage/codes.html",
+            {
+                "codes": codes,
+                "include_inactive": include_inactive,
+                "active_count": active_count,
+                "inactive_count": max(len(codes) - active_count, 0),
+            },
+        )
 
     @app.post("/manage/codes", response_class=HTMLResponse)
     async def manage_codes_create(request: Request) -> Response:
@@ -1091,6 +1109,69 @@ def create_app() -> FastAPI:
         except Exception as e:
             _slog("codes_create_failed", error=str(e))
             raise HTTPException(status_code=400, detail=str(e))
+        return RedirectResponse(url="/manage/codes", status_code=302)
+
+    @app.post("/manage/codes/{cid}/active", response_class=HTMLResponse)
+    async def manage_codes_active(request: Request, cid: int) -> Response:
+        """Deactivate or reactivate a code. Reversible, so one confirm is enough."""
+        _auth = await _require_manage_auth(request)
+        if _auth is not None:
+            return _auth
+        form = await request.form()
+        if not _verify_csrf(request, str(form.get("csrf_token") or "")):
+            raise HTTPException(status_code=403, detail="Invalid CSRF")
+        if not same_origin(request):
+            raise HTTPException(status_code=403, detail="Cross-site")
+        active = str(form.get("active") or "").strip().lower() in ("1", "true", "yes")
+        try:
+            r = await _api_proxy_put(f"/api/codes/{cid}", {"active": active})
+            if r.status_code >= 400:
+                _slog("codes_active_refused", cid=cid, status=r.status_code, detail=r.text[:200])
+        except Exception as e:
+            _slog("codes_active_failed", cid=cid, error=str(e))
+        return RedirectResponse(url="/manage/codes", status_code=302)
+
+    @app.post("/manage/codes/{cid}/delete", response_class=HTMLResponse)
+    async def manage_codes_delete(request: Request, cid: int) -> Response:
+        """Permanently delete a code, confirmed against the stored value.
+
+        The typed confirmation is checked here, against the code read back from
+        the API, and only then is the delete issued. A modal alone would be
+        decoration: it cannot stop a stale tab, a replayed form post or a
+        script, and this is the one action with nothing behind it.
+        """
+        _auth = await _require_manage_auth(request)
+        if _auth is not None:
+            return _auth
+        form = await request.form()
+        if not _verify_csrf(request, str(form.get("csrf_token") or "")):
+            raise HTTPException(status_code=403, detail="Invalid CSRF")
+        if not same_origin(request):
+            raise HTTPException(status_code=403, detail="Cross-site")
+        supplied = str(form.get("confirm_code") or "")
+        try:
+            current = await _api_proxy_get(f"/api/codes/{cid}")
+        except Exception as e:
+            _slog("codes_delete_lookup_failed", cid=cid, error=str(e))
+            raise HTTPException(status_code=502, detail="could not read the code") from e
+        if not isinstance(current, dict) or current.get("code") is None:
+            raise HTTPException(status_code=404, detail="not found")
+        if not secrets.compare_digest(supplied, str(current["code"])):
+            _slog("codes_delete_refused", cid=cid, reason="confirm mismatch")
+            raise HTTPException(status_code=400, detail="confirm_code does not match")
+        try:
+            client = _get_httpx()
+            r = await client.delete(
+                f"http://api:8002/api/codes/{cid}", headers=_api_headers(), timeout=5.0
+            )
+            if r.status_code >= 400:
+                _slog("codes_delete_refused", cid=cid, status=r.status_code, detail=r.text[:200])
+                raise HTTPException(status_code=r.status_code, detail="delete refused")
+        except HTTPException:
+            raise
+        except Exception as e:
+            _slog("codes_delete_failed", cid=cid, error=str(e))
+            raise HTTPException(status_code=502, detail="delete failed") from e
         return RedirectResponse(url="/manage/codes", status_code=302)
 
     @app.post("/manage/codes/{cid}/revoke", response_class=HTMLResponse)

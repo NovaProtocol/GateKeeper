@@ -51,7 +51,7 @@ All healthchecks: `python -c "import urllib.request; urllib.request.urlopen('htt
 |-------|-------------|
 | `routes` | `host, path, route_type(proxy|redirect), upstream, port, redirect_target, redirect_code` |
 | `rule_groups` | `name unique, domain, display_order, is_default` |
-| `rules` | `group_id, path, action(access_code|none|custom_password|deny), custom_password_hash/salt, allow_ip, allow_time, rate_limit, display_order` |
+| `rules` | `group_id, path, action(access_code|none|custom_password|deny), custom_password_hash/salt, allow_ip, allow_time, rate_limit, display_order, is_default` |
 | `codes` | `code unique, label, display_name, active, last_accessed` |
 | `settings` | `key PK, value, updated_at`. Known keys: `rate_limit_access_code_per_min` (1..1000), `unmatched_action` (`access_code`/`deny`/`none`) |
 | `audit_logs` | `ts, ip, host, path, action, code_id, rule_group_id, rule_id, method, status_code, attempted_code, latency_ms, request_id, user_agent, referer` |
