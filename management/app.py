@@ -912,6 +912,37 @@ def create_app() -> FastAPI:
             _slog("rule_order_failed", rid=rid, direction=direction, error=str(e))
         return RedirectResponse(url=referer, status_code=302)
 
+    @app.post("/manage/groups/{gid}/edit", response_class=HTMLResponse)
+    async def manage_groups_edit(request: Request, gid: int) -> Response:
+        _auth = await _require_manage_auth(request)
+        if _auth is not None:
+            return _auth
+        form = await request.form()
+        if not _verify_csrf(request, str(form.get("csrf_token") or "")):
+            raise HTTPException(status_code=403, detail="Invalid CSRF")
+        if not same_origin(request):
+            raise HTTPException(status_code=403, detail="Cross-site")
+        name = str(form.get("name") or "").strip()
+        domain = str(form.get("domain") or "").strip()
+        payload: dict[str, Any] = {}
+        if name:
+            payload["name"] = name
+        if domain:
+            payload["domain"] = domain
+        referer = request.headers.get("Referer") or "/manage/rules"
+        try:
+            r = await _api_proxy_put(f"/api/groups/{gid}", payload)
+            if r.status_code >= 400:
+                _slog(
+                    "group_edit_refused",
+                    gid=gid,
+                    status=r.status_code,
+                    detail=r.text[:200],
+                )
+        except Exception as e:
+            _slog("group_edit_failed", gid=gid, error=str(e))
+        return RedirectResponse(url=referer, status_code=302)
+
     @app.post("/manage/groups/{gid}/order", response_class=HTMLResponse)
     async def manage_groups_order(request: Request, gid: int) -> Response:
         _auth = await _require_manage_auth(request)

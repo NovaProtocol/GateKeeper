@@ -12,7 +12,7 @@
           <input id="rate_limit" name="rate_limit_access_code_per_min" type="number" min="1" max="1000" value="{{ rate_limit }}" style="background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:.55rem .75rem;color:var(--text-primary);font-family:'JetBrains Mono',monospace;width:140px">
           <small style="color:var(--text-secondary);font-size:.75rem">Enforced in auth-gateway on <code>?access_code=</code> — <code>POST /api/auth/check-rate-limit</code> counts <code>audit_logs</code> last 60s.</small>
         </div>
-        <button class="btn btn-accent" type="submit"><i class="fa-solid fa-floppy-disk"></i> Save</button>
+        <button class="btn btn-accent" type="submit" title="Save" aria-label="Save"><i class="fa-solid fa-floppy-disk" aria-hidden="true"></i></button>
       </form>
       <p style="margin-top:1rem;font-size:.8rem">Other settings are still via env (<span style="font-family:'JetBrains Mono',monospace;color:var(--text-primary)">SECRET_KEY</span> etc.). Use <a href="/manage/backup" style="color:var(--accent)">/manage/backup</a> for snapshots.</p>
     </div>

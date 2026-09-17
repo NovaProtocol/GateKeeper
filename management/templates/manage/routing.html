@@ -14,6 +14,7 @@
   <div class="card">
     <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.75rem"><h2><i class="fa-solid fa-route"></i> Routing</h2><div style="display:flex;gap:.5rem"><button class="btn btn-accent" data-toggle="modal" data-target="#addProxyModal"><i class="fa-solid fa-plus"></i> Add Proxy Route</button><button class="btn" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary)" data-toggle="modal" data-target="#addRedirectModal"><i class="fa-solid fa-right-left"></i> Add Redirect Route</button></div></div>
     <div class="card-body" style="padding:0">
+      <div class="table-scroll" tabindex="0" role="region" aria-label="Routes">
       <table class="codes-table" id="routesTable">
         <thead><tr><th>Host</th><th>Path</th><th>Type</th><th>Target</th><th>Status</th><th>Actions</th></tr></thead>
         <tbody>
@@ -24,10 +25,12 @@
           <td><span class="tag {% if (r.route_type or 'proxy')=='redirect' %}tag-inactive{% else %}tag-active{% endif %}" style="{% if (r.route_type or 'proxy')=='redirect' %}background:var(--accent-dim);color:var(--accent){% endif %}">{{ r.route_type or 'proxy' }}</span></td>
           <td style="font-family:'JetBrains Mono',monospace;font-size:.8rem;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{% if (r.route_type or 'proxy')=='redirect' %}{{ r.redirect_target }}{% else %}{{ r.upstream }}:{{ r.port }}{% endif %}">{% if (r.route_type or 'proxy')=='redirect' %}{{ r.redirect_target }} <span style="color:var(--text-secondary)">({{ r.redirect_code or 302 }})</span>{% else %}{{ r.upstream }}:{{ r.port }}{% endif %}</td>
           <td><span class="tag" id="status-{{ r.id }}" style="background:var(--border);color:var(--text-secondary)">checking</span></td>
-          <td class="actions-cell" style="display:flex;gap:.4rem;align-items:center;flex-wrap:wrap">
-            <button class="btn btn-sm" style="background:var(--bg-secondary);border:1px solid var(--border);color:var(--text-secondary);padding:.25rem .5rem" onclick="testOne({{ r.id }})" title="Test"><i class="fa-solid fa-plug"></i></button>
-            <button class="btn btn-sm" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary);padding:.25rem .5rem" onclick="openEdit({{ r.id }})" title="Edit"><i class="fa-solid fa-pen"></i></button>
-            <form method="post" action="/manage/routing/{{ r.id }}/delete" onsubmit="return confirm('Delete route?')" style="display:inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn btn-sm btn-outline-danger" style="padding:.25rem .5rem">Delete</button></form>
+          <td class="actions-cell">
+            <div class="actions">
+            <button class="btn btn-sm icon-btn" style="background:var(--bg-secondary);border:1px solid var(--border);color:var(--text-secondary)" onclick="testOne({{ r.id }})" title="Test route" aria-label="Test route"><i class="fa-solid fa-plug" aria-hidden="true"></i></button>
+            <button class="btn btn-sm icon-btn" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary)" onclick="openEdit({{ r.id }})" title="Edit route" aria-label="Edit route"><i class="fa-solid fa-pen" aria-hidden="true"></i></button>
+            <form method="post" action="/manage/routing/{{ r.id }}/delete" onsubmit="return confirm('Delete route?')" style="display:inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn btn-sm btn-outline-danger icon-btn" title="Delete route" aria-label="Delete route"><i class="fa-solid fa-trash" aria-hidden="true"></i></button></form>
+            </div>
           </td>
         </tr>
         {% else %}
@@ -35,6 +38,7 @@
         {% endfor %}
         </tbody>
       </table>
+      </div>
     </div>
   </div>
   <script>
@@ -145,7 +149,7 @@
       <div class="form-group"><label>Path <span style="color:var(--text-secondary);font-weight:400">(optional)</span></label><input id="proxy-path" name="path" placeholder="/" value="/" style="width:100%;background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:.6rem .875rem;color:var(--text-primary)"><small style="color:var(--text-secondary)">Leave "/" for catch-all, or "/api/*" for specific</small></div>
       <div class="form-group"><label>Upstream</label><div class="split-input" style="display:flex;align-items:center;gap:0"><input id="proxy-upstream" name="upstream" placeholder="myapp" required style="flex:1;background:var(--bg-primary);border:1px solid var(--border);border-radius:8px 0 0 8px;padding:.6rem .875rem;color:var(--text-primary)"><span class="colon" style="background:var(--bg-primary);border:1px solid var(--border);border-left:none;border-right:none;padding:.6rem .4rem;color:var(--text-secondary)">:</span><input id="proxy-port" name="port_visible" placeholder="8080" inputmode="numeric" pattern="[0-9]*" style="width:90px;background:var(--bg-primary);border:1px solid var(--border);border-radius:0 8px 8px 0;padding:.6rem .5rem;color:var(--text-primary)"></div><small style="color:var(--text-secondary)">Container on <code>gatekeeper_dynamic</code> — defaults to 8080</small></div>
     </div>
-    <div class="modal-footer" style="border-color:var(--border)"><button type="button" class="btn" data-dismiss="modal" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary)">Cancel</button><button type="submit" class="btn btn-accent">Add Proxy Route</button></div>
+    <div class="modal-footer" style="border-color:var(--border)"><button type="button" class="btn icon-btn" data-dismiss="modal" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary)" title="Cancel" aria-label="Cancel"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button><button type="submit" class="btn btn-accent icon-btn" title="Add Proxy Route" aria-label="Add Proxy Route"><i class="fa-solid fa-plus" aria-hidden="true"></i></button></div>
   </form>
 </div></div></div>
 
@@ -161,7 +165,7 @@
       <div class="form-group"><label>Redirect Target</label><input name="redirect_target" id="redirect-target" placeholder="https://portfolio.projectnova.download or /newpath" required style="width:100%;background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:.6rem .875rem;color:var(--text-primary)"><small style="color:var(--text-secondary)">Full URL or path — e.g. projectnova.download → portfolio...</small></div>
       <div class="form-group"><label>Redirect Code</label><select name="redirect_code" style="width:100%;background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:.6rem .875rem;color:var(--text-primary)"><option value="302" selected>302 Found</option><option value="301">301 Moved Permanently</option><option value="307">307 Temporary</option><option value="308">308 Permanent</option></select></div>
     </div>
-    <div class="modal-footer" style="border-color:var(--border)"><button type="button" class="btn" data-dismiss="modal" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary)">Cancel</button><button type="submit" class="btn btn-accent">Add Redirect Route</button></div>
+    <div class="modal-footer" style="border-color:var(--border)"><button type="button" class="btn icon-btn" data-dismiss="modal" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary)" title="Cancel" aria-label="Cancel"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button><button type="submit" class="btn btn-accent icon-btn" title="Add Redirect Route" aria-label="Add Redirect Route"><i class="fa-solid fa-right-left" aria-hidden="true"></i></button></div>
   </form>
 </div></div></div>
 
@@ -187,7 +191,7 @@
         <div class="form-group"><label>Code</label><select name="redirect_code" id="edit-redirect-code" style="width:100%;background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:.6rem .875rem;color:var(--text-primary)"><option value="302">302</option><option value="301">301</option><option value="307">307</option><option value="308">308</option></select></div>
       </div>
     </div>
-    <div class="modal-footer" style="border-color:var(--border)"><button type="button" class="btn" data-dismiss="modal" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary)">Cancel</button><button type="submit" class="btn btn-accent">Save</button></div>
+    <div class="modal-footer" style="border-color:var(--border)"><button type="button" class="btn icon-btn" data-dismiss="modal" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary)" title="Cancel" aria-label="Cancel"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button><button type="submit" class="btn btn-accent icon-btn" title="Save" aria-label="Save"><i class="fa-solid fa-floppy-disk" aria-hidden="true"></i></button></div>
   </form>
 </div></div></div>
 <script>

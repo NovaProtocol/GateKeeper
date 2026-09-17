@@ -21,8 +21,9 @@
         <input name="endpoint" value="{{ filters.endpoint or '' }}" placeholder="endpoint wildcard e.g. *.example.com/*" style="flex:1;min-width:220px;background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:.5rem .75rem;color:var(--text-primary);font-family:'JetBrains Mono',monospace;font-size:.85rem">
         <input name="from" value="{{ filters.from or '' }}" placeholder="from YYYY-MM-DD" style="background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:.5rem .75rem;color:var(--text-primary);font-size:.85rem">
         <input name="to" value="{{ filters.to or '' }}" placeholder="to YYYY-MM-DD" style="background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:.5rem .75rem;color:var(--text-primary);font-size:.85rem">
-        <button class="btn btn-accent" type="submit">Filter</button>
+        <button class="btn btn-accent icon-btn" type="submit" title="Filter" aria-label="Filter"><i class="fa-solid fa-filter" aria-hidden="true"></i></button>
       </form>
+      <div class="table-scroll" tabindex="0" role="region" aria-label="Traffic logs">
       <table class="codes-table" style="table-layout:auto;width:100%">
         <thead><tr><th>Time</th><th>IP</th><th>Host</th><th>Path</th><th>Access Code</th><th>Action</th><th>Req ID</th></tr></thead>
         <tbody id="logs-body">
@@ -67,6 +68,7 @@
         {% endfor %}
         </tbody>
       </table>
+      </div>
       <div id="logs-sentinel"></div>
       <div id="logs-status" style="text-align:center;color:var(--text-secondary);font-size:.8rem;margin-top:.75rem"></div>
     </div>
