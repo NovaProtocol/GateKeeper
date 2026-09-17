@@ -23,9 +23,10 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from shared.client_ip import get_client_ip
 from shared.config import get_config
+from shared.gate import DEFAULT_UNMATCHED_ACTION, find_group_rule, resolve_rule_action
 from shared.models import Code, Route, Rule, RuleGroup
 from shared.security import apex_domain as shared_apex_domain
-from shared.security import host_matches, mask_code, path_matches, verify_custom_password
+from shared.security import host_matches, mask_code, verify_custom_password
 
 try:
     import structlog
@@ -307,17 +308,53 @@ async def _load_caches() -> tuple[list[Route], list[RuleGroup]]:
         return routes, groups
 
 
-def _find_group_rule(host: str, path: str, groups: list[RuleGroup]) -> tuple[RuleGroup | None, Rule | None]:
-    groups_sorted = sorted(groups, key=lambda g: g.display_order)
-    for g in groups_sorted:
-        if not host_matches(g.domain, host):
-            continue
-        rules_sorted = sorted(g.rules, key=lambda r: r.display_order)
-        for r in rules_sorted:
-            if path_matches(r.path, path):
-                return g, r
-        break
-    return None, None
+def _find_group_rule(
+    host: str, path: str, groups: list[RuleGroup]
+) -> tuple[RuleGroup | None, Rule | None]:
+    """Host/rule resolution, delegated to :func:`shared.gate.find_group_rule`."""
+    return find_group_rule(host, path, groups)
+
+
+_SETTING_TTL = 60.0
+_SettingCache: dict[str, tuple[float, str]] = {}
+
+
+async def _get_setting(key: str, default: str) -> str:
+    """Read one setting from the API, cached briefly, falling back to ``default``.
+
+    Every default on this path is the gating reading, so an unreachable API can
+    only ever make the gateway stricter. The fallback is cached too: a settings
+    outage must not put a 2s round trip in front of every request.
+    """
+    now = time.monotonic()
+    hit = _SettingCache.get(key)
+    if hit and (now - hit[0]) < _SETTING_TTL:
+        return hit[1]
+    try:
+        base = _api_base()
+        client = _get_httpx()
+        resp = await client.get(f"{base}/api/settings/{key}", headers=_api_headers(), timeout=2.0)
+        if resp.status_code == 200:
+            val = str(resp.json().get("value") or "").strip()
+            if val:
+                _SettingCache[key] = (now, val)
+                return val
+    except Exception:
+        pass
+    _SettingCache[key] = (now, default)
+    return default
+
+
+async def _resolve_action(grp: RuleGroup | None, rule: Rule | None) -> str:
+    """The action governing this request, shared by both gate paths.
+
+    The setting is only consulted when nothing matched at all, so the common
+    case costs no extra call.
+    """
+    if rule is not None or grp is not None:
+        return resolve_rule_action(grp, rule, DEFAULT_UNMATCHED_ACTION)
+    unmatched = await _get_setting("unmatched_action", DEFAULT_UNMATCHED_ACTION)
+    return resolve_rule_action(None, None, unmatched)
 
 
 def _find_route(host: str, path: str, routes: list[Route]) -> Route | None:
@@ -673,7 +710,10 @@ def create_app() -> FastAPI:
         apex = _apex_from_host(host) if host else _apex_from_host(request.headers.get("Host", ""))
         routes, groups = await _load_caches()
         grp, rule = _find_group_rule(host, path, groups)
-        matched_action = rule.action if rule else None
+        action = await _resolve_action(grp, rule)
+        # The audit row carries the action that actually governed the request, so
+        # a fallback is distinguishable from a policy that allowed the request.
+        matched_action = action if rule is None else rule.action
         ip = _get_ip(request)
         req_id = getattr(request.state, "request_id", uuid.uuid4().hex)
 
@@ -697,6 +737,28 @@ def create_app() -> FastAPI:
                 status_code=status_code,
                 attempted_code=attempted_code,
             )
+
+        if rule is None:
+            # Nothing matched. `grp is not None` means the group's catch-all is
+            # missing, which resolve_rule_action always answers with a refusal;
+            # `grp is None` follows the unmatched_action setting.
+            if action == "deny":
+                await _log("deny", status_code=403)
+                return _error_response(
+                    request,
+                    403,
+                    "Access denied",
+                    "This page is denied by gateway rules. If you believe this is an error, contact the admin or return to the gateway.",
+                    "denied: unmatched request",
+                    host,
+                    path,
+                    req_id,
+                    apex,
+                )
+            if action == "none":
+                await _log("none_gate", status_code=200)
+                return Response(status_code=200)
+            # access_code: fall through to the cookie / ?access_code= checks below.
 
         if rule and rule.action == "deny":
             await _log("deny")
@@ -786,7 +848,8 @@ def create_app() -> FastAPI:
         apex = _apex_from_host(host) if host else _apex_from_host(request.headers.get("Host", ""))
         routes, groups = await _load_caches()
         grp, rule = _find_group_rule(host, raw_path, groups)
-        matched_action = rule.action if rule else None
+        action = await _resolve_action(grp, rule)
+        matched_action = action if rule is None else rule.action
         ip = _get_ip(request)
         req_id = getattr(request.state, "request_id", uuid.uuid4().hex)
         code_id: int | None = None
@@ -814,22 +877,22 @@ def create_app() -> FastAPI:
                 attempted_code=attempted_code,
             )
 
-        if rule and rule.action == "deny":
-            await _log("deny")
+        if action == "deny":
+            await _log("deny", status_code=403)
             return _error_response(
                 request,
                 403,
                 "Access denied",
                 "This page is denied by gateway rules. If you believe this is an error, contact the admin or return to the gateway.",
-                "denied",
+                "denied by rule" if rule else "denied: unmatched request",
                 host,
                 raw_path,
                 req_id,
                 apex,
             )
-        if rule and rule.action == "none":
+        if action == "none":
             pass
-        elif rule and rule.action == "custom_password":
+        elif action == "custom_password" and rule is not None:
             ok = False
             need_custom_cookie = False
             if _has_valid_custom_cookie(request, rule):
@@ -852,7 +915,9 @@ def create_app() -> FastAPI:
                 if not _safe_redirect_target(f"https://gatekeeper.{apex}/", apex):
                     return RedirectResponse(url=f"https://gatekeeper.{apex}/login?redirect={target}", status_code=302)
                 return RedirectResponse(url=f"https://gatekeeper.{apex}/login?redirect={target}", status_code=302)
-        elif rule is None or (rule and rule.action == "access_code"):
+        else:
+            # access_code. Reached by a matching rule, and by the fallback when
+            # nothing matched but the action is not deny/none.
             authed = False
             code_id: int | None = None
             token = request.cookies.get("gatekeeper_token")
@@ -880,16 +945,12 @@ def create_app() -> FastAPI:
                         return resp
                     await _log("access_code_fail", status_code=401, attempted_code=ac)
             if not authed:
-                if rule is None:
-                    pass
-                else:
-                    await _log("no_cookie_redirect", status_code=302)
-                    target = quote(f"https://{host}{full_uri}", safe="")
-                    return RedirectResponse(url=f"https://gatekeeper.{apex}/login?redirect={target}", status_code=302)
-            if authed:
-                await _log("auth_success", code_id=code_id, status_code=200)
-            else:
-                await _log("none_gate", status_code=200)
+                # Never proxy unauthenticated: nothing reached a rule that
+                # allows the request, so send the visitor to the login page.
+                await _log("no_cookie_redirect", status_code=302)
+                target = quote(f"https://{host}{full_uri}", safe="")
+                return RedirectResponse(url=f"https://gatekeeper.{apex}/login?redirect={target}", status_code=302)
+            await _log("auth_success", code_id=code_id, status_code=200)
 
         route = _find_route(host, raw_path, routes)
         if not route and host in ("gatekeeper.projectnova.download", "projectnova.download", "gatekeeper", "localhost"):

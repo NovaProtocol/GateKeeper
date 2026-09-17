@@ -5,11 +5,29 @@ rule_groups(name unique, domain, display_order, is_default)
 rules(group_id, path, action, custom_password_hash, custom_password_salt, display_order)
 ```
 
+Resolution and the unmatched-request decision live in `shared/gate.py`; both the `forward_auth` check and the wildcard proxy call it, so they cannot drift apart.
+
 - `display_order` decides priority — lower first. `*.*/*` default group is pinned bottom.
 - `domain` supports `*` prefix (`*.projectnova.download`).
 - `path` uses `/*` prefix match — and it is **exact** otherwise. `/documentation` matches only that one path; `/documentation/*` is what covers `/documentation/rules/`.
 - `action`: `access_code` (check cookie/magic link), `none` (allow), `custom_password` (per-rule password), `deny` (403).
 - `allow_ip`, `allow_time`, `rate_limit` are **reserved** — stored, not enforced on hot path.
+
+## When nothing matches
+
+Two different situations used to look identical to the gate, and one of them leaked. `shared/gate.py` now separates them, and both gate paths (`forward_auth` and the wildcard proxy) go through it:
+
+| Situation | Result |
+|-----------|--------|
+| A rule matched the path | That rule's `action` |
+| A group matched the host, no rule matched the path | **Always** redirect to login |
+| No group matched the host at all | `settings` `unmatched_action` |
+
+A group is meant to end in a `/*` catch-all, so "group matched, no rule matched" means that catch-all is missing or has been reordered below a narrower rule. The gate refuses unconditionally in that state and the `unmatched_action` setting cannot change it. A setting that could would turn a data mistake into a silent bypass, which is exactly how the previous behaviour (`if rule is None: pass` in the proxy path, while `forward_auth` redirected) leaked: the two paths disagreed about the same request, and the only reason it never showed was that every group happened to carry a catch-all.
+
+`unmatched_action` applies only when the host is in no group. Values: `access_code` (default) redirects to login, `deny` returns `403`, `none` proxies without auth. Set it with `PUT /api/settings/unmatched_action`; anything else is refused with `400 must be one of access_code, deny, none`. It defaults to `access_code` when the row or the setting API is unavailable, so a missing value gates rather than opens.
+
+Worth knowing before reaching for it: the seeded default group is `*.*/*`, which matches **every** host, so normally no request can reach the "no group matched" branch. It becomes reachable when the default group is missing or its `domain` has been changed away from `*.*/*`. The setting is therefore a backstop for a broken default group, not a per-host policy dial; the middle row of the table above is the state a normal misconfiguration actually produces, and that one is always refused.
 
 ## Reordering
 

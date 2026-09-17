@@ -55,3 +55,5 @@ The action cell of every row is a real table cell — `<td class="actions-cell">
 ## Settings — real DB-backed
 
 `GET /manage/settings` loads `GET /api/settings` and shows `rate_limit_access_code_per_min` (default 5). `POST /manage/settings` validates `1..1000` with `csrf_token` + `same_origin` and `PUT /api/settings/{key}`. Enforced per-IP in `auth-gateway` on `?access_code=` via `POST /api/auth/check-rate-limit {ip}` → `429` when `count >= limit`.
+
+The same `PUT` also accepts `unmatched_action`, the action for a request whose host is in no rule group. It is validated per key against `access_code` (default) / `deny` / `none`; any other value is refused with `400 must be one of access_code, deny, none`. The setting page still shows only the rate limit, so changing it today means calling the API directly. See Rules → When nothing matches for what each value does.

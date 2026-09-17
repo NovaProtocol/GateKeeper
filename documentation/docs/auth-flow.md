@@ -9,7 +9,8 @@ Request → Caddy GateKeeper gate → Auth Gateway /api/authz/forward-auth
  ├─ Rule = custom_password (cookie/header/qs)→ 200 or 302 to login
  ├─ Valid gatekeeper_token cookie → 200
  ├─ Valid ?access_code= (stripped) → 302 + Set-Cookie (rate-limited tries/min)
- └─ None → 302 → https://gatekeeper.<apex>/login?redirect=<original>
+ ├─ No rule matched, host in a group → 302 → login (always; see Rule Dispatch)
+ └─ No group matched the host → per `unmatched_action` (default 302 → login)
 ```
 
 ## Rule Dispatch
@@ -18,6 +19,20 @@ Request → Caddy GateKeeper gate → Auth Gateway /api/authz/forward-auth
 2. `host_matches(group.domain, host)` — supports `*.` prefix and exact.
 3. Within group, `Rules` ordered by `display_order`; first `path_matches(rule.path, uri.path)` wins (`/*` prefix).
 4. No match → default group's first rule.
+
+`shared/gate.py` holds the resolution (`find_group_rule`) and the decision (`resolve_rule_action`); both gate paths call it, so `forward_auth` and the wildcard proxy can no longer reach different verdicts about the same request. It distinguishes two states that used to look alike:
+
+| State | Action |
+|-------|--------|
+| Rule matched | The rule's `action` |
+| Group matched the host, no rule matched the path | **Always** redirect to login. Never governed by a setting. Every group is meant to end in a `/*` catch-all, so this state means that invariant is broken, and a setting must not be able to turn a config fault into an open proxy. |
+| No group matched the host | `settings` `unmatched_action`, one of `access_code` (default) / `deny` / `none` |
+
+The seeded default group's domain is `*.*/*`, which `host_matches` treats as "any host", so in a healthy database no request reaches the third row. Reaching it means the default group is missing or its `domain` no longer matches everything, which is why the setting exists as a backstop rather than as everyday policy.
+
+`unmatched_action` reuses the rule vocabulary. `access_code` redirects to login (matching what `forward_auth` already did), `deny` returns the themed `403`, and `none` proxies without auth, which was the pre-existing behaviour, now explicit, named, and greppable rather than an `if rule is None: pass` branch nobody could see. On a fallback the audit row carries `matched_action` = the setting value with `rule_id`/`rule_group_id` null, so a fallback is distinguishable from a policy that allowed the request.
+
+`auth-gateway` reads the setting through a 60s-cached `GET /api/settings/unmatched_action` (`X-Internal-Api-Key` on `net-api`); any error falls back to `access_code`, and that fallback is cached too, so a settings outage makes the gateway stricter rather than slower.
 
 `CACHE_TTL=5s` in-memory under `asyncio.Lock` — auth-gateway loads `Route`+`RuleGroup` via `GET http://api:8002/api/routes|groups|rules` (`X-Internal-Api-Key` on `net-api` `internal:true`), `api:8002` is sole `shared/db.py` owner (`net-data`). All auth paths audit via `BackgroundTasks → POST http://api:8002/api/logs` (`X-Internal-Api-Key`, `internal:true`); on failure keep stale cache / drop audit — no direct DB fallback in `auth-gateway`.
 
