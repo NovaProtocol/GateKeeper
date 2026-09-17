@@ -63,7 +63,8 @@ Visit `https://gatekeeper.projectnova.download/` (login) or `/manage/login` for 
 | `GET /api/authz/forward-auth` | — | Caddy forward_auth (200/302/403) |
 | `GET /manage/login`, `POST /manage/login` | — | Management login (sets `manage_session`) |
 | `GET /manage/logout` | manage | Clear session |
-| `GET /manage`, `/routing`, `/rules`, `/codes`, `/logs`, `/top-pages`, `/warnings` | manage | Admin pages |
+| `GET /manage`, `/routing`, `/rules`, `/codes`, `/logs`, `/audit`, `/top-pages`, `/settings` | manage | Admin pages |
+| `GET /manage/monitoring` | manage | `302` alias to `/manage/audit`, kept so old bookmarks land |
 | `GET /manage/backup`, `/manage/backup/download`, `POST /manage/backup/restore` | manage | Configuration export and restore (`confirm=REPLACE`, `stage=preview\|apply`) |
 | `POST /manage/groups/{gid}/order`, `POST /manage/rules/{rid}/order` | manage | Reorder rule groups and rules up/down (refused on the pinned default group and catch-all) |
 | `POST /manage/codes/{cid}/active`, `POST /manage/codes/{cid}/delete` | manage | Activate/deactivate a code, or delete it permanently against a typed `confirm_code` |

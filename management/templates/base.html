@@ -9,7 +9,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="{{ request.url_for('static', path='css/manage.css') }}?v=2">
+<link rel="stylesheet" href="{{ request.url_for('static', path='css/manage.css') }}?v=3">
 <style>
 .layout{display:flex;min-height:100vh}
 .sidebar{width:260px;background:var(--bg-secondary);border-right:1px solid var(--border);padding:1.5rem 0;flex-shrink:0;position:sticky;top:0;height:100vh;overflow-y:auto}
@@ -48,15 +48,14 @@
     <div class="sidebar-cat">Access</div>
     <a href="/manage/rules"><i class="fa-solid fa-list"></i> Rules</a>
     <a href="/manage/codes"><i class="fa-solid fa-key"></i> Codes</a>
-    <div class="sidebar-cat">Monitoring</div>
-    <a href="/manage/logs"><i class="fa-solid fa-chart-line"></i> Traffic Logs</a>
-    <a href="/manage/monitoring"><i class="fa-solid fa-satellite-dish"></i> Monitoring</a>
-    <a href="/manage/top-pages"><i class="fa-solid fa-chart-simple"></i> Top Pages</a>
-    <a href="/manage/warnings"><i class="fa-solid fa-triangle-exclamation"></i> Warnings</a>
     <div class="sidebar-cat">System</div>
     <a href="/manage/routing"><i class="fa-solid fa-route"></i> Routing</a>
     <a href="/manage/settings"><i class="fa-solid fa-gear"></i> Settings</a>
     <a href="/manage/backup"><i class="fa-solid fa-floppy-disk"></i> Backup</a>
+    <div class="sidebar-cat">Audit</div>
+    <a href="/manage/audit"><i class="fa-solid fa-satellite-dish"></i> Audit</a>
+    <a href="/manage/logs"><i class="fa-solid fa-chart-line"></i> Traffic Logs</a>
+    <a href="/manage/top-pages"><i class="fa-solid fa-chart-simple"></i> Top Pages</a>
     {% endblock %}
   </nav>
   {% endblock %}

@@ -47,12 +47,12 @@ Request → Caddy → Auth Gateway /api/authz/forward-auth
 | [Architecture](architecture.md) | 7-service layout, DB, networks |
 | [Auth Flow](auth-flow.md) | GateKeeper gate, magic links, rule dispatch |
 | [Cookie Contract](cookie-contract.md) | gatekeeper_token + siblings |
-| [Management UI](manage-panel.md) | /manage/login, dashboard, CSRF |
+| [Management UI](manage-panel.md) | /manage/login, dashboard, stat strip, CSRF |
 | [Caddy Integration](caddy-integration.md) | Wildcard + per-app gating |
 | [Docker](docker.md) | Images, compose, healthchecks |
 | [Routes](routes.md) | DB-driven host→upstream |
 | [Rules](rules.md) | Groups, actions, shadowing |
-| [Logs & Warnings](logs.md) | Audit, top pages, monitoring, settings, dry-run |
+| [Logs & Warnings](logs.md) | Audit, per-visitor view, top pages, settings, dry-run |
 
 ## House Reference
 

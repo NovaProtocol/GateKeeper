@@ -1,30 +1,81 @@
 {% extends "base.html" %}
 {% block title %}GateKeeper · Manage{% endblock %}
 {% block content %}
-<div class="container" style="padding:2rem;max-width:1100px">
-  <div class="stats-row" style="display:grid;grid-template-columns:repeat(3,1fr);gap:1rem;margin-bottom:1.5rem">
-    <div class="stat-card"><div class="stat-number">{{ stats.routes }}</div><div class="stat-label">Routes</div></div>
-    <div class="stat-card"><div class="stat-number">{{ stats.groups }}</div><div class="stat-label">Rule Groups</div></div>
-    <div class="stat-card"><div class="stat-number">{{ stats.codes }}</div><div class="stat-label">Codes</div></div>
+<div class="container">
+  <div class="stat-strip">
+    <div class="stat"><span class="stat-label">Routes</span> <span class="stat-value">{{ stats.routes }}</span></div>
+    <div class="stat"><span class="stat-label">Rule groups</span> <span class="stat-value">{{ stats.groups }}</span></div>
+    <div class="stat"><span class="stat-label">Codes active / total</span> <span class="stat-value">{{ stats.codes_active }} / {{ stats.codes_total }}</span></div>
+    <div class="stat"><span class="stat-label">Catch-alls</span> <span class="stat-value">{{ stats.catch_alls }}</span></div>
   </div>
-  <div class="card">
-    <div class="card-header"><h2>Dashboard</h2><span class="header-badge" style="font-family:'JetBrains Mono',monospace">~/manage</span></div>
-    <div class="card-body">
-      <p style="color:var(--text-secondary);font-size:.9rem">Manage categories: Access, Monitoring, System. Use the sidebar to navigate.</p>
-      <div style="display:flex;gap:.75rem;flex-wrap:wrap;margin-top:1rem">
-        <a href="/manage/routing" class="btn btn-accent"><i class="fa-solid fa-route"></i> Routing</a>
-        <a href="/manage/rules" class="btn" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary)">Rules</a>
-        <a href="/manage/logs" class="btn" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary)">Logs</a>
+
+  {% if warnings and (warnings.groups or warnings.rules) %}
+  <div class="warn-banner" role="status">
+    <i class="fa-solid fa-triangle-exclamation warn-icon" aria-hidden="true"></i>
+    <div class="warn-body">
+      <div class="warn-title">{{ warnings.rules|length }} shadowed rule{{ '' if warnings.rules|length == 1 else 's' }}, {{ warnings.groups|length }} shadowed group{{ '' if warnings.groups|length == 1 else 's' }}</div>
+      <div class="warn-detail">An earlier rule matches these first, so they never run.</div>
+    </div>
+    <a href="/manage/rules" class="btn btn-sm btn-outline-danger" title="Open rule groups" aria-label="Open rule groups"><i class="fa-solid fa-list" aria-hidden="true"></i> Rules</a>
+  </div>
+  {% endif %}
+
+  <div class="dash-grid">
+    <div class="card">
+      <div class="card-header">
+        <h2><i class="fa-solid fa-chart-line" aria-hidden="true"></i> Recent traffic</h2>
+        <span class="header-badge">{{ recent|length }} rows</span>
+      </div>
+      {% if recent %}
+      <ul class="dash-list">
+        {% for row in recent %}
+        <li>
+          <span class="dash-when">{{ row.ts }}</span>
+          <span class="dash-what">{{ row.host }}{{ row.path }}</span>
+          <span class="tag {{ 'tag-active' if row.action == 'auth_success' else 'tag-inactive' }}">{{ row.action }}</span>
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="dash-empty">No traffic recorded yet.</p>
+      {% endif %}
+    </div>
+
+    <div class="dash-col">
+      <div class="card">
+        <div class="card-header">
+          <h2><i class="fa-solid fa-chart-simple" aria-hidden="true"></i> Top pages</h2>
+          <a href="/manage/top-pages" class="btn btn-sm" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary)" title="All pages" aria-label="All pages"><i class="fa-solid fa-arrow-right" aria-hidden="true"></i></a>
+        </div>
+        {% if top %}
+        <ul class="dash-list">
+          {% for page in top %}
+          <li>
+            <span class="dash-what">{{ page.host }}{{ page.path }}</span>
+            <span class="bar-row" style="flex:0 0 38%">
+              <span class="bar-track"><span class="bar-fill" style="width:{{ page.percent }}%"></span></span>
+            </span>
+            <span class="dash-when">{{ page.calls }}</span>
+          </li>
+          {% endfor %}
+        </ul>
+        {% else %}
+        <p class="dash-empty">No traffic recorded yet.</p>
+        {% endif %}
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h2><i class="fa-solid fa-key" aria-hidden="true"></i> Codes</h2>
+          <a href="/manage/codes" class="btn btn-sm" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary)" title="Manage codes" aria-label="Manage codes"><i class="fa-solid fa-arrow-right" aria-hidden="true"></i></a>
+        </div>
+        <ul class="dash-list">
+          <li><span class="stat-label" style="flex:1">Active</span> <span class="dash-when">{{ stats.codes_active }}</span></li>
+          <li><span class="stat-label" style="flex:1">Inactive</span> <span class="dash-when">{{ stats.codes_inactive }}</span></li>
+          <li><span class="stat-label" style="flex:1">Last used</span> <span class="dash-when">{{ last_used or 'never' }}</span></li>
+        </ul>
       </div>
     </div>
   </div>
-  {% if warnings and warnings.groups is defined %}
-  {% if warnings.groups or warnings.rules %}
-  <div class="card" style="border-color:var(--danger)">
-    <div class="card-header"><h2 style="color:var(--danger)"><i class="fa-solid fa-triangle-exclamation"></i> Shadowed</h2></div>
-    <div class="card-body" style="font-family:'JetBrains Mono',monospace;font-size:.8rem;color:var(--text-secondary)">{{ warnings.groups|length }} groups · {{ warnings.rules|length }} rules shadowed</div>
-  </div>
-  {% endif %}
-  {% endif %}
 </div>
 {% endblock %}

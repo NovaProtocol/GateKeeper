@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Rule Groups · GateKeeper{% endblock %}
 {% block content %}
-<div class="container" style="padding:2rem;max-width:1100px">
+<div class="container">
   <div class="card">
     <div class="card-header" style="display:flex;justify-content:space-between;align-items:center"><h2>Rule Groups</h2><div style="display:flex;gap:.5rem;align-items:center"><span class="header-badge">{{ groups|length }} groups</span><button class="btn btn-accent icon-btn" data-toggle="modal" data-target="#addGroupModal" title="Add Group" aria-label="Add Group"><i class="fa-solid fa-plus" aria-hidden="true"></i></button></div></div>
     <div class="card-body" style="padding:0">

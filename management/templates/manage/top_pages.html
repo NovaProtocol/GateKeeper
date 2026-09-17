@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Top Pages · GateKeeper{% endblock %}
 {% block content %}
-<div class="container" style="padding:2rem;max-width:1100px">
+<div class="container">
   <div class="card">
     <div class="card-header"><h2><i class="fa-solid fa-chart-simple"></i> Top Pages</h2></div>
     <div class="card-body" style="padding:0">
@@ -13,8 +13,8 @@
         <tr>
           <td style="font-family:'JetBrains Mono',monospace;font-size:.8rem">{{ p.host }}{{ p.path }}</td>
           <td>
-            <div style="display:flex;align-items:center;gap:.6rem">
-              <div style="flex:1;height:8px;background:var(--bg-primary);border-radius:4px;overflow:hidden;border:1px solid var(--border)"><div style="height:100%;background:var(--accent);width:{{ p.percent }}%"></div></div>
+            <div class="bar-row">
+              <span class="bar-track"><span class="bar-fill" style="width:{{ p.percent }}%"></span></span>
               <span style="font-family:'JetBrains Mono',monospace;font-size:.75rem;color:var(--accent);min-width:36px">{{ p.percent }}%</span>
             </div>
           </td>
