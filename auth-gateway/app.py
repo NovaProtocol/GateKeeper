@@ -21,6 +21,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from shared.client_ip import get_client_ip
 from shared.config import get_config
 from shared.models import Code, Route, Rule, RuleGroup
 from shared.security import apex_domain as shared_apex_domain
@@ -45,15 +46,11 @@ except Exception:
 
 try:
     from slowapi import Limiter
-    from slowapi.util import get_remote_address
     from slowapi.errors import RateLimitExceeded
     from slowapi.middleware import SlowAPIMiddleware
 
     def _key_func(request: Request) -> str:
-        xff = request.headers.get("X-Forwarded-For", "")
-        if xff:
-            return xff.split(",")[0].strip()
-        return get_remote_address(request)
+        return get_client_ip(request)
 
     limiter = Limiter(key_func=_key_func, default_limits=[])
 
@@ -188,11 +185,8 @@ def same_origin(request: Request, apex: str | None = None) -> bool:
 
 
 def _get_ip(request: Request) -> str:
-    xff = request.headers.get("X-Forwarded-For", "")
-    if xff:
-        return xff.split(",")[0].strip()
-    cip = request.client.host if request.client else ""
-    return cip or "0.0.0.0"
+    """Visitor address, not the tunnel's — see :mod:`shared.client_ip`."""
+    return get_client_ip(request)
 
 
 def _get_forwarded_host(request: Request) -> str:

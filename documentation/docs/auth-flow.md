@@ -34,10 +34,23 @@ Request → Caddy GateKeeper gate → Auth Gateway /api/authz/forward-auth
 Per-rule `custom_password_hash/salt` (`pbkdf2_hmac sha512 100k`). Checked as:
 `gatekeeper_custom_{rule.id}` cookie (per-rule salt) → `X-Custom-Password` header → `?custom_password=` query. Sets per-rule cookie on success.
 
+## Visitor IP
+
+`audit_logs.ip`, the per-IP rate limiter, and the `X-Forwarded-For` header forwarded upstream all use `shared/client_ip.py:get_client_ip()`, which resolves in this order:
+
+1. `CF-Connecting-IP` — set by Cloudflare at the edge, forwarded by cloudflared. The authoritative source.
+2. `True-Client-IP`, then `X-Real-IP` — equivalent edge headers.
+3. `X-Forwarded-For[0]` — kept as a fallback for non-Cloudflare callers.
+4. The peer address.
+
+`X-Forwarded-For` alone is **not** usable on this stack: cloudflared does not set it on the origin dial, so Caddy's `reverse_proxy` fills it with the immediate peer — the cloudflared container's own bridge address (`172.18.x.x`). Every visitor then collapsed into a single identity, and the per-IP rate limiter throttled all visitors as one. Result is truncated to 64 chars to match the `audit_logs.ip` column.
+
+Trust model: only the tunnel may reach the origin (`gatekeeper_caddy` is the sole `cloudflared-tunnel` member and its port is loopback-bound to `127.0.0.1:7000`), so an inbound request cannot arrive from anywhere but Cloudflare. These headers are plain strings — if the origin ever becomes directly reachable they are forgeable.
+
 ## Rate Limit (access_code tries/min)
 
 `settings` `rate_limit_access_code_per_min` (default 5) enforced per-IP in `auth-gateway` via `POST /api/auth/check-rate-limit {ip}` on `api:8002` (`internal:true` `X-Internal-Api-Key`) — counts `audit_logs` last 60s. On deny → `429`.
 
 ## Login
 
-`GET /` or `GET /login` → if valid cookie, redirect to `?redirect=` target (validated by `_safe_redirect_target` against apex). `POST /` / `POST /login` validates form `code`, sets `gatekeeper_token`, rate-limited `5/min` by `X-Forwarded-For[0]`.
+`GET /` or `GET /login` → if valid cookie, redirect to `?redirect=` target (validated by `_safe_redirect_target` against apex). `POST /` / `POST /login` validates form `code`, sets `gatekeeper_token`, rate-limited `5/min` per visitor IP (`shared/client_ip.py` — see Visitor IP above).
