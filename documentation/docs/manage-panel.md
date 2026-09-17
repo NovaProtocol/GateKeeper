@@ -36,7 +36,8 @@ Every entry resolves to a page below. There is no second navigation: the dashboa
 | `GET /manage/audit` | Per-visitor view — IPs, their recent pages and the code they used |
 | `GET /manage/monitoring` | `302` to `/manage/audit`, so an old bookmark still lands |
 | `GET /manage/top-pages` | Top paths by hits |
-| `GET /manage/settings` | Settings |
+| `GET/POST /manage/settings` | Six editable settings in sections, plus a read-only environment panel |
+| `POST /manage/logs/prune` | Delete audit rows past the retention window (`confirm=PRUNE`) |
 | `GET /manage/backup` | Backup — signed plain-JSON export, and a two-step restore |
 | `GET /manage/backup/download` | Streams the configuration export as a download |
 | `POST /manage/backup/restore` | Preview or apply a restore (`file` + `confirm=REPLACE` + `stage`) |
@@ -65,6 +66,8 @@ The action cell of every row is a real table cell — `<td class="actions-cell">
 
 `base.html` loads `manage.css` with `?v=3`; bump that when the stylesheet changes so a cached copy cannot make a correct deploy look broken.
 
+Two blocks left the shared sheet in the same pass, because neither described a panel component. `.create-form` was 25 lines of rules referenced by no template: it is deleted. The four `.status-*` classes (`.status-card`, `.status-card-header`, `.status-label`, `.status-dot`) were used only by `landing.html`, the authenticated landing page rather than a `/manage/*` page: they moved into a page-local `<style>` block in that template, which is the same treatment `routing.html` and `logs.html` already give their page-specific rules.
+
 Controls that the server would refuse are rendered `disabled` with a `title` that says why (`aria-disabled="true"` alongside), rather than hidden. The default group's delete button and the group catch-all's delete button are the two cases: a control that is simply absent tells an operator nothing, while a greyed-out one that explains itself answers the question they were about to ask.
 
 ## Codes
@@ -88,8 +91,37 @@ The **Permanent delete** toggle turns each row's deactivate button into a delete
 
 Warnings are no longer a page. `GET /api/warnings` reports a shadowed group or rule only when one exists, and on a healthy gateway it answers `{groups: [], rules: []}`, so `/manage/warnings` rendered two empty tables under a red header and nothing else. The page is deleted, the endpoint is not: the dashboard reads it and renders a `.warn-banner` **only when the response is non-empty**, linking to `/manage/rules` where the order can be fixed. Nothing about shadowing detection changed, only where it is shown.
 
-## Settings — real DB-backed
+## Settings
 
-`GET /manage/settings` loads `GET /api/settings` and shows `rate_limit_access_code_per_min` (default 5). `POST /manage/settings` validates `1..1000` with `csrf_token` + `same_origin` and `PUT /api/settings/{key}`. Enforced per-IP in `auth-gateway` on `?access_code=` via `POST /api/auth/check-rate-limit {ip}` → `429` when `count >= limit`.
+The page is no longer one field. It is six settings in four sections, each control carrying a one-line note naming the file and function that enforces it, plus a read-only environment panel.
 
-The same `PUT` also accepts `unmatched_action`, the action for a request whose host is in no rule group. It is validated per key against `access_code` (default) / `deny` / `none`; any other value is refused with `400 must be one of access_code, deny, none`. The setting page still shows only the rate limit, so changing it today means calling the API directly. See Rules → When nothing matches for what each value does.
+| Section | Key | Default | Accepted | Enforced by |
+|---------|-----|---------|----------|-------------|
+| Gateway | `unmatched_action` | `access_code` | `access_code` / `deny` / `none` | `shared/gate.py:resolve_rule_action`, both gate paths |
+| Gateway | `rate_limit_access_code_per_min` | `5` | `1..1000` | `api/app.py:check_rate_limit`, last 60s of `audit_logs` per IP |
+| Sessions | `session_lifetime_hours` | `12` | `1..720` | `auth-gateway/app.py:_set_auth_cookie` and `_set_custom_cookie` |
+| Maintenance | `maintenance_mode` | `false` | `true` / `false` | `auth-gateway/app.py:_maintenance_response`, before rule dispatch |
+| Maintenance | `maintenance_message` | empty | at most 200 characters, escaped | `shared/error_pages.py:render_maintenance_html` |
+| Audit | `log_retention_days` | `LOG_RETENTION_DAYS` (`30`) | `7..3650` | `api/app.py:prune_audit_logs`, at boot and on demand |
+
+Every key is described exactly once, in `shared/settings_spec.py`, and three callers read that table rather than re-implementing a rule from it: the API validates a `PUT /api/settings/{key}` against it, so an invalid value is refused at the only write path; `auth-gateway` normalises every stored value through `read_value()` before acting on it, so a row edited by hand or restored from an older file cannot change behaviour to something the panel would refuse; and this page builds its form from `MANAGE_FIELDS` and validates against the same specs, so a key cannot exist in the database and be unreachable in the UI.
+
+The fallback direction is the safe reading of each key, not the convenient one. `unmatched_action` falls back to `access_code`, which refuses a request it cannot classify, and `maintenance_mode` falls back to `false`, because defaulting a gateway into an outage on a settings blip would take the site down rather than protect it. An empty or `NULL` stored value is treated as unusable and takes the same fallback, so an absent row can never become the permissive value.
+
+What the four settings do is documented where they act: [Auth Flow](auth-flow.md) for `unmatched_action`, the session lifetime and maintenance mode, [Logs](logs.md) for retention. This page owns the surface.
+
+### Saving
+
+`POST /manage/settings` iterates `MANAGE_FIELDS`, validates each submitted value against the same spec the API uses, and issues one `PUT /api/settings/{key}` per changed field. A field the browser did not send is left alone, so a partial form cannot blank a setting it never showed, and a key outside `MANAGE_FIELDS` is dropped, so a crafted post cannot reach a setting this page does not own. A checkbox is sent as a hidden `false` followed by the box's `true` when it is checked, and the last value wins, which is why an unchecked box saves `false` rather than nothing.
+
+A rejected value is reported on the page with its reason and a `400`, and no write is issued for that key. Valid fields submitted alongside an invalid one are still saved, so one typo does not discard the rest of the form.
+
+### Prune audit logs
+
+The card below the form deletes every audit row older than `log_retention_days`. `POST /manage/logs/prune` requires `csrf_token`, `same_origin` and `confirm=PRUNE`, then proxies `POST /api/logs/prune` and re-renders the page with the returned count: how many rows were deleted and how many remain. There is no export behind it and no undo, which is why the word is checked on the server rather than only in the form. See [Logs](logs.md) for the retention model.
+
+### Environment (read-only)
+
+The last card answers "what is this thing running as" without exposing anything: `DEPLOYMENT_TYPE`, the database backend derived from the scheme of `db_url` only (`mysql` or `sqlite`, with a note when `DATABASE_URL` overrides the default), whether `INTERNAL_API_KEY` and `SECRET_KEY` are configured, and where the retention window actually comes from (the stored setting, the `LOG_RETENTION_DAYS` environment variable, or the built-in default).
+
+The two secrets are reported as `configured` or `not set` and nothing else. The panel never reads a secret value, so there is nothing on the page to leak, and the value is one template mistake away from being rendered if it were read. Unlike the settings above, these follow the compose environment and changing one needs a redeploy.

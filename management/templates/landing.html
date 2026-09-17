@@ -1,6 +1,17 @@
 {% extends "base.html" %}
 {% block title %}GateKeeper · Gateway{% endblock %}
 {% block sidebar %}{% endblock %}
+{% block head_extra %}
+<style>
+/* Page-local: the status card is this one page's look, not a panel component.
+   Moved out of `manage.css`, which is the `/manage/*` stylesheet. */
+.status-card{border:1px solid var(--border);background:var(--bg-card);border-radius:12px;overflow:hidden}
+.status-card-header{padding:.85rem 1.25rem;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+.status-label{font-family:'JetBrains Mono',monospace;font-size:.7rem;letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}
+.status-dot{font-family:'JetBrains Mono',monospace;font-size:.7rem;color:var(--text-secondary);display:inline-flex;align-items:center;gap:.35rem}
+.status-dot .dot{width:7px;height:7px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 6px var(--accent-dim);display:inline-block}
+</style>
+{% endblock %}
 {% block content %}
 <div class="container" style="max-width:780px;padding:3rem 2rem">
   <div class="card status-card">

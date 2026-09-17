@@ -26,7 +26,7 @@ from shared.backup import validate as validate_backup
 from shared.backup import verify as verify_backup
 from shared.config import get_config
 from shared.db import Base, get_db, get_engine, get_sessionmaker
-from shared.gate import DEFAULT_UNMATCHED_ACTION, UNMATCHED_ACTIONS
+from shared.gate import DEFAULT_UNMATCHED_ACTION
 from shared.models import AuditLog, Code, Route, Rule, RuleGroup, Setting
 from shared.rule_defaults import (
     CATCH_ALL,
@@ -36,6 +36,16 @@ from shared.rule_defaults import (
 )
 from shared.rule_defaults import DEFAULT_ACTION as DEFAULT_CATCH_ALL_ACTION
 from shared.rule_defaults import load as rule_defaults_load
+from shared.settings_spec import (
+    LOG_RETENTION_DAYS,
+    MANAGE_FIELDS,
+    RETENTION_MAX,
+    RETENTION_MIN,
+    SETTING_SPECS,
+    as_int,
+    default_value,
+    validate_value,
+)
 from shared.security import (
     hash_custom_password,
     host_matches,
@@ -279,14 +289,48 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
                 await s.commit()
         except Exception:
             pass
-        try:
-            res = await s.execute(select(Setting).where(Setting.key == "unmatched_action"))
-            if not res.scalars().first():
-                s.add(Setting(key="unmatched_action", value=DEFAULT_UNMATCHED_ACTION))
+        # Every key the panel can edit gets a row on a fresh volume, so the page
+        # shows the value it is actually running with rather than a blank that
+        # means "default". A key whose value cannot be parsed is seeded with the
+        # accepted default instead of the rejected one.
+        for key in MANAGE_FIELDS:
+            if key == "rate_limit_access_code_per_min":
+                continue
+            try:
+                res = await s.execute(select(Setting).where(Setting.key == key))
+                if res.scalars().first():
+                    continue
+                s.add(Setting(key=key, value=default_value(key)))
                 await s.commit()
-        except Exception:
-            pass
+            except Exception:
+                await s.rollback()
+        try:
+            pruned = await prune_audit_logs(s)
+            if pruned:
+                _log("audit_logs_pruned", deleted=pruned, reason="boot")
+        except Exception as e:
+            # A boot sweep is housekeeping. Losing it must never stop the API.
+            await s.rollback()
+            _log("audit_logs_prune_skipped", error=str(e))
     yield
+
+
+async def prune_audit_logs(db: Any, days: int | None = None) -> int:
+    """Delete audit rows older than the retention window, returning the count.
+
+    ``days`` overrides the stored setting, which is what the manual prune uses.
+    A row exactly on the cutoff is kept: the window is "older than N days", not
+    "not newer than N days", so a prune at the boundary cannot delete a record
+    that is still inside it.
+    """
+    if days is None:
+        res = await db.execute(select(Setting).where(Setting.key == LOG_RETENTION_DAYS))
+        row = res.scalars().first()
+        days = as_int(LOG_RETENTION_DAYS, row.value if row else None)
+    cutoff = dt.datetime.utcnow() - dt.timedelta(days=days)
+    result = await db.execute(delete(AuditLog).where(AuditLog.ts < cutoff))
+    await db.commit()
+    return int(result.rowcount or 0)
 
 
 def create_app() -> FastAPI:
@@ -1035,20 +1079,15 @@ def create_app() -> FastAPI:
         if raw is None:
             raise HTTPException(status_code=400, detail="value required")
         val = str(raw).strip()
-        # validate known keys
-        if key == "rate_limit_access_code_per_min":
+        # The accepted values for every key the panel edits live in
+        # `shared.settings_spec`, so this route and the manage form cannot drift.
+        # An unknown key is still stored unvalidated, which is the behaviour the
+        # endpoint has always had.
+        if key in SETTING_SPECS:
             try:
-                n = int(val)
-            except Exception:
-                raise HTTPException(status_code=400, detail="must be integer 1..1000")
-            if not (1 <= n <= 1000):
-                raise HTTPException(status_code=400, detail="must be 1..1000")
-            val = str(n)
-        elif key == "unmatched_action":
-            if val not in UNMATCHED_ACTIONS:
-                raise HTTPException(
-                    status_code=400, detail="must be one of access_code, deny, none"
-                )
+                val = validate_value(key, val)
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
         res = await db.execute(select(Setting).where(Setting.key == key))
         obj = res.scalars().first()
         if obj:
@@ -1136,6 +1175,22 @@ def create_app() -> FastAPI:
             "counts": result["counts"],
             "detached_logs": result["detached_logs"],
         }
+
+    @app.post("/api/logs/prune", dependencies=[Depends(_require_internal)])
+    async def prune_logs(
+        days: int | None = Query(default=None, ge=RETENTION_MIN, le=RETENTION_MAX),
+        db=Depends(get_db),
+    ):
+        """Delete audit rows older than the retention window.
+
+        Without ``days`` the stored `log_retention_days` setting decides, which is
+        the same value the boot sweep uses. There is no scheduler: this and the
+        boot sweep are the only two ways rows are removed.
+        """
+        deleted = await prune_audit_logs(db, days=days)
+        res = await db.execute(select(func.count()).select_from(AuditLog))
+        remaining = int(res.scalar_one())
+        return {"ok": True, "deleted": deleted, "remaining": remaining}
 
     @app.post("/api/auth/check-rate-limit", dependencies=[Depends(_require_internal)])
     async def check_rate_limit(payload: dict, db=Depends(get_db)):  # type: ignore[no-untyped-def]

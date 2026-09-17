@@ -4,6 +4,7 @@
 
 ```
 Request → Caddy GateKeeper gate → Auth Gateway /api/authz/forward-auth
+ ├─ maintenance_mode on (non-manage host) → 503 themed page
  ├─ Rule = none → 200
  ├─ Rule = deny → 403
  ├─ Rule = custom_password (cookie/header/qs)→ 200 or 302 to login
@@ -12,6 +13,24 @@ Request → Caddy GateKeeper gate → Auth Gateway /api/authz/forward-auth
  ├─ No rule matched, host in a group → 302 → login (always; see Rule Dispatch)
  └─ No group matched the host → per `unmatched_action` (default 302 → login)
 ```
+
+## Maintenance Mode
+
+`maintenance_mode` (default `false`) is checked in **both** gate paths, from `auth-gateway/app.py:_maintenance_response`, **before rule dispatch**. The order is the point: the switch has to mean the same thing on every host, and if it were consulted per rule then whether a visitor saw the maintenance page would depend on which rule happened to match, which is not something an operator turning a switch on wants to reason about.
+
+When it is on:
+
+- A request from a browser gets a themed `503` with `Retry-After: 300`; the same request with an `Accept` that wants JSON gets `503 {"detail": "maintenance mode"}` instead. The page is `shared/error_pages.py:render_maintenance_html`, the same document as every other gateway error, because an outage is the worst moment to make a visitor learn a second layout.
+- `maintenance_message` is rendered into it, escaped, and is the operator's own line. Blank means the page says nothing extra.
+- An audit row is written per refused request with `action` and `matched_action` both `maintenance_mode` and `rule_id` / `rule_group_id` / `code_id` null, so the switch is visible in the log it is explained by rather than invisible.
+- `/manage` and `/manage/login` on the gatekeeper host are **exempt**, and the rest of that host is not: `/documentation` on the same host still gets the `503`. Without the exemption a maintenance switch would also hide the page that turns it off, which is a foot-gun rather than a feature. The exemption is a host check and a path check together, matched on the hostname ignoring any port.
+- The API is untouched, so `X-Internal-Api-Key` callers still work. That is the escape hatch if the panel is ever unreachable for another reason.
+
+### How it interacts with fail-closed
+
+Maintenance mode runs **above** rule dispatch, so a request that `access_code` would have gated never reaches the gate while the switch is on: it gets the `503`, not a redirect to login, and the upstream is not dialled. The fail-closed invariant underneath is unchanged and no setting can reach it: a group that matched the host with no matching rule is still refused, and with maintenance on that refusal is expressed as the `503` rather than the redirect. `unmatched_action=none` cannot turn either state into a proxy.
+
+Turning the switch off restores the previous behaviour exactly, because nothing about rule resolution was modified by it.
 
 ## Rule Dispatch
 
@@ -32,17 +51,27 @@ The seeded default group's domain is `*.*/*`, which `host_matches` treats as "an
 
 `unmatched_action` reuses the rule vocabulary. `access_code` redirects to login (matching what `forward_auth` already did), `deny` returns the themed `403`, and `none` proxies without auth, which was the pre-existing behaviour, now explicit, named, and greppable rather than an `if rule is None: pass` branch nobody could see. On a fallback the audit row carries `matched_action` = the setting value with `rule_id`/`rule_group_id` null, so a fallback is distinguishable from a policy that allowed the request.
 
-`auth-gateway` reads the setting through a 60s-cached `GET /api/settings/unmatched_action` (`X-Internal-Api-Key` on `net-api`); any error falls back to `access_code`, and that fallback is cached too, so a settings outage makes the gateway stricter rather than slower.
+`auth-gateway` reads the setting through a 60s-cached `GET /api/settings/unmatched_action` (`X-Internal-Api-Key` on `net-api`); any error falls back to `access_code`, and that fallback is cached too, so a settings outage makes the gateway stricter rather than slower. Every value it does read is passed through `shared/settings_spec.py:read_value()` first, so a row edited by hand or restored from an older file cannot be acted on unless the panel's own validation would accept it.
 
 `CACHE_TTL=5s` in-memory under `asyncio.Lock` — auth-gateway loads `Route`+`RuleGroup` via `GET http://api:8002/api/routes|groups|rules` (`X-Internal-Api-Key` on `net-api` `internal:true`), `api:8002` is sole `shared/db.py` owner (`net-data`). All auth paths audit via `BackgroundTasks → POST http://api:8002/api/logs` (`X-Internal-Api-Key`, `internal:true`); on failure keep stale cache / drop audit — no direct DB fallback in `auth-gateway`.
 
 ## Cookie
 
-`gatekeeper_token = PyJWT HS256` (`shared/jwt.py` `create_access_token(cid,name)` `iss=gatekeeper` `aud=projectnova.download` `exp 12h` `jti`). Verified as `verify_access_token(token)` checks `exp/aud/iss/signature` then `POST http://api:8002/api/auth/verify-code-id {cid}` checks `codes.active=1` + bumps `last_accessed` on `net-api` `internal:true`; `jwt.ExpiredSignatureError` / bad signature → no cookie.
+`gatekeeper_token = PyJWT HS256` (`shared/jwt.py` `create_access_token(cid,name,expires_hours)` `iss=gatekeeper` `aud=projectnova.download` `exp 12h` `jti`). Verified as `verify_access_token(token)` checks `exp/aud/iss/signature` then `POST http://api:8002/api/auth/verify-code-id {cid}` checks `codes.active=1` + bumps `last_accessed` on `net-api` `internal:true`; `jwt.ExpiredSignatureError` / bad signature → no cookie.
+
+### Session lifetime
+
+The visitor cookie's lifetime is the `session_lifetime_hours` setting (default `12`, accepted `1..720`), not a constant. `_set_auth_cookie` and `_set_custom_cookie` pass it to `create_access_token` / `create_custom_token` as `expires_hours` **and** to `set_cookie(max_age=...)`, so the cookie's `Max-Age` and the JWT's `exp` are always the same number of seconds and are set from one read.
+
+They are set together on purpose. A cookie that outlives its own token fails on its next request, and a token that outlives its cookie is a credential the browser has already thrown away; either mismatch is a bug that only shows up `N` hours after a settings change, which is the worst time to find it.
+
+Changing the setting does not touch a cookie that is already issued. Existing visitors keep the lifetime they were given until they log in again, at which point the new value applies. Lowering it is therefore not an instant revocation: use `codes.active=0` for that.
+
+**`manage_session` is a separate lifetime and deliberately does not follow this setting.** It stays at its own fixed 8 hours (`shared/jwt.py:create_manage_token`), and the admin login sets it independently. An admin session and a visitor session are different trust levels; one dial for both would mean that extending a visitor's access also extends the operator's, and that shortening a visitor's access could sign the operator out mid-work. The two numbers are visible side by side on the settings page so the asymmetry is not a surprise.
 
 ## Magic Link
 
-`?access_code=<code>` on any gated URL → `POST http://api:8002/api/auth/verify-code {code}` via `api:8002` → `Set-Cookie gatekeeper_token=PyJWT HS256` on `.<apex>` (`HttpOnly`, `Lax`, `Secure`, `Max-Age=43200` `exp 12h`) → `302` to same URL with param stripped (`urlsplit`/`parse_qsl`/`urlencode` keeps other params).
+`?access_code=<code>` on any gated URL → `POST http://api:8002/api/auth/verify-code {code}` via `api:8002` → `Set-Cookie gatekeeper_token=PyJWT HS256` on `.<apex>` (`HttpOnly`, `Lax`, `Secure`, `Max-Age` = `session_lifetime_hours` × 3600, `exp` the same) → `302` to same URL with param stripped (`urlsplit`/`parse_qsl`/`urlencode` keeps other params).
 
 ## Custom Password
 
