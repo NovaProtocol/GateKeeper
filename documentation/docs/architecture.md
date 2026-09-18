@@ -20,6 +20,7 @@ project/
 ├── shared/
 │ ├── config.py # pydantic-settings: SECRET_KEY, MANAGE_PASSWORD, DATABASE_URL, INTERNAL_API_KEY, DEPLOYMENT_TYPE, BACKUP_CODE
 │ ├── jwt.py # PyJWT HS256 iss=gatekeeper aud=projectnova.download exp configurable/8h/configurable + jti
+│ ├── csp.py # the site-wide security headers (CONTENT_SECURITY_POLICY, SECURITY_HEADERS, apply_security_headers)
 │ ├── models.py # 6 tables + settings + audit_logs (routes, rule_groups, rules, codes, settings, audit_logs with method/status_code/attempted_code/country)
 │ ├── settings_spec.py # the settings table: accepted values, defaults, fallback direction
 │ ├── security.py # pbkdf2_hmac sha512 100k, host_matches, path_matches, mask_code, apex_domain
@@ -121,6 +122,47 @@ Browser → Caddy :7000 → Auth Gateway :8001 /api/authz/forward-auth
 ```
 
 Cache: in-memory `RuleGroup+Route` polled every `CACHE_TTL=5s` under `asyncio.Lock` via `GET http://api:8002/api/routes|groups|rules` (`X-Internal-Api-Key` on `net-api` `internal:true`) — only `api:8002` imports `shared/db.py`. Code verification is `POST /api/auth/verify-*` on `net-api`. Audit via `BackgroundTasks → POST http://api:8002/api/logs` (`X-Internal-Api-Key` `internal:true`) + rate-limit `POST /api/auth/check-rate-limit {ip}` for `?access_code=` tries/min; `POST /api/routes/{id}/test` and `POST /api/routes/test` both `socket.create_connection((upstream,port))` and need `api` on `gatekeeper` to reach `portfolio_main:8000` etc.
+
+## Security headers
+
+`shared/csp.py` is the only definition of `Content-Security-Policy`,
+`X-Content-Type-Options` and `Referrer-Policy`. Two services serve HTML on this
+stack, `auth-gateway:8001` and `management:8003`, and each has a `CSPMiddleware`
+that calls `apply_security_headers(response)` on the way out. Neither holds a
+header value of its own, and `tests/test_csp.py` asserts that both send the
+shared constant byte for byte and that no literal reappears in either app.
+
+The single definition is not tidiness, it is the fix for a defect. A response
+from the management service reaches a browser through the gateway, which buffers
+it and writes its own headers over the upstream's. Only one of the two
+`Content-Security-Policy` values can survive that, and it is the gateway's, so a
+second copy in the gateway is not a fallback for the management service's copy
+but a replacement for it. The two had drifted: the management service allowed
+the OpenStreetMap tile hosts the audit map loads in `img-src`, the gateway's copy
+stopped at `'self' data:`, and every tile on `/manage/audit` was refused with
+nothing on the page to say so. The order of edits is the trap, not the CSP
+itself: whichever service was updated second was the only one that mattered, and
+which one that was changed as the header was maintained.
+
+The policy is the union of what both services load and nothing else, so widening
+it shows up as a diff in one file. Directive by directive:
+
+| Directive | Hosts | Why |
+|-----------|-------|-----|
+| `default-src` | `'self'` | the floor for anything not named below |
+| `script-src` | `'self'`, `cdn.jsdelivr.net`, `stackpath.bootstrapcdn.com`, `cdnjs.cloudflare.com`, `static.cloudflareinsights.com` | Bootstrap and Font Awesome, Leaflet, the Cloudflare Web Analytics beacon. `'unsafe-inline'` is required by the inline bootstrap script and the inline styles in the base template |
+| `style-src` | the same, plus `fonts.googleapis.com` | Bootstrap and Font Awesome stylesheets, the Google Fonts stylesheet |
+| `font-src` | `'self'`, `fonts.gstatic.com`, `cdnjs.cloudflare.com` | Inter and JetBrains Mono, Font Awesome's webfonts |
+| `img-src` | `'self'`, `data:`, `cdn.jsdelivr.net`, `tile.openstreetmap.org`, `*.tile.openstreetmap.org` | the audit map's raster tiles. jsdelivr is here because Leaflet resolves its own default marker images relative to the script URL, and `data:` because several templates embed small inline images |
+| `connect-src` | `'self'` | the pages use no `fetch`/`XHR`; every dynamic element is server-rendered or a form post |
+| `frame-src` | `'self'`, `*.projectnova.download`, `portfolio.projectnova.download` | the gateway serves gated project pages in an iframe on the landing page |
+| `frame-ancestors` | `'self'`, `portfolio.projectnova.download`, `*.projectnova.download` | who may frame these pages, the inverse of `frame-src` |
+
+The tile hosts are named in `img-src` and nowhere else, because tiles arrive as
+`<img>` elements through the Leaflet layer and no other directive has any use for
+them: `tests/test_csp.py` asserts the host has not leaked into `script-src`,
+`style-src`, `connect-src`, `font-src` or `default-src`. A policy that appears to
+allow more than the page needs is a policy nobody can reason about later.
 
 ## When an upstream fails
 

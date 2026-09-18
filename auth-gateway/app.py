@@ -23,6 +23,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from shared.client_ip import get_client_ip
 from shared.config import get_config
+from shared.csp import apply_security_headers
 from shared.gate import DEFAULT_UNMATCHED_ACTION, find_group_rule, resolve_rule_action
 from shared.geo import get_country
 from shared.models import Code, Route, Rule, RuleGroup
@@ -124,11 +125,18 @@ class ProxyFixMiddleware(BaseHTTPMiddleware):
 
 
 class CSPMiddleware(BaseHTTPMiddleware):
+    """The site-wide security headers, including on proxied responses.
+
+    This service proxies every gated request, so the headers written here are the
+    ones a browser receives even when the upstream set its own: the values come
+    from :mod:`shared.csp`, which the management service applies too. Holding a
+    second copy here is what let the two drift apart and silently drop the tile
+    hosts the audit map needs.
+    """
+
     async def dispatch(self, request: Request, call_next):  # type: ignore[no-untyped-def]
         resp = await call_next(request)
-        resp.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://stackpath.bootstrapcdn.com https://cdnjs.cloudflare.com https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://stackpath.bootstrapcdn.com https://fonts.googleapis.com https://cdnjs.cloudflare.com; font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com; img-src 'self' data:; connect-src 'self'; frame-src 'self' https://*.projectnova.download https://portfolio.projectnova.download; frame-ancestors 'self' https://portfolio.projectnova.download https://*.projectnova.download"
-        resp.headers["X-Content-Type-Options"] = "nosniff"
-        resp.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        apply_security_headers(resp)
         return resp
 
 
