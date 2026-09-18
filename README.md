@@ -28,6 +28,8 @@ When a route's upstream fails, the gateway keeps the two causes apart: `502` whe
 
 Routing and Rules each have a **Test before saving** button in their add and edit modals. It asks the server about the values currently typed, without saving: `POST /api/routes/test` connects to the named upstream and port, and `POST /api/dry-run` reports which rule would win and whether the path is shadowed. Reachability means something is listening, not that it is the right application.
 
+`Content-Security-Policy`, `X-Content-Type-Options` and `Referrer-Policy` are defined once, in `shared/csp.py`, and applied by a `CSPMiddleware` in both `auth-gateway/app.py` and `management/app.py`; neither service holds a header value of its own. A response from the management service reaches a browser through the gateway, which writes its own headers over the upstream's, so a second copy there is a replacement for the management service's policy rather than a fallback. The two had drifted and the gateway's stale `img-src` refused the audit map's OpenStreetMap tiles, which is why the value now lives in one file. Docs: [Architecture § Security headers](documentation/docs/architecture.md).
+
 **Stack:** Python 3.14 · FastAPI + Granian · SQLAlchemy 2 (async) · MySQL 8.4 / SQLite · Caddy 2 · PyJWT
 
 ## Services
