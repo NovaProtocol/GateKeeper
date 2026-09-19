@@ -246,12 +246,42 @@ BY_IP = [
 
 SETTINGS = [{"key": "rate_limit_access_code_per_min", "value": "5", "updated_at": None}]
 
+PAGE_ROWS: list[dict[str, Any]] = [
+    {
+        "id": 7,
+        "pattern": "*.projectnova.download/robots.txt",
+        "body": "User-agent: *\nDisallow: /\n",
+        "content_type": "text/plain; charset=utf-8",
+        "active": True,
+        "display_order": 0,
+    },
+    {
+        "id": 8,
+        "pattern": "gatekeeper.projectnova.download/health",
+        "body": "ok\n",
+        "content_type": "text/plain; charset=utf-8",
+        "active": False,
+        "display_order": 1,
+    },
+]
+
+DRY_RUN: dict[str, Any] = {
+    "host": "x.projectnova.download",
+    "path": "/robots.txt",
+    "matched_group": {"id": 12, "name": "Portfolio", "domain": "portfolio.projectnova.download"},
+    "matched_rule": {"id": 13, "path": "/robots.txt", "action": "none"},
+    "action": "none",
+    "warnings": [],
+}
+
 PAYLOADS: dict[str, Any] = {
     "/api/groups": GROUPS,
     "/api/groups/10/rules": RULES,
     "/api/groups/11/rules": [RULES[2]],
     "/api/groups/12/rules": [RULES[2]],
     "/api/routes": ROUTES,
+    "/api/pages": PAGE_ROWS,
+    "/api/dry-run": DRY_RUN,
     "/api/codes": CODES,
     "/api/logs": LOGS,
     "/api/logs/top": TOP,
@@ -266,6 +296,7 @@ TABLE_PAGES = [
     ("/manage/rules/10", "action-cell table"),
     ("/manage/codes", "action-cell table"),
     ("/manage/routing", "action-cell table"),
+    ("/manage/pages", "action-cell table"),
 ]
 
 # Pages with a table that has no action column; the row-height rule still applies.
@@ -280,6 +311,7 @@ ALL_PAGES = [
     "/manage/rules/10",
     "/manage/codes",
     "/manage/routing",
+    "/manage/pages",
     "/manage/logs",
     "/manage/audit",
     "/manage/top-pages",
@@ -316,7 +348,10 @@ class _FakeClient:
         return _FakeResponse({})
 
     async def post(self, url: str, **kwargs: Any) -> _FakeResponse:
-        return _FakeResponse({})
+        path = url.split("http://api:8002", 1)[-1]
+        # `POST /api/dry-run` is how the pages table resolves each row's
+        # governing rule, so it needs a real answer rather than an empty object.
+        return _FakeResponse(PAYLOADS.get(path, {}))
 
     async def delete(self, url: str, **kwargs: Any) -> _FakeResponse:
         return _FakeResponse({})

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -29,6 +30,7 @@ from shared.geo import summarize as summarize_geo
 from shared.geo import totals as geo_totals
 from shared.models import Code
 from shared.error_pages import render_error_html, wants_html
+from shared.pages import split_pattern, sample_from_pattern
 from shared.security import apex_domain as shared_apex, mask_code
 from shared.settings_spec import (
     LOG_RETENTION_DAYS,
@@ -312,6 +314,22 @@ def _json_or_status(response: Any) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {"ok": False, "error": "unexpected response"}
 
 
+def _detail_of(response: Any) -> str:
+    """The API's refusal reason, for a route that turns one into a 4xx.
+
+    A 409 or a 400 from the API already says why ("pattern exists", "pattern
+    must contain /"), and that reason is what the operator needs to act on. It is
+    surfaced rather than replaced with the status code.
+    """
+    try:
+        payload = response.json()
+    except Exception:
+        return "the request was refused"
+    if isinstance(payload, dict) and payload.get("detail"):
+        return str(payload["detail"])
+    return "the request was refused"
+
+
 async def _api_proxy_get(path: str, params: dict[str, Any] | None = None) -> Any:
     url = f"http://api:8002{path}"
     client = _get_httpx()
@@ -340,6 +358,121 @@ async def _api_proxy_put(path: str, payload: dict[str, Any]) -> Any:
     return r
 
 
+async def _api_proxy_delete(path: str) -> Any:
+    """Relay a delete. New code goes through here rather than inline."""
+    url = f"http://api:8002{path}"
+    client = _get_httpx()
+    return await client.delete(url, headers=_api_headers(), timeout=5.0)
+
+
+#: What each rule action means to an operator reading the panel.
+ACTION_LABELS = {
+    "none": "Public",
+    "access_code": "Requires Access Code",
+    "custom_password": "Custom Password",
+    "deny": "Denied",
+}
+
+#: Paths on **any** host that something other than the gateway's rule dispatch
+#: answers first, so a page for them is created and then never served. `/health`
+#: is a Caddy site-level `handle`, `/documentation/*` is GateKeeper's own Caddy
+#: handle (host-less, so it claims the path on every host), and the other two are
+#: literal auth-gateway routes registered ahead of the wildcard.
+RESERVED_PAGE_PATHS = ("/health", "/api/authz/forward-auth", "/logout")
+RESERVED_PAGE_PREFIXES = ("/documentation",)
+
+
+def _page_reach_warning(pattern: str) -> str:
+    """Why a page will never be served, or an empty string when it will.
+
+    A warning rather than a refusal: the API accepts the pattern and the panel
+    explains it. Refusing would need a denylist that could only ever be
+    incomplete, and the honest failure here is a dead row the operator can see.
+    """
+    try:
+        _host, path_glob = split_pattern(pattern)
+    except ValueError:
+        return ""
+    if path_glob in RESERVED_PAGE_PATHS:
+        return (
+            f"GateKeeper answers {path_glob} before a page is consulted, "
+            "so this page will never be served."
+        )
+    for prefix in RESERVED_PAGE_PREFIXES:
+        if (
+            path_glob == prefix
+            or path_glob.startswith(prefix + "/")
+            or path_glob.startswith(prefix + "*")
+        ):
+            return (
+                f"{prefix}/* is answered by GateKeeper's own Caddy on every host, "
+                "so this page will never be served."
+            )
+    return ""
+
+
+async def _page_governance(page: dict[str, Any]) -> dict[str, Any]:
+    """What the gate would do with this page, read from the gate itself.
+
+    `POST /api/dry-run` walks the stored rules and reports the match, so the
+    banner cannot disagree with the gate: there is no second implementation of
+    rule resolution in the panel. The sample URL is a representative of the
+    pattern, and the banner says so, because a wildcard can span hosts governed
+    by different groups.
+    """
+    try:
+        host, path = sample_from_pattern(str(page.get("pattern") or ""))
+    except ValueError:
+        return {"resolved": False, "reason": "the pattern cannot be read"}
+    try:
+        client = _get_httpx()
+        r = await client.post(
+            "http://api:8002/api/dry-run",
+            json={"host": host, "path": path},
+            headers=_api_headers(),
+            timeout=5.0,
+        )
+        data = _json_or_status(r)
+    except Exception as e:
+        _slog("page_governance_failed", pattern=page.get("pattern"), error=str(e))
+        return {"resolved": False, "reason": "the gateway API could not be reached"}
+    group = data.get("matched_group")
+    rule = data.get("matched_rule")
+    action = data.get("action")
+    if not group:
+        return {
+            "resolved": True,
+            "host": host,
+            "path": path,
+            "no_group": True,
+            "action": None,
+            "served": False,
+            "sentence": (
+                "not governed by any rule; the unmatched_action setting applies, "
+                "so this page is not served"
+            ),
+        }
+    label = ACTION_LABELS.get(str(action or ""), "Denied")
+    served = action == "none"
+    rule_text = f"{rule.get('path')}" if rule else "(no rule matched)"
+    sentence = f"This page is governed by Rule {group.get('name')} - {rule_text} : {label}"
+    if not served:
+        sentence += " — this page is not served at all; the request follows the gate instead"
+    return {
+        "resolved": True,
+        "host": host,
+        "path": path,
+        "no_group": False,
+        "group_id": group.get("id"),
+        "group_name": group.get("name"),
+        "rule_path": rule_text,
+        "action": action,
+        "label": label,
+        "served": served,
+        "sentence": sentence,
+    }
+
+
 #: The word an operator types before a configuration replace goes ahead.
 RESTORE_CONFIRM = "REPLACE"
 
@@ -354,8 +487,9 @@ CLEAR_CONFIRM = "DELETE"
 #: response somewhere else.
 PRUNE_RETURNS = ("settings", "audit")
 
-#: Counts shown on the backup page, keyed the same way the export is.
-BACKUP_SECTIONS = ("routes", "groups", "rules", "codes", "settings")
+#: Counts shown on the backup page, keyed the same way the export is. `pages` is
+#: an optional section in the file, so the count tolerates the key being absent.
+BACKUP_SECTIONS = ("routes", "groups", "rules", "codes", "settings", "pages")
 
 
 def _submitted_settings(form: Any) -> dict[str, str]:
@@ -496,7 +630,8 @@ async def _backup_context(
             if isinstance(rows, list):
                 rules += len(rows)
     counts["rules"] = rules
-    for section, path in (("routes", "/api/routes"), ("codes", "/api/codes")):
+    counted = (("routes", "/api/routes"), ("codes", "/api/codes"), ("pages", "/api/pages"))
+    for section, path in counted:
         rows = await _api_proxy_get(path)
         counts[section] = len(rows) if isinstance(rows, list) else 0
     settings = await _api_proxy_get("/api/settings")
@@ -1342,6 +1477,164 @@ def create_app() -> FastAPI:
         rules = await _api_proxy_get(f"/api/groups/{gid}/rules")
         cur = next((g for g in groups if isinstance(groups, list) and g.get("id") == gid), None) if isinstance(groups, list) else None
         return await _render_manage(request, "manage/rules_detail.html", {"group": cur, "rules": rules if isinstance(rules, list) else [], "gid": gid})
+
+    @app.get("/manage/pages", response_class=HTMLResponse)
+    async def manage_pages(request: Request) -> Response:
+        """The interception layer: every page, its priority, and what governs it.
+
+        The governing rule is resolved by asking the gate, once per row, in
+        parallel. That is what lets the table say "this page will never be
+        served" on the same line as the page it will never serve, instead of an
+        operator discovering it from a crawler's log.
+        """
+        _auth = await _require_manage_auth(request)
+        if _auth is not None:
+            return _auth
+        pages = await _api_proxy_get("/api/pages")
+        if not isinstance(pages, list):
+            pages = []
+        governances = await asyncio.gather(*[_page_governance(p) for p in pages])
+        rows = []
+        for page, governed in zip(pages, governances, strict=False):
+            decorated = dict(page)
+            decorated["governance"] = governed
+            decorated["reach_warning"] = _page_reach_warning(str(page.get("pattern") or ""))
+            decorated["sample_url"] = (
+                f"https://{governed['host']}{governed['path']}" if governed.get("host") else ""
+            )
+            rows.append(decorated)
+        active_count = sum(1 for p in rows if p.get("active"))
+        served_count = sum(1 for p in rows if p.get("active") and p["governance"].get("served"))
+        return await _render_manage(
+            request,
+            "manage/pages.html",
+            {
+                "pages": rows,
+                "active_count": active_count,
+                "inactive_count": len(rows) - active_count,
+                "served_count": served_count,
+            },
+        )
+
+    @app.post("/manage/pages", response_class=HTMLResponse)
+    async def manage_pages_create(request: Request) -> Response:
+        _auth = await _require_manage_auth(request)
+        if _auth is not None:
+            return _auth
+        form = await request.form()
+        if not _verify_csrf(request, str(form.get("csrf_token") or "")):
+            raise HTTPException(status_code=403, detail="Invalid CSRF")
+        if not same_origin(request):
+            raise HTTPException(status_code=403, detail="Cross-site")
+        payload = {
+            "pattern": str(form.get("pattern") or "").strip(),
+            "body": str(form.get("body") or ""),
+            "content_type": str(form.get("content_type") or "").strip(),
+        }
+        try:
+            r = await _api_proxy_post("/api/pages", payload)
+            if r.status_code >= 400:
+                raise HTTPException(status_code=r.status_code, detail=_detail_of(r))
+        except HTTPException:
+            raise
+        except Exception as e:
+            _slog("page_create_failed", error=str(e))
+            raise HTTPException(
+                status_code=502, detail="the gateway API could not be reached"
+            ) from e
+        return RedirectResponse(url="/manage/pages", status_code=302)
+
+    @app.post("/manage/pages/{pid}/edit", response_class=HTMLResponse)
+    async def manage_pages_edit(request: Request, pid: int) -> Response:
+        _auth = await _require_manage_auth(request)
+        if _auth is not None:
+            return _auth
+        form = await request.form()
+        if not _verify_csrf(request, str(form.get("csrf_token") or "")):
+            raise HTTPException(status_code=403, detail="Invalid CSRF")
+        if not same_origin(request):
+            raise HTTPException(status_code=403, detail="Cross-site")
+        payload: dict[str, Any] = {"pattern": str(form.get("pattern") or "").strip()}
+        if "body" in form:
+            payload["body"] = str(form.get("body") or "")
+        if "content_type" in form:
+            payload["content_type"] = str(form.get("content_type") or "").strip()
+        try:
+            r = await _api_proxy_put(f"/api/pages/{pid}", payload)
+            if r.status_code >= 400:
+                raise HTTPException(status_code=r.status_code, detail=_detail_of(r))
+        except HTTPException:
+            raise
+        except Exception as e:
+            _slog("page_edit_failed", pid=pid, error=str(e))
+            raise HTTPException(
+                status_code=502, detail="the gateway API could not be reached"
+            ) from e
+        return RedirectResponse(url="/manage/pages", status_code=302)
+
+    @app.post("/manage/pages/{pid}/delete", response_class=HTMLResponse)
+    async def manage_pages_delete(request: Request, pid: int) -> Response:
+        _auth = await _require_manage_auth(request)
+        if _auth is not None:
+            return _auth
+        form = await request.form()
+        if not _verify_csrf(request, str(form.get("csrf_token") or "")):
+            raise HTTPException(status_code=403, detail="Invalid CSRF")
+        if not same_origin(request):
+            raise HTTPException(status_code=403, detail="Cross-site")
+        try:
+            r = await _api_proxy_delete(f"/api/pages/{pid}")
+            if r.status_code >= 400:
+                raise HTTPException(status_code=r.status_code, detail=_detail_of(r))
+        except HTTPException:
+            raise
+        except Exception as e:
+            _slog("page_delete_failed", pid=pid, error=str(e))
+            raise HTTPException(
+                status_code=502, detail="the gateway API could not be reached"
+            ) from e
+        return RedirectResponse(url="/manage/pages", status_code=302)
+
+    @app.post("/manage/pages/{pid}/active", response_class=HTMLResponse)
+    async def manage_pages_active(request: Request, pid: int) -> Response:
+        """Turn a page on or off. Reversible, so one confirm is enough."""
+        _auth = await _require_manage_auth(request)
+        if _auth is not None:
+            return _auth
+        form = await request.form()
+        if not _verify_csrf(request, str(form.get("csrf_token") or "")):
+            raise HTTPException(status_code=403, detail="Invalid CSRF")
+        if not same_origin(request):
+            raise HTTPException(status_code=403, detail="Cross-site")
+        active = str(form.get("active") or "").strip().lower() in ("1", "true", "yes")
+        try:
+            r = await _api_proxy_put(f"/api/pages/{pid}", {"active": active})
+            if r.status_code >= 400:
+                _slog("page_active_refused", pid=pid, status=r.status_code, detail=r.text[:200])
+        except Exception as e:
+            _slog("page_active_failed", pid=pid, error=str(e))
+        return RedirectResponse(url="/manage/pages", status_code=302)
+
+    @app.post("/manage/pages/{pid}/order", response_class=HTMLResponse)
+    async def manage_pages_order(request: Request, pid: int) -> Response:
+        _auth = await _require_manage_auth(request)
+        if _auth is not None:
+            return _auth
+        form = await request.form()
+        if not _verify_csrf(request, str(form.get("csrf_token") or "")):
+            raise HTTPException(status_code=403, detail="Invalid CSRF")
+        if not same_origin(request):
+            raise HTTPException(status_code=403, detail="Cross-site")
+        direction = str(form.get("direction") or "").strip().lower()
+        if direction not in ("up", "down"):
+            raise HTTPException(status_code=400, detail="direction must be up|down")
+        try:
+            r = await _api_proxy_put(f"/api/pages/{pid}/order", {"direction": direction})
+            if r.status_code >= 400:
+                _slog("page_order_refused", pid=pid, direction=direction, status=r.status_code)
+        except Exception as e:
+            _slog("page_order_failed", pid=pid, direction=direction, error=str(e))
+        return RedirectResponse(url="/manage/pages", status_code=302)
 
     @app.get("/manage/codes", response_class=HTMLResponse)
     async def manage_codes(request: Request) -> Response:

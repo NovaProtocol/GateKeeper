@@ -27,6 +27,8 @@ import pytest
 from sqlalchemy import func, select
 
 from shared.backup import (
+    OPTIONAL_SECTIONS,
+    SECTIONS,
     VERSION,
     apply_backup,
     canonical,
@@ -37,12 +39,12 @@ from shared.backup import (
     verify,
 )
 from shared.db import get_sessionmaker
-from shared.models import AuditLog, Code, Route, Rule, RuleGroup, Setting
+from shared.models import AuditLog, Code, CustomPage, Route, Rule, RuleGroup, Setting
 from tests.conftest import TEST_INTERNAL_API_KEY
 
 INTERNAL_KEY_HEADERS = {"X-Internal-Api-Key": TEST_INTERNAL_API_KEY}
 OTHER_SECRET = "a-completely-different-key-of-32-characters"
-CONFIG_SECTIONS = ("routes", "groups", "rules", "codes", "settings")
+CONFIG_SECTIONS = (*SECTIONS, *OPTIONAL_SECTIONS)
 
 
 # --------------------------------------------------------------------------- #
@@ -814,9 +816,10 @@ def test_restore_never_deletes_audit_rows(client) -> None:
 
 
 def test_audit_logs_are_not_in_the_restore_surface() -> None:
-    """The five replaced tables are exactly the configuration tables."""
-    assert set(CONFIG_SECTIONS) == {"routes", "groups", "rules", "codes", "settings"}
-    for model in (Route, RuleGroup, Rule, Code, Setting):
+    """Every replaced table is a configuration table, and none of them is audit."""
+    replaced = {*SECTIONS, *OPTIONAL_SECTIONS}
+    assert replaced == {"routes", "groups", "rules", "codes", "settings", "pages"}
+    for model in (Route, RuleGroup, Rule, Code, Setting, CustomPage):
         assert model.__tablename__ != "audit_logs"
     assert AuditLog.__tablename__ == "audit_logs"
 
@@ -849,3 +852,152 @@ def test_a_file_without_is_default_restores(client) -> None:
     r = _restore(client, _resign(config))
     assert r.status_code == 200, r.text
     assert _current_config(client)["rules"]
+
+
+# --------------------------------------------------------------------------- #
+# Custom pages: an optional section, present in new exports
+# --------------------------------------------------------------------------- #
+
+PAGE_PATTERN = "*.backup-test.example/robots.txt"
+PAGE_BODY = "User-agent: *\nDisallow: /\n"
+
+
+def _add_page(client, pattern: str = PAGE_PATTERN) -> int:
+    r = client.post(
+        "/api/pages",
+        json={"pattern": pattern, "body": PAGE_BODY},
+        headers=INTERNAL_KEY_HEADERS,
+    )
+    assert r.status_code == 200, r.text
+    return r.json()["id"]
+
+
+def test_pages_are_in_the_export(client) -> None:
+    """New exports carry the section; the file is version 1 either way."""
+    blob = _export(client)
+    assert "pages" in blob["config"]
+    assert blob["version"] == VERSION
+
+
+def test_pages_round_trip(client) -> None:
+    pid = _add_page(client)
+    blob = _export(client)
+    assert _restore(client, blob).status_code == 200
+
+    restored = next(p for p in _current_config(client)["pages"] if p["id"] == pid)
+    assert restored["pattern"] == PAGE_PATTERN
+    assert restored["body"] == PAGE_BODY
+    assert restored["active"] is True
+
+
+def test_an_old_file_with_no_pages_section_still_validates_and_restores(client) -> None:
+    """The whole reason `pages` is optional rather than a required section.
+
+    Every backup taken before this feature existed has no `pages` key. Were it a
+    required section, `validate()` would refuse all of them and the owner's only
+    rollback point would be gone.
+    """
+    config = copy.deepcopy(_current_config(client))
+    del config["pages"]
+
+    assert validate(config) == []
+    r = _restore(client, _resign(config))
+    assert r.status_code == 200, r.text
+    assert _current_config(client)["pages"] == []
+
+
+def test_an_old_file_restores_over_a_database_that_has_pages(client) -> None:
+    """Applying a pre-feature file replaces the pages rather than keeping them."""
+    _add_page(client)
+    assert _count(CustomPage) >= 1
+
+    config = copy.deepcopy(_current_config(client))
+    del config["pages"]
+    assert _restore(client, _resign(config)).status_code == 200
+
+    assert _count(CustomPage) == 0
+
+
+def test_a_pages_key_that_is_not_a_list_is_refused(client) -> None:
+    config = copy.deepcopy(_current_config(client))
+    config["pages"] = {"pattern": PAGE_PATTERN}
+    assert "config section 'pages' must be a list" in validate(config)
+
+
+def test_a_bad_page_row_is_refused_with_its_problem_line(client) -> None:
+    config = copy.deepcopy(_current_config(client))
+    config["pages"] = [
+        {
+            "id": 1,
+            "pattern": "not-a-url",
+            "body": "x",
+            "content_type": "text/plain; charset=utf-8",
+            "active": True,
+            "display_order": 0,
+        }
+    ]
+
+    problems = validate(config)
+    assert any("pages[0]" in p and "/" in p for p in problems), problems
+
+
+def test_a_page_body_over_the_cap_is_refused(client) -> None:
+    config = copy.deepcopy(_current_config(client))
+    config["pages"] = [
+        {
+            "id": 1,
+            "pattern": PAGE_PATTERN,
+            "body": "x" * (256 * 1024 + 1),
+            "content_type": "text/plain; charset=utf-8",
+            "active": True,
+            "display_order": 0,
+        }
+    ]
+
+    assert any("256 KiB" in p for p in validate(config))
+
+
+def test_a_page_content_type_with_a_line_break_is_refused(client) -> None:
+    config = copy.deepcopy(_current_config(client))
+    config["pages"] = [
+        {
+            "id": 1,
+            "pattern": PAGE_PATTERN,
+            "body": "x",
+            "content_type": "text/plain\r\nX-Evil: 1",
+            "active": True,
+            "display_order": 0,
+        }
+    ]
+
+    assert any("line break" in p for p in validate(config))
+
+
+def test_two_pages_with_the_same_pattern_are_refused(client) -> None:
+    """A duplicate is a problem line, not last-one-wins."""
+    config = copy.deepcopy(_current_config(client))
+    row = {
+        "id": 1,
+        "pattern": PAGE_PATTERN,
+        "body": "x",
+        "content_type": "text/plain; charset=utf-8",
+        "active": True,
+        "display_order": 0,
+    }
+    config["pages"] = [row, {**row, "id": 2}]
+
+    assert any("duplicate pattern" in p for p in validate(config))
+
+
+def test_a_deactivated_page_restores_as_inactive(client) -> None:
+    pid = _add_page(client)
+    assert (
+        client.put(
+            f"/api/pages/{pid}", json={"active": False}, headers=INTERNAL_KEY_HEADERS
+        ).status_code
+        == 200
+    )
+
+    assert _restore(client, _export(client)).status_code == 200
+    restored = next(p for p in _current_config(client)["pages"] if p["id"] == pid)
+    assert restored["active"] is False

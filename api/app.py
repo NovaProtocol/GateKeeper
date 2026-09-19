@@ -34,7 +34,14 @@ from shared.geo import (
     build_points,
     normalize_country,
 )
-from shared.models import AuditLog, Code, Route, Rule, RuleGroup, Setting
+from shared.models import AuditLog, Code, CustomPage, Route, Rule, RuleGroup, Setting
+from shared.pages import (
+    DEFAULT_PAGE_CONTENT_TYPE as pages_default_content_type,
+)
+from shared.pages import (
+    PAGE_BODY_MAX as pages_body_max,
+)
+from shared.pages import validate_content_type, validate_pattern
 from shared.rule_defaults import (
     CATCH_ALL,
     add_is_default_column,
@@ -227,6 +234,59 @@ def _shadowed_warnings(groups: list[RuleGroup]) -> dict[str, Any]:
             if not any(sr["id"] == r.id for sr in shadowed_rules):
                 shadowed_rules.append({"id": r.id, "path": r.path, "group_id": gid, "shadowed_by": sg["shadowed_by"], "reason": "group shadowed"})
     return {"groups": shadowed_groups, "rules": shadowed_rules}
+
+
+#: The response type a page carries unless it says otherwise, and the largest body
+#: it may carry. Both are read from :mod:`shared.pages` so the endpoint, the
+#: backup validator and the gateway cannot drift apart about either.
+DEFAULT_PAGE_CONTENT_TYPE = pages_default_content_type
+PAGE_BODY_MAX = pages_body_max
+
+
+def _validate_page_pattern(pattern: str) -> None:
+    """Refuse a pattern that cannot describe a URL, naming the reason."""
+    try:
+        validate_pattern(pattern)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+def _validate_page_content_type(content_type: str) -> None:
+    """A response type, and never a header injection.
+
+    It becomes a response header, so a CR or LF in it is response splitting
+    rather than a formatting mistake. The shape check keeps a typo out of the
+    stored value; `nosniff` makes the stored value authoritative downstream.
+    """
+    try:
+        validate_content_type(content_type)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+def _validate_page_body(body: str) -> None:
+    if len(body) > PAGE_BODY_MAX:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"body must be {PAGE_BODY_MAX // 1024} KiB "
+                f"({PAGE_BODY_MAX} characters) or fewer"
+            ),
+        )
+
+
+def _page_json(p: Any) -> dict[str, Any]:
+    """One page as the API reports it, in the gate's own field names."""
+    return {
+        "id": p.id,
+        "pattern": p.pattern,
+        "body": p.body,
+        "content_type": p.content_type or DEFAULT_PAGE_CONTENT_TYPE,
+        "active": bool(p.active),
+        "display_order": p.display_order,
+        "created_at": p.created_at,
+        "updated_at": p.updated_at,
+    }
 
 
 def _parse_dt(s: str | None) -> dt.datetime | None:
@@ -616,6 +676,148 @@ def create_app() -> FastAPI:
         if result.get("ok"):
             return result
         return JSONResponse(status_code=200, content=result)
+
+    @app.get("/api/pages")
+    async def list_pages(db=Depends(get_db)):  # type: ignore[no-untyped-def]
+        """Every custom page, in the order the gate would consider them.
+
+        Keyless, exactly like ``GET /api/routes``: the gateway reads this on its
+        own cache refresh and the manage panel reads it to render the table, and
+        neither is a write.
+        """
+        res = await db.execute(
+            select(CustomPage).order_by(CustomPage.display_order, CustomPage.id)
+        )
+        rows = res.scalars().all()
+        return [_page_json(p) for p in rows]
+
+    @app.post("/api/pages", dependencies=[Depends(_require_internal)])
+    async def create_page(payload: dict, db=Depends(get_db)):  # type: ignore[no-untyped-def]
+        pattern = str(payload.get("pattern", "")).strip()
+        body = str(payload.get("body", ""))
+        content_type = str(payload.get("content_type", "") or DEFAULT_PAGE_CONTENT_TYPE).strip()
+        _validate_page_pattern(pattern)
+        _validate_page_content_type(content_type)
+        _validate_page_body(body)
+        dup = await db.execute(select(CustomPage).where(CustomPage.pattern == pattern))
+        if dup.scalars().first():
+            raise HTTPException(status_code=409, detail="pattern exists")
+        res = await db.execute(select(func.max(CustomPage.display_order)))
+        highest = res.scalar()
+        # `or -1` would be wrong here: the first page's max is 0, and `0 or -1`
+        # is -1, which would hand every later page the same display_order.
+        order = 0 if highest is None else int(highest) + 1
+        p = CustomPage(
+            pattern=pattern,
+            body=body,
+            content_type=content_type,
+            active=bool(payload.get("active", True)),
+            display_order=order,
+        )
+        db.add(p)
+        try:
+            await db.commit()
+            await db.refresh(p)
+        except IntegrityError:
+            await db.rollback()
+            raise HTTPException(status_code=409, detail="pattern exists")
+        return _page_json(p)
+
+    @app.put("/api/pages/{pid}", dependencies=[Depends(_require_internal)])
+    async def update_page(pid: int, payload: dict, db=Depends(get_db)):  # type: ignore[no-untyped-def]
+        """Partial update: only the keys present in the body are validated.
+
+        Same shape as ``PUT /api/rules/{rid}``, so a panel that posts one field
+        from a modal cannot blank the fields it did not render.
+        """
+        res = await db.execute(select(CustomPage).where(CustomPage.id == pid))
+        p = res.scalars().first()
+        if not p:
+            raise HTTPException(status_code=404, detail="not found")
+        if "pattern" in payload:
+            pattern = str(payload.get("pattern", "")).strip()
+            _validate_page_pattern(pattern)
+            dup = await db.execute(
+                select(CustomPage).where(CustomPage.pattern == pattern, CustomPage.id != pid)
+            )
+            if dup.scalars().first():
+                raise HTTPException(status_code=409, detail="pattern exists")
+            p.pattern = pattern  # type: ignore[assignment]
+        if "content_type" in payload:
+            content_type = str(payload.get("content_type", "") or "").strip()
+            if not content_type:
+                raise HTTPException(status_code=400, detail="content_type required")
+            _validate_page_content_type(content_type)
+            p.content_type = content_type  # type: ignore[assignment]
+        if "body" in payload:
+            body = str(payload.get("body", ""))
+            _validate_page_body(body)
+            p.body = body  # type: ignore[assignment]
+        if "active" in payload:
+            raw = payload.get("active")
+            if isinstance(raw, bool):
+                p.active = raw  # type: ignore[assignment]
+            elif isinstance(raw, str) and raw.strip().lower() in ("true", "false", "1", "0"):
+                p.active = raw.strip().lower() in ("true", "1")  # type: ignore[assignment]
+            elif isinstance(raw, int):
+                p.active = bool(raw)  # type: ignore[assignment]
+            else:
+                raise HTTPException(status_code=400, detail="active must be true or false")
+        try:
+            await db.commit()
+            await db.refresh(p)
+        except IntegrityError:
+            await db.rollback()
+            raise HTTPException(status_code=409, detail="pattern exists")
+        return _page_json(p)
+
+    @app.delete("/api/pages/{pid}", dependencies=[Depends(_require_internal)])
+    async def delete_page(pid: int, db=Depends(get_db)):  # type: ignore[no-untyped-def]
+        res = await db.execute(select(CustomPage).where(CustomPage.id == pid))
+        p = res.scalars().first()
+        if not p:
+            raise HTTPException(status_code=404, detail="not found")
+        await db.delete(p)
+        await db.commit()
+        return {"ok": True}
+
+    @app.put("/api/pages/{pid}/order", dependencies=[Depends(_require_internal)])
+    async def order_page(pid: int, payload: dict, db=Depends(get_db)):  # type: ignore[no-untyped-def]
+        """Raise or lower a page by swapping ``display_order`` with its neighbour.
+
+        The neighbour is chosen by ``(display_order, id)``, which is the order
+        the gate considers pages in, so one press moves the row exactly one
+        visible position. The ends are no-ops, the contract
+        ``PUT /api/rules/{rid}/order`` already has.
+        """
+        direction = str(payload.get("direction", "")).lower()
+        res = await db.execute(select(CustomPage).where(CustomPage.id == pid))
+        cur = res.scalars().first()
+        if not cur:
+            raise HTTPException(status_code=404, detail="not found")
+        res = await db.execute(
+            select(CustomPage).order_by(CustomPage.display_order, CustomPage.id)
+        )
+        rows = list(res.scalars().all())
+        idx = next((i for i, x in enumerate(rows) if x.id == pid), None)
+        if idx is None:
+            raise HTTPException(status_code=404, detail="not found")
+        if direction == "up":
+            if idx == 0:
+                return {"ok": True}
+            other = rows[idx - 1]
+            # Equal orders would make the swap a no-op, so the lower position
+            # wins the comparison against the id tiebreak and stays below.
+            cur.display_order, other.display_order = other.display_order, cur.display_order
+        elif direction == "down":
+            if idx >= len(rows) - 1:
+                return {"ok": True}
+            other = rows[idx + 1]
+            cur.display_order, other.display_order = other.display_order, cur.display_order
+        else:
+            raise HTTPException(status_code=400, detail="direction must be up|down")
+        await db.commit()
+        return {"ok": True}
 
     @app.get("/api/groups")
     async def list_groups(db=Depends(get_db)):  # type: ignore[no-untyped-def]

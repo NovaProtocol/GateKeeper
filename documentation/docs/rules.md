@@ -13,6 +13,8 @@ Resolution and the unmatched-request decision live in `shared/gate.py`; both the
 - `action`: `access_code` (check cookie/magic link), `none` (allow), `custom_password` (per-rule password), `deny` (403).
 - `allow_ip`, `allow_time`, `rate_limit` are **reserved** — stored, not enforced on hot path.
 
+A rule with `action = none` allows the request, and the gateway may then answer it itself with a [custom page](custom-pages.md) instead of proxying to the upstream. The page never changes what the rule decides: it only runs where the rule has already said `none`.
+
 ## When nothing matches
 
 Two different situations used to look identical to the gate, and one of them leaked. `shared/gate.py` now separates them, and both gate paths (`forward_auth` and the wildcard proxy) go through it:

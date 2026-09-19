@@ -26,7 +26,8 @@ from shared.config import get_config
 from shared.csp import apply_security_headers
 from shared.gate import DEFAULT_UNMATCHED_ACTION, find_group_rule, resolve_rule_action
 from shared.geo import get_country
-from shared.models import Code, Route, Rule, RuleGroup
+from shared.models import Code, CustomPage, Route, Rule, RuleGroup
+from shared.pages import pattern_matches
 from shared.security import apex_domain as shared_apex_domain
 from shared.security import host_matches, mask_code, verify_custom_password
 from shared.settings_spec import (
@@ -87,6 +88,7 @@ except Exception:
 
 _CacheGroups: list[RuleGroup] | None = None
 _CacheRoutes: list[Route] | None = None
+_CachePages: list[CustomPage] | None = None
 _CacheTs: float = 0.0
 _CacheLock = asyncio.Lock()
 CACHE_TTL = 5.0
@@ -273,15 +275,25 @@ def _api_base() -> str:
     return os.environ.get("API_HTTP_ADDR", "http://api:8002")
 
 
-async def _load_caches() -> tuple[list[Route], list[RuleGroup]]:
-    global _CacheRoutes, _CacheGroups, _CacheTs
+async def _load_caches() -> tuple[list[Route], list[RuleGroup], list[CustomPage]]:
+    global _CacheRoutes, _CacheGroups, _CachePages, _CacheTs
     now = time.monotonic()
-    if _CacheRoutes is not None and _CacheGroups is not None and (now - _CacheTs) < CACHE_TTL:
-        return _CacheRoutes, _CacheGroups
+    if (
+        _CacheRoutes is not None
+        and _CacheGroups is not None
+        and _CachePages is not None
+        and (now - _CacheTs) < CACHE_TTL
+    ):
+        return _CacheRoutes, _CacheGroups, _CachePages
     async with _CacheLock:
         now2 = time.monotonic()
-        if _CacheRoutes is not None and _CacheGroups is not None and (now2 - _CacheTs) < CACHE_TTL:
-            return _CacheRoutes, _CacheGroups
+        if (
+            _CacheRoutes is not None
+            and _CacheGroups is not None
+            and _CachePages is not None
+            and (now2 - _CacheTs) < CACHE_TTL
+        ):
+            return _CacheRoutes, _CacheGroups, _CachePages
         try:
             base = _api_base()
             client = _get_httpx()
@@ -316,15 +328,32 @@ async def _load_caches() -> tuple[list[Route], list[RuleGroup]]:
                 except Exception:
                     pass
                 groups.append(gr)
+            p_resp = await client.get(f"{base}/api/pages", headers=hdr, timeout=2.0)
+            p_resp.raise_for_status()
+            p_json = p_resp.json()
+            pages: list[CustomPage] = []
+            for prow in p_json if isinstance(p_json, list) else []:
+                page = CustomPage(
+                    pattern=prow.get("pattern", ""),
+                    body=prow.get("body", ""),
+                    content_type=prow.get("content_type") or "text/plain; charset=utf-8",
+                    active=bool(prow.get("active", True)),
+                    display_order=prow.get("display_order", 0),
+                )
+                page.id = prow.get("id", 0)  # type: ignore[attr-defined]
+                pages.append(page)
         except Exception as e:
             _slog("cache_load_failed", error=str(e))
-            if _CacheRoutes is not None and _CacheGroups is not None:
-                return _CacheRoutes, _CacheGroups
-            return [], []
+            if _CacheRoutes is not None and _CacheGroups is not None and _CachePages is not None:
+                return _CacheRoutes, _CacheGroups, _CachePages
+            # Nothing readable means "no page matched", never "some page
+            # matched": an unreadable page list must not be able to serve a body.
+            return [], [], []
         _CacheRoutes = routes
         _CacheGroups = groups
+        _CachePages = pages
         _CacheTs = time.monotonic()
-        return routes, groups
+        return routes, groups, pages
 
 
 def _find_group_rule(
@@ -452,6 +481,91 @@ async def _maintenance_response(
         status_code=503,
         content={"detail": "maintenance mode"},
         headers={"Retry-After": "300"},
+    )
+
+
+#: The paths on a manage host that are how the operator gets back into the
+#: panel, and therefore the paths a custom page may never answer for.
+_CONTROL_PLANE_PATHS = ("/", "/login", "/logout", "/manage")
+
+
+def _is_control_plane(host: str, path: str, apex: str) -> bool:
+    """Whether this request is the operator's way in, not a page's to swallow.
+
+    Custom pages sit below the control plane in priority, and this is what makes
+    that true rather than assumed. `/health` and `/api/authz/forward-auth` need
+    no entry here — Caddy answers `/health` at the site level and the wildcard
+    refuses `/api/authz/forward-auth` before this point — and `/logout` is a real
+    route registered ahead of the wildcard. What is **not** ahead of the wildcard
+    is `/login` and the gatekeeper host's `/`: both are served by the wildcard
+    proxy into `gatekeeper_management`, so without this predicate a pattern like
+    `gatekeeper.projectnova.download/*` would swallow the login page and lock the
+    operator out of the panel.
+
+    Narrow on purpose: only the manage hosts and the apex, and only the paths
+    that reach the panel. `/robots.txt` on the gatekeeper host stays the
+    owner's to intercept.
+    """
+    hostname = (host or "").split(",")[0].strip().split(":")[0].lower()
+    if hostname not in _MANAGE_HOSTS and hostname != apex:
+        return False
+    p = path if path.startswith("/") else "/" + path
+    if p in _CONTROL_PLANE_PATHS:
+        return True
+    return p.startswith("/manage/")
+
+
+def _find_page(host: str, path: str, pages: list[CustomPage]) -> CustomPage | None:
+    """The first active page whose pattern matches, in the gate's own order.
+
+    Order is ``(display_order, id)`` ascending and the first match is the only
+    match: nothing merges, nothing cascades, and the number the panel shows is
+    the position the gate consults. A page whose ``active`` **is** ``False`` is
+    skipped before its pattern is even read.
+    """
+    for page in sorted(pages, key=lambda p: (p.display_order, p.id)):
+        if page.active is False:
+            continue
+        if pattern_matches(page.pattern, host, path):
+            return page
+    return None
+
+
+async def _queue_page_audit(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    host: str,
+    path: str,
+    ip: str,
+    req_id: str,
+    grp: RuleGroup | None,
+    rule: Rule | None,
+) -> None:
+    """One audit row per request answered by a custom page.
+
+    Shaped like :func:`_queue_maintenance_audit`, with the rule that allowed the
+    page carried in `rule_group_id` / `rule_id` because that is the interesting
+    fact, and `matched_action="custom_page"` as the greppable marker that a page
+    (rather than a rule) produced the body.
+    """
+    _queue_audit(
+        background_tasks,
+        host=host,
+        path=path,
+        ip=ip,
+        country=await _visitor_country(request),
+        action="custom_page",
+        matched_action="custom_page",
+        rule_group_id=grp.id if grp else None,
+        rule_id=rule.id if rule else None,
+        code_id=None,
+        request_id=req_id,
+        user_agent=request.headers.get("User-Agent"),
+        referer=request.headers.get("Referer"),
+        latency_ms=None,
+        method=request.method,
+        status_code=200,
+        attempted_code=None,
     )
 
 
@@ -846,7 +960,7 @@ def create_app() -> FastAPI:
         if not path.startswith("/"):
             path = "/" + path
         apex = _apex_from_host(host) if host else _apex_from_host(request.headers.get("Host", ""))
-        routes, groups = await _load_caches()
+        routes, groups, _pages = await _load_caches()
         # Audited like any other request: a maintenance refusal that leaves no
         # row would make the switch invisible in the log it is explained by.
         maintenance = await _maintenance_response(request, host, path, apex)
@@ -1001,7 +1115,7 @@ def create_app() -> FastAPI:
         full_uri = raw_path + (("?" + raw_qs) if raw_qs else "")
         proto = _get_forwarded_proto(request)
         apex = _apex_from_host(host) if host else _apex_from_host(request.headers.get("Host", ""))
-        routes, groups = await _load_caches()
+        routes, groups, pages = await _load_caches()
         maintenance = await _maintenance_response(request, host, raw_path, apex)
         if maintenance is not None:
             ip = _get_ip(request)
@@ -1054,7 +1168,19 @@ def create_app() -> FastAPI:
                 apex,
             )
         if action == "none":
-            pass
+            # A custom page is served from here and nowhere else. This branch is
+            # the one path where the gate has already decided the request may
+            # pass, so `deny` / `custom_password` / `access_code` never reach the
+            # check below and the feature cannot open a gate that was closed.
+            page = None
+            if request.method in ("GET", "HEAD") and not _is_control_plane(host, raw_path, apex):
+                page = _find_page(host, raw_path, pages)
+            if page is not None:
+                await _queue_page_audit(request, background_tasks, host, raw_path, ip, req_id, grp, rule)
+                # The stored bytes, whole, with the stored content type. Nothing
+                # escaped, sanitised or sniffed, and no header added beyond what
+                # the response type requires.
+                return Response(content=page.body.encode("utf-8"), media_type=page.content_type)
         elif action == "custom_password" and rule is not None:
             ok = False
             need_custom_cookie = False

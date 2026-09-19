@@ -3,7 +3,8 @@ from __future__ import annotations
 import datetime as dt
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, func, text
+from sqlalchemy.dialects.mysql import MEDIUMTEXT
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from shared.db import Base
@@ -51,6 +52,39 @@ class Rule(Base):
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, server_default=func.now())
     group: Mapped[RuleGroup] = relationship("RuleGroup", back_populates="rules")
+
+
+class CustomPage(Base):
+    """A body the gateway serves itself, matched by a host-glob/path-glob pattern.
+
+    ``pattern`` holds the whole URL shape (``*.projectnova.download/robots.txt``)
+    rather than a host and a path in two columns: a pair would let a row claim a
+    host match with no path, and the owner's own description of this feature was
+    "anything as long as it matched the url". See :mod:`shared.pages` for the
+    glob vocabulary and the precedence rule.
+    """
+
+    __tablename__ = "custom_pages"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    pattern: Mapped[str] = mapped_column(String(1024), unique=True, index=True)
+    #: The bytes that are served. `MEDIUMTEXT` on MySQL because plain `TEXT`
+    #: there is 64 KiB while the accepted body is larger; SQLite is unbounded
+    #: either way, so the variant only keeps the two backends honest.
+    body: Mapped[str] = mapped_column(Text().with_variant(MEDIUMTEXT, "mysql"))
+    content_type: Mapped[str] = mapped_column(
+        String(255), default="text/plain; charset=utf-8", server_default="text/plain; charset=utf-8"
+    )
+    #: Off switch, mirroring `codes.active`. `nullable=False` is load-bearing:
+    #: the gate reads "not False" as active, so a NULL row would show as off in
+    #: the panel while still being served.
+    active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=text("1")
+    )
+    display_order: Mapped[int] = mapped_column(Integer, index=True)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[dt.datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
 
 
 class Code(Base):

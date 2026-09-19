@@ -39,7 +39,13 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.config import get_config
-from shared.models import AuditLog, Code, Route, Rule, RuleGroup, Setting
+from shared.models import AuditLog, Code, CustomPage, Route, Rule, RuleGroup, Setting
+from shared.pages import (
+    DEFAULT_PAGE_CONTENT_TYPE,
+    PAGE_BODY_MAX,
+    validate_content_type,
+    validate_pattern,
+)
 from shared.security import is_valid_host
 
 #: Bump when the config shape changes in a way old files cannot satisfy.
@@ -47,6 +53,17 @@ VERSION = 1
 
 #: The config sections, also the restore order (FK-safe: groups before rules).
 SECTIONS = ("routes", "groups", "rules", "codes", "settings")
+
+#: Sections a file may carry **in addition** to `SECTIONS`. These are optional:
+#: absent means empty, and they are not part of the unknown-key check.
+#:
+#: `pages` is here rather than in `SECTIONS` for a reason that is load-bearing.
+#: `validate()` refuses a file with a missing required section, so promoting
+#: `pages` would make every backup taken before this feature unusable — and
+#: bumping `VERSION` would refuse those files too. Either would destroy the
+#: owner's only rollback point at exactly the moment it is needed. Optional and
+#: absent is the only shape that keeps an old file restorable.
+OPTIONAL_SECTIONS = ("pages",)
 
 ACTIONS = ("access_code", "none", "custom_password", "deny")
 ROUTE_TYPES = ("proxy", "redirect")
@@ -278,6 +295,46 @@ def config_warnings(config: dict[str, Any]) -> list[str]:
     return notes
 
 
+def _validate_pages(rows: list[dict[str, Any]], problems: list[str]) -> None:
+    """Mirror the API's field rules, so a file it could not have produced is refused.
+
+    A duplicate pattern is a problem line rather than last-one-wins: the column
+    is unique, so a file carrying two would restore one of them silently.
+    """
+    _check_ids(rows, "pages", problems)
+    seen: set[str] = set()
+    for idx, row in enumerate(rows):
+        where = f"pages[{idx}]"
+        pattern = _text(row.get("pattern"))
+        if not pattern:
+            problems.append(f"{where}: pattern required")
+        else:
+            try:
+                validate_pattern(pattern)
+            except ValueError as e:
+                problems.append(f"{where}: {e}")
+            if pattern in seen:
+                problems.append(f"{where}: duplicate pattern {pattern}")
+            seen.add(pattern)
+        content_type = _text(row.get("content_type")) or DEFAULT_PAGE_CONTENT_TYPE
+        try:
+            validate_content_type(content_type)
+        except ValueError as e:
+            problems.append(f"{where}: {e}")
+        body = row.get("body")
+        if not isinstance(body, str):
+            problems.append(f"{where}: body must be a string")
+        elif len(body) > PAGE_BODY_MAX:
+            problems.append(
+                f"{where}: body must be {PAGE_BODY_MAX // 1024} KiB or fewer "
+                f"({PAGE_BODY_MAX} characters)"
+            )
+        if _int(row.get("display_order")) is None:
+            problems.append(f"{where}: display_order must be an integer")
+        if "active" in row and not isinstance(row["active"], bool):
+            problems.append(f"{where}: active must be true or false")
+
+
 def _validate_codes(rows: list[dict[str, Any]], problems: list[str]) -> None:
     _check_ids(rows, "codes", problems)
     seen: set[str] = set()
@@ -322,8 +379,13 @@ def validate(config: Any) -> list[str]:
             problems.append(f"missing config section '{section}'")
         elif not isinstance(config[section], list):
             problems.append(f"config section '{section}' must be a list")
+    for section in OPTIONAL_SECTIONS:
+        # Optional means absent is fine. Present-but-wrong is not: a `pages` key
+        # holding an object is a malformed file, not an empty section.
+        if section in config and not isinstance(config[section], list):
+            problems.append(f"config section '{section}' must be a list")
     for key in config:
-        if key not in SECTIONS:
+        if key not in SECTIONS and key not in OPTIONAL_SECTIONS:
             problems.append(f"unknown config section '{key}'")
     if problems:
         return problems
@@ -332,6 +394,7 @@ def validate(config: Any) -> list[str]:
     _validate_rules(config["rules"], gids, problems)
     _validate_codes(config["codes"], problems)
     _validate_settings(config["settings"], problems)
+    _validate_pages(config.get("pages", []), problems)
     return problems
 
 
@@ -422,6 +485,18 @@ def _setting_row(setting: Setting) -> dict[str, Any]:
     return {"key": setting.key, "value": setting.value}
 
 
+def _page_row(page: CustomPage) -> dict[str, Any]:
+    """One custom page, in the shape the file stores it."""
+    return {
+        "id": page.id,
+        "pattern": page.pattern,
+        "body": page.body,
+        "content_type": page.content_type or DEFAULT_PAGE_CONTENT_TYPE,
+        "active": bool(page.active),
+        "display_order": page.display_order,
+    }
+
+
 async def build_backup(db: AsyncSession, secret: str | None = None) -> dict[str, Any]:
     """Read the whole configuration and sign it. Ordered by id, so it repeats."""
     routes = (await db.execute(select(Route).order_by(Route.id))).scalars().all()
@@ -430,12 +505,14 @@ async def build_backup(db: AsyncSession, secret: str | None = None) -> dict[str,
     codes = (await db.execute(select(Code).order_by(Code.id))).scalars().all()
     settings = (await db.execute(select(Setting).order_by(Setting.key))).scalars().all()
     settings = [s for s in settings if s.key not in BOOKKEEPING_SETTINGS]
+    pages = (await db.execute(select(CustomPage).order_by(CustomPage.id))).scalars().all()
     config: dict[str, Any] = {
         "routes": [_route_row(r) for r in routes],
         "groups": [_group_row(g) for g in groups],
         "rules": [_rule_row(r) for r in rules],
         "codes": [_code_row(c) for c in codes],
         "settings": [_setting_row(s) for s in settings],
+        "pages": [_page_row(p) for p in pages],
     }
     created_at = dt.datetime.now(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     signature = sign(config, secret)
@@ -529,6 +606,17 @@ def _insert_all(db: AsyncSession, config: dict[str, Any]) -> None:
         )
     for row in config["settings"]:
         db.add(Setting(key=row.get("key"), value=row.get("value")))
+    for row in config.get("pages", []):
+        db.add(
+            CustomPage(
+                id=_int(row.get("id")),
+                pattern=row.get("pattern"),
+                body=row.get("body") or "",
+                content_type=row.get("content_type") or DEFAULT_PAGE_CONTENT_TYPE,
+                active=bool(row.get("active", True)),
+                display_order=_int(row.get("display_order")) or 0,
+            )
+        )
 
 
 async def _detach_audit_refs(db: AsyncSession) -> dict[str, int]:
@@ -556,8 +644,9 @@ async def apply_backup(db: AsyncSession, config: dict[str, Any]) -> dict[str, An
     export taken until the next download rather than claiming the previous one.
     """
     counts = {section: len(config[section]) for section in SECTIONS}
+    counts.update({section: len(config.get(section, [])) for section in OPTIONAL_SECTIONS})
     try:
-        for model in (Rule, RuleGroup, Route, Code, Setting):
+        for model in (Rule, RuleGroup, Route, Code, Setting, CustomPage):
             await db.execute(delete(model))
         _insert_all(db, config)
         # The detach runs after the flush so the subqueries see the new rows.

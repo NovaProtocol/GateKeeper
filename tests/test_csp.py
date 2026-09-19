@@ -152,7 +152,13 @@ def gateway_route(monkeypatch: pytest.MonkeyPatch, manage_upstream: Any) -> _Rou
     module that drives the same app.
     """
     module = gateway_module()
-    saved = (module._CacheGroups, module._CacheRoutes, module._CacheTs, dict(module._SettingCache))
+    saved = (
+        module._CacheGroups,
+        module._CacheRoutes,
+        module._CachePages,
+        module._CacheTs,
+        dict(module._SettingCache),
+    )
     from shared.models import Route, Rule, RuleGroup
 
     group = RuleGroup(name="gatekeeper", domain=MANAGE_HOST, display_order=0)
@@ -168,6 +174,7 @@ def gateway_route(monkeypatch: pytest.MonkeyPatch, manage_upstream: Any) -> _Rou
     routed = _RoutedClient(manage_upstream)
     module._CacheGroups = [group]
     module._CacheRoutes = [route]
+    module._CachePages = []
     module._CacheTs = time.monotonic()
     module._SettingCache.clear()
     # Geo capture reads a setting; seeding it keeps the request off the network.
@@ -177,9 +184,14 @@ def gateway_route(monkeypatch: pytest.MonkeyPatch, manage_upstream: Any) -> _Rou
 
     yield routed
 
-    module._CacheGroups, module._CacheRoutes, module._CacheTs = saved[0], saved[1], saved[2]
+    module._CacheGroups, module._CacheRoutes, module._CachePages, module._CacheTs = (
+        saved[0],
+        saved[1],
+        saved[2],
+        saved[3],
+    )
     module._SettingCache.clear()
-    module._SettingCache.update(saved[3])
+    module._SettingCache.update(saved[4])
 
 
 def through_gateway(gateway_client: Any, path: str, session: str | None = SESSION) -> Any:

@@ -102,6 +102,17 @@ CODES: list[dict[str, Any]] = [
     }
 ]
 
+PAGE_ROWS: list[dict[str, Any]] = [
+    {
+        "id": 7,
+        "pattern": "*.projectnova.download/robots.txt",
+        "body": "User-agent: *\nDisallow: /\n",
+        "content_type": "text/plain; charset=utf-8",
+        "active": True,
+        "display_order": 0,
+    }
+]
+
 
 class _FakeResponse:
     def __init__(self, payload: Any = None) -> None:
@@ -137,12 +148,14 @@ RULES_PAGE = {"/api/groups": RULE_GROUPS}
 DETAIL_PAGE = {"/api/groups": RULE_GROUPS, "/api/groups/10/rules": GROUP_RULES}
 CODES_PAGE = {"/api/codes": CODES}
 ROUTING_PAGE = {"/api/routes": ROUTES}
+PAGES_PAGE = {"/api/pages": PAGE_ROWS}
 
 TABLE_PAGES = [
     pytest.param("/manage/rules", RULES_PAGE, id="groups"),
     pytest.param("/manage/rules/10", DETAIL_PAGE, id="rules"),
     pytest.param("/manage/codes", CODES_PAGE, id="codes"),
     pytest.param("/manage/routing", ROUTING_PAGE, id="routing"),
+    pytest.param("/manage/pages", PAGES_PAGE, id="pages"),
 ]
 
 

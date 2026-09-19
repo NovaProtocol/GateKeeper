@@ -29,6 +29,12 @@ from shared.jwt import create_manage_token
 
 SESSION = create_manage_token()
 
+#: The panel checks the CSRF pair and the request origin on every mutating
+#: route, so a relayed write has to present both to get past the gate.
+CSRF = "test-csrf-token"
+ORIGIN = "http://testserver"
+COOKIES = {"manage_session": SESSION, "csrf_token": CSRF}
+
 GROUPS: list[dict[str, Any]] = [
     {
         "id": 10,
@@ -134,11 +140,41 @@ SETTINGS: list[dict[str, Any]] = [
 
 API = "http://api:8002"
 
+PAGE_ROWS: list[dict[str, Any]] = [
+    {
+        "id": 7,
+        "pattern": "*.projectnova.download/robots.txt",
+        "body": "User-agent: *\nDisallow: /\n",
+        "content_type": "text/plain; charset=utf-8",
+        "active": True,
+        "display_order": 0,
+    },
+    {
+        "id": 8,
+        "pattern": "gatekeeper.projectnova.download/health",
+        "body": "ok\n",
+        "content_type": "text/plain; charset=utf-8",
+        "active": False,
+        "display_order": 1,
+    },
+]
+
+DRY_RUN: dict[str, Any] = {
+    "host": "x.projectnova.download",
+    "path": "/robots.txt",
+    "matched_group": {"id": 12, "name": "Portfolio", "domain": "portfolio.projectnova.download"},
+    "matched_rule": {"id": 13, "path": "/robots.txt", "action": "none"},
+    "action": "none",
+    "warnings": [],
+}
+
 PAYLOADS: dict[str, Any] = {
     f"{API}/api/groups": GROUPS,
     f"{API}/api/groups/10/rules": RULES,
     f"{API}/api/groups/12/rules": RULES,
     f"{API}/api/routes": ROUTES,
+    f"{API}/api/pages": PAGE_ROWS,
+    f"{API}/api/dry-run": DRY_RUN,
     f"{API}/api/codes": CODES,
     f"{API}/api/logs": LOGS,
     f"{API}/api/logs/top": TOP,
@@ -187,6 +223,10 @@ class _FakeClient:
 
     async def post(self, url: str, json: Any = None, **kwargs: Any) -> _FakeResponse:
         self.calls.append(("POST", url, json, kwargs))
+        # A URL with no canned payload keeps the old empty-object answer, so a
+        # relayed write is still a 200 with nothing in it.
+        if url in self.overrides or url in PAYLOADS:
+            return _FakeResponse(200, self._payload(url))
         return _FakeResponse(200, {})
 
     async def delete(self, url: str, **kwargs: Any) -> _FakeResponse:
@@ -208,6 +248,7 @@ PAGES = [
     pytest.param("/manage/rules/10", "Rules", id="rules-detail"),
     pytest.param("/manage/codes", "Access Codes", id="codes"),
     pytest.param("/manage/routing", "Routing", id="routing"),
+    pytest.param("/manage/pages", "Custom Pages", id="pages"),
     pytest.param("/manage/logs", "Traffic Logs", id="logs"),
     pytest.param("/manage/audit", "Audit", id="audit"),
     pytest.param("/manage/top-pages", "Top Pages", id="top-pages"),
@@ -274,7 +315,7 @@ def test_sidebar_links_all_resolve(manage_client, monkeypatch) -> None:
     """No dead entries: every href the sidebar renders answers with a page."""
     html = _get(manage_client, "/manage", monkeypatch)
     hrefs = re.findall(r'<a href="(/manage[^"]*)"', _sidebar(html))
-    assert len(hrefs) == 8, hrefs
+    assert len(hrefs) == 9, hrefs
 
     for href in hrefs:
         r = manage_client.get(href, cookies={"manage_session": SESSION}, follow_redirects=False)
@@ -491,3 +532,152 @@ def test_the_api_still_serves_warnings(manage_client, monkeypatch) -> None:
     client = _install(monkeypatch)
     manage_client.get("/manage", cookies={"manage_session": SESSION})
     assert any(call[1] == f"{API}/api/warnings" for call in client.calls)
+
+
+# --------------------------------------------------------------------------- #
+# Custom pages
+# --------------------------------------------------------------------------- #
+
+
+def test_the_pages_page_lists_every_stored_page(manage_client, monkeypatch) -> None:
+    html = _get(manage_client, "/manage/pages", monkeypatch)
+    assert "*.projectnova.download/robots.txt" in html
+    assert "gatekeeper.projectnova.download/health" in html
+    assert 'class="codes-table"' in html
+
+
+def test_the_governing_rule_banner_names_the_group_and_the_verdict(
+    manage_client, monkeypatch
+) -> None:
+    """The operator discovers "this will never be served" in the panel."""
+    html = _get(manage_client, "/manage/pages", monkeypatch)
+    assert "governed by Rule" in html
+    assert 'href="/manage/rules/12"' in html, "the group links to the page that fixes it"
+    assert "Public" in html
+
+
+def test_the_banner_says_when_a_page_is_not_served(manage_client, monkeypatch) -> None:
+    overrides = {
+        f"{API}/api/dry-run": {
+            "host": "x.projectnova.download",
+            "path": "/robots.txt",
+            "matched_group": {"id": 12, "name": "Portfolio", "domain": "portfolio.test"},
+            "matched_rule": {"id": 13, "path": "/robots.txt", "action": "access_code"},
+            "action": "access_code",
+            "warnings": [],
+        }
+    }
+    html = _get(manage_client, "/manage/pages", monkeypatch, overrides=overrides)
+    assert "Requires Access Code" in html
+    assert "not served" in html
+
+
+def test_an_inactive_page_is_marked_inactive(manage_client, monkeypatch) -> None:
+    html = _get(manage_client, "/manage/pages", monkeypatch)
+    assert 'class="inactive"' in html
+    assert "Inactive" in html
+
+
+def test_a_page_the_control_plane_answers_first_is_warned_about(manage_client, monkeypatch) -> None:
+    """Reachability is surfaced rather than refused at the API."""
+    html = _get(manage_client, "/manage/pages", monkeypatch)
+    assert "never served" in html
+    assert "/health" in html
+
+
+def test_a_page_create_without_a_csrf_token_is_refused(manage_client, monkeypatch) -> None:
+    _install(monkeypatch)
+    r = manage_client.post(
+        "/manage/pages",
+        data={"pattern": "a.test/x"},
+        cookies={"manage_session": SESSION},
+        follow_redirects=False,
+    )
+    assert r.status_code == 403
+
+
+def test_a_page_create_relays_it_to_the_api(manage_client, monkeypatch) -> None:
+    client = _install(monkeypatch)
+    r = manage_client.post(
+        "/manage/pages",
+        data={
+            "pattern": "a.test/x",
+            "body": "hello",
+            "content_type": "text/plain; charset=utf-8",
+            "csrf_token": CSRF,
+        },
+        cookies=COOKIES,
+        headers={"Origin": ORIGIN},
+        follow_redirects=False,
+    )
+    assert r.status_code == 302
+    assert r.headers["Location"] == "/manage/pages"
+    posted = [c for c in client.calls if c[0] == "POST" and c[1] == f"{API}/api/pages"]
+    assert posted, client.calls
+    assert posted[0][2]["pattern"] == "a.test/x"
+
+
+def test_a_page_delete_relays_it_to_the_api(manage_client, monkeypatch) -> None:
+    client = _install(monkeypatch)
+    r = manage_client.post(
+        "/manage/pages/7/delete",
+        data={"csrf_token": CSRF},
+        cookies=COOKIES,
+        headers={"Origin": ORIGIN},
+        follow_redirects=False,
+    )
+    assert r.status_code == 302
+    deleted = [c for c in client.calls if c[0] == "DELETE" and c[1] == f"{API}/api/pages/7"]
+    assert deleted, client.calls
+
+
+def test_a_page_toggle_relays_the_new_state_to_the_api(manage_client, monkeypatch) -> None:
+    client = _install(monkeypatch)
+    r = manage_client.post(
+        "/manage/pages/7/active",
+        data={"active": "0", "csrf_token": CSRF},
+        cookies=COOKIES,
+        headers={"Origin": ORIGIN},
+        follow_redirects=False,
+    )
+    assert r.status_code == 302
+    put = [c for c in client.calls if c[0] == "PUT" and c[1] == f"{API}/api/pages/7"]
+    assert put and put[0][2] == {"active": False}
+
+
+def test_a_page_reorder_relays_the_direction(manage_client, monkeypatch) -> None:
+    client = _install(monkeypatch)
+    r = manage_client.post(
+        "/manage/pages/7/order",
+        data={"direction": "up", "csrf_token": CSRF},
+        cookies=COOKIES,
+        headers={"Origin": ORIGIN},
+        follow_redirects=False,
+    )
+    assert r.status_code == 302
+    order = [c for c in client.calls if c[0] == "PUT" and c[1] == f"{API}/api/pages/7/order"]
+    assert order and order[0][2] == {"direction": "up"}
+
+
+def test_a_page_edit_relays_only_the_named_fields(manage_client, monkeypatch) -> None:
+    client = _install(monkeypatch)
+    r = manage_client.post(
+        "/manage/pages/7/edit",
+        data={"pattern": "a.test/x", "body": "changed", "csrf_token": CSRF},
+        cookies=COOKIES,
+        headers={"Origin": ORIGIN},
+        follow_redirects=False,
+    )
+    assert r.status_code == 302
+    put = [c for c in client.calls if c[0] == "PUT" and c[1] == f"{API}/api/pages/7"]
+    assert put, client.calls
+    assert put[0][2]["body"] == "changed"
+
+
+def test_the_pages_page_renders_with_every_page_inactive(manage_client, monkeypatch) -> None:
+    overrides = {
+        f"{API}/api/pages": [{**PAGE_ROWS[0], "active": False}],
+    }
+    html = _get(manage_client, "/manage/pages", monkeypatch, overrides=overrides)
+    assert "Custom Pages" in html
+    assert '<span class="stat-value">0</span>' in html

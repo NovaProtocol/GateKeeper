@@ -16,7 +16,8 @@ whole configuration to a file, and restores the configuration from one.
     "groups": [ ... ],
     "rules": [ ... ],
     "codes": [ ... ],
-    "settings": [ ... ]
+    "settings": [ ... ],
+    "pages": [ ... ]
   },
   "sig": "9f2c…"
 }
@@ -31,6 +32,15 @@ and edit it in any editor.
 - `created_at` — when the export was taken. Informational; not signed.
 - `config` — everything that is configuration, sorted by row id.
 - `sig` — HMAC-SHA256, hex, over the canonicalised `config` **only**.
+
+`pages` is **optional**, and that is deliberate. Every file written before
+[custom pages](custom-pages.md) existed has no such key, and `validate()` refuses
+a file with a missing required section — so promoting it to a required section
+would make every earlier backup unrestorable, and bumping `version` would refuse
+them too. Either would destroy the only rollback point that exists at exactly the
+moment it is needed. A file with no `pages` key therefore validates, restores, and
+leaves no custom pages, which is what it described. A `pages` key that is present
+but is not a list is still refused as malformed.
 
 ### What `sig` covers, and what it does not
 
@@ -73,7 +83,7 @@ The export also stamps `backup_exported_at`, which is what the page shows as
 
 ## Restoring
 
-Restoring **replaces** all five sections. Anything added since the export is
+Restoring **replaces** all six sections. Anything added since the export is
 gone. The page makes this two steps on purpose:
 
 1. **Choose the file** and **type `REPLACE`**. Both buttons stay disabled until
@@ -193,5 +203,6 @@ from either side of that change restores under the newer code.
   is right but older than you think".
 - **The file is only as good as its last export.** If no export has been taken,
   there is nothing to restore from.
-- **A restore is not a merge.** It replaces all five sections together; there is
-  no way to restore only the codes, or to skip a section.
+- **A restore is not a merge.** It replaces all six sections together; there is
+  no way to restore only the codes, or to skip a section. `pages` is the one
+  section a file may omit entirely, and omitting it restores an empty set.

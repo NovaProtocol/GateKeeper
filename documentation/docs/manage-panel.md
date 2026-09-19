@@ -15,7 +15,7 @@ The sidebar is the navigation and it has three categories, in this order:
 | Category | Entries |
 |---|---|
 | Access | Rules, Codes |
-| System | Routing, Settings, Backup |
+| System | Routing, Pages, Settings, Backup |
 | Audit | Audit, Traffic Logs, Top Pages |
 
 Every entry resolves to a page below. There is no second navigation: the dashboard used to repeat the sidebar as a sentence and three buttons.
@@ -25,6 +25,11 @@ Every entry resolves to a page below. There is no second navigation: the dashboa
 | `GET /manage` | Dashboard — stat strip, warning banner, recent traffic, top pages, code health |
 | `GET/POST /manage/routing` | Routes CRUD (`host`, `path`, `proxy` upstream:port or `redirect` target:code) + `POST /{id}/test` |
 | `POST /manage/routing/test` | Probe the values currently in the route modal: upstream reachability, and the gate's verdict for the typed host and path |
+| `GET/POST /manage/pages` | Custom pages list and create (`pattern`, `body`, `content_type`) |
+| `POST /manage/pages/{pid}/edit` | Edit a page (`pattern`, `body`, `content_type`) |
+| `POST /manage/pages/{pid}/active` | Deactivate or reactivate a page (`active`) |
+| `POST /manage/pages/{pid}/order` | Move a page up/down (`direction`) |
+| `POST /manage/pages/{pid}/delete` | Delete a page |
 | `GET /manage/rules` | Rule groups list (▲/▼ reorder, ✎ edit) |
 | `POST /manage/groups` | Create group (`name`, `domain`) |
 | `POST /manage/groups/{gid}/edit` | Edit group (`name`, `domain`) — `domain` is disabled for the default group |
@@ -49,7 +54,7 @@ All mutating `POST/PUT/DELETE` require `csrf_token` + `same_origin`. Every relay
 
 ## Testing before saving
 
-Every add and edit modal in Routing and Rules has a **Test before saving** control, sitting immediately to the left of Save in the footer. It is icon-only like every other action, with `title` and `aria-label` carrying the words, and the verdict it produces renders in a `role="status" aria-live="polite"` slot at the leading edge of the same footer, so the answer appears next to the buttons that will act on it rather than somewhere else on the page.
+Every add and edit modal in Routing, Rules and Pages has a **Test before saving** control, sitting immediately to the left of Save in the footer. It is icon-only like every other action, with `title` and `aria-label` carrying the words, and the verdict it produces renders in a `role="status" aria-live="polite"` slot at the leading edge of the same footer, so the answer appears next to the buttons that will act on it rather than somewhere else on the page.
 
 The button asks the server, it does not guess. On Routing it does two things at once with the values **as currently typed**, without saving anything:
 
