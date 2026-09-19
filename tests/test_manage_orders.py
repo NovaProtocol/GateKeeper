@@ -140,6 +140,20 @@ def fake_api(monkeypatch: pytest.MonkeyPatch) -> _FakeClient:
     return client
 
 
+@pytest.fixture()
+def refusing_api(monkeypatch: pytest.MonkeyPatch) -> _FakeClient:
+    """An API that refuses the write, so the refusal path can be asserted."""
+    client = _FakeClient(
+        get_payloads={
+            "http://api:8002/api/groups": RULE_GROUPS,
+            "http://api:8002/api/groups/10/rules": RULES,
+        },
+        put_status=400,
+    )
+    monkeypatch.setattr(management_app, "_get_httpx", lambda: client)
+    return client
+
+
 def _auth_cookies() -> dict[str, str]:
     return {"manage_session": SESSION, "csrf_token": CSRF}
 
@@ -346,3 +360,100 @@ def test_groups_page_disables_arrows_at_the_ends_and_on_default(
     assert controls[2]["down_disabled"] is True
     assert "the default group is pinned last" in controls[2]["up_title"]
     assert "the default group is pinned last" in controls[2]["down_title"]
+
+
+# --------------------------------------------------------------------------- #
+# The status switch: a control, not a route
+# --------------------------------------------------------------------------- #
+
+
+def test_the_rule_status_switch_relays_active_to_the_edit_route(
+    manage_client, fake_api: _FakeClient
+) -> None:
+    """The switch posts to the existing `/manage/rules/{rid}/edit`, nothing new."""
+    r = manage_client.post(
+        "/manage/rules/1/edit",
+        data={"active": "0", "csrf_token": CSRF},
+        cookies=_auth_cookies(),
+        headers={"Origin": ORIGIN},
+        follow_redirects=False,
+    )
+    assert r.status_code == 302
+    put = [c for c in fake_api.calls if c[0] == "PUT" and c[1] == "http://api:8002/api/rules/1"]
+    assert put, fake_api.calls
+    assert put[0][2] == {"active": "0"}, "the switch must post the flag and nothing else"
+
+
+def test_the_rule_status_switch_relays_an_activation(manage_client, fake_api: _FakeClient) -> None:
+    r = manage_client.post(
+        "/manage/rules/1/edit",
+        data={"active": "1", "csrf_token": CSRF},
+        cookies=_auth_cookies(),
+        headers={"Origin": ORIGIN},
+        follow_redirects=False,
+    )
+    assert r.status_code == 302
+    put = [c for c in fake_api.calls if c[0] == "PUT" and c[1] == "http://api:8002/api/rules/1"]
+    assert put and put[0][2] == {"active": "1"}
+
+
+def test_an_edit_that_does_not_carry_active_leaves_it_alone(
+    manage_client, fake_api: _FakeClient
+) -> None:
+    """The edit modal must not blank the flag by omitting it."""
+    r = manage_client.post(
+        "/manage/rules/1/edit",
+        data={"path": "/named/*", "action": "none", "csrf_token": CSRF},
+        cookies=_auth_cookies(),
+        headers={"Origin": ORIGIN},
+        follow_redirects=False,
+    )
+    assert r.status_code == 302
+    put = [c for c in fake_api.calls if c[0] == "PUT" and c[1] == "http://api:8002/api/rules/1"]
+    assert put and "active" not in put[0][2]
+
+
+def test_the_rule_status_switch_needs_the_csrf_token(manage_client, fake_api: _FakeClient) -> None:
+    r = manage_client.post(
+        "/manage/rules/1/edit",
+        data={"active": "0"},
+        cookies=_auth_cookies(),
+        headers={"Origin": ORIGIN},
+        follow_redirects=False,
+    )
+    assert r.status_code == 403
+
+
+def test_the_rule_status_switch_rejects_a_cross_origin_post(
+    manage_client, fake_api: _FakeClient
+) -> None:
+    r = manage_client.post(
+        "/manage/rules/1/edit",
+        data={"active": "0", "csrf_token": CSRF},
+        cookies=_auth_cookies(),
+        headers={"Origin": "https://evil.test"},
+        follow_redirects=False,
+    )
+    assert r.status_code == 403
+
+
+def test_a_refused_switch_is_logged(manage_client, monkeypatch, refusing_api: _FakeClient) -> None:
+    """A switch that silently does nothing would look like a dead control.
+
+    The API refuses switching the catch-all off, and the panel relays that
+    refusal into the container log rather than swallowing it — otherwise the
+    control just appears broken.
+    """
+    logged: list[Any] = []
+    monkeypatch.setattr(management_app, "_slog", lambda *a, **k: logged.append((a, k)))
+
+    r = manage_client.post(
+        "/manage/rules/2/edit",
+        data={"active": "0", "csrf_token": CSRF},
+        cookies=_auth_cookies(),
+        headers={"Origin": ORIGIN},
+        follow_redirects=False,
+    )
+
+    assert r.status_code == 302
+    assert any(a and a[0] == "rule_active_refused" for a, _ in logged), logged

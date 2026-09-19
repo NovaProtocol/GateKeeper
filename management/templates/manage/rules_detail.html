@@ -18,10 +18,10 @@
     <div class="card-body" style="padding:0">
       <div class="table-scroll" tabindex="0" role="region" aria-label="Rules in this group">
       <table class="codes-table">
-        <thead><tr><th>Order</th><th>Path</th><th>Action</th><th>Rate</th><th aria-label="Actions"></th></tr></thead>
+        <thead><tr><th>Order</th><th>Path</th><th>Action</th><th>Rate</th><th>Status</th><th aria-label="Actions"></th></tr></thead>
         <tbody>
         {% for r in rules %}
-        <tr>
+        <tr{% if r.active is sameas false %} class="inactive"{% endif %}>
           <td style="font-family:'JetBrains Mono',monospace">
             <div style="display:flex;align-items:center;gap:.35rem">
               <span title="display_order {{ r.display_order }}">{{ loop.index }}</span>
@@ -46,6 +46,19 @@
           <td style="font-family:'JetBrains Mono',monospace">{{ r.path }}{% if r.is_default %} <span class="tag tag-inactive">default</span>{% endif %}</td>
           <td><span class="tag {% if r.action=='deny' %}tag-inactive{% else %}tag-active{% endif %}" style="{% if r.action=='deny' %}background:var(--danger-dim);color:var(--danger){% endif %}">{{ r.action }}</span></td>
           <td style="font-size:.8rem;color:var(--text-secondary)">{{ r.rate_limit or '-' }}</td>
+          <td>
+            {# The switch means `active` and nothing else. A hidden `0` precedes the
+               checked box so an unchecked switch still sends a value; the later
+               value wins, which is the pattern `_submitted_settings` documents. #}
+            <form method="post" action="/manage/rules/{{ r.id }}/edit" style="margin:0">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <input type="hidden" name="active" value="0">
+              <label class="toggle"{% if r.is_default %} title="The catch-all cannot be deactivated — it is the group's fallback"{% else %} title="{{ 'Deactivate this rule' if r.active is not sameas false else 'Activate this rule' }}"{% endif %}>
+                <input type="checkbox" name="active" value="1" onchange="this.form.submit()"{% if r.active is not sameas false %} checked{% endif %}{% if r.is_default %} disabled aria-disabled="true"{% endif %} aria-label="{{ 'The catch-all cannot be deactivated' if r.is_default else ('Deactivate this rule' if r.active is not sameas false else 'Activate this rule') }}">
+                <span class="toggle-slider"></span>
+              </label>
+            </form>
+          </td>
           <td class="actions-cell">
             <div class="actions">
             <button class="btn icon-btn" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary);font-size:.75rem" onclick="openEditRule({{ r.id }}, '{{ r.path }}', '{{ r.action }}', {{ 'true' if r.is_default else 'false' }})" title="Edit rule" aria-label="Edit rule"><i class="fa-solid fa-pen" aria-hidden="true"></i></button>
@@ -58,7 +71,7 @@
           </td>
         </tr>
         {% else %}
-        <tr><td colspan="5" style="text-align:center;color:var(--text-secondary);padding:1.5rem">No rules in this group</td></tr>
+        <tr><td colspan="6" style="text-align:center;color:var(--text-secondary);padding:1.5rem">No rules in this group</td></tr>
         {% endfor %}
         </tbody>
       </table>
@@ -74,6 +87,10 @@
     The <code>/*</code> catch-all is the group's fallback and is <strong>forced last</strong>:
     it cannot be moved, renamed or deleted. Deleting the group is the only way to remove it,
     and a group always has one.
+    The <strong>Status</strong> switch takes a rule out of the walk: a switched-off rule is
+    <strong>skipped</strong>, so the request continues to the next matching rule below it —
+    normally the catch-all. It is never a refusal, and the catch-all's own switch is disabled
+    because a group without an active fallback would refuse everything it does not name.
   </p>
 </div>
 

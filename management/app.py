@@ -1494,9 +1494,30 @@ def create_app() -> FastAPI:
                 pwd = str(form.get("custom_password") or "").strip()
                 if pwd:
                     payload["custom_password"] = pwd
+        # The status switch posts to this same route: it means `active` and
+        # nothing else, so the value is relayed as it arrived. The API is what
+        # decides whether it is acceptable, including the refusal to switch the
+        # catch-all off.
+        if "active" in form:
+            payload["active"] = str(form.get("active"))
         try:
             client = _get_httpx()
-            await client.put(f"http://api:8002/api/rules/{rid}", json=payload, headers=_api_headers(), timeout=5.0)
+            r = await client.put(
+                f"http://api:8002/api/rules/{rid}",
+                json=payload,
+                headers=_api_headers(),
+                timeout=5.0,
+            )
+            if r.status_code >= 400:
+                # A refused switch must leave a trace in the log: a control that
+                # silently does nothing looks like a dead switch rather than a
+                # refused change.
+                _slog(
+                    "rule_active_refused",
+                    rid=rid,
+                    status=r.status_code,
+                    detail=r.text[:200],
+                )
         except Exception as e:
             _slog("rule_edit_failed", error=str(e))
         referer = request.headers.get("Referer") or "/manage/rules"

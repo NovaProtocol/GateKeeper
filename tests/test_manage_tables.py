@@ -250,15 +250,138 @@ def test_destructive_row_controls_keep_their_confirm(manage_client, monkeypatch)
     detail_html = _get(manage_client, "/manage/rules/10", monkeypatch, DETAIL_PAGE)
     assert "return confirm('Delete rule?')" in detail_html
 
-    # Codes: deactivation is reversible, so one confirm is enough. The permanent
-    # delete is a separate, typed confirmation checked on the server.
+    # Codes: the row now carries two separate controls, and only one of them is
+    # destructive. The switch is a state indicator — it maps to `active` and is
+    # reversible from the same control, so it asks for nothing and posts nothing
+    # but the flag. The irreversible path keeps its typed confirmation, which is
+    # checked on the server: the modal is the affordance, the route is the guard.
     codes_html = _get(manage_client, "/manage/codes", monkeypatch, CODES_PAGE)
-    assert "return switchAction(this, 3, 'Deactivate this code?')" in codes_html
+
+    # (a) the switch posts only csrf_token + active, to the unchanged route, and
+    #     carries neither a delete URL nor a confirm.
+    switch = re.search(
+        r'<label class="toggle"[^>]*>\s*<input[^>]*>\s*<span class="toggle-slider">',
+        codes_html,
+        re.S,
+    )
+    assert switch, "the row's active switch must render"
+    assert "toggleCodeActive(this, 3)" in codes_html
+    assert "/manage/codes/3/active" in codes_html
+    code_active_form = re.search(
+        r'<form method="post" action="/manage/codes/3/active"[^>]*>(.*?)</form>',
+        codes_html,
+        re.S,
+    )
+    assert code_active_form, "the switch must post through the unchanged active route"
+    form_html = code_active_form.group(1)
+    assert 'name="csrf_token"' in form_html
+    assert 'name="active"' in form_html
+    assert "delete" not in form_html, "the switch must not carry a delete URL"
+    # Nothing in the row's action cell asks for a confirmation: the switch's own
+    # change is reversible. (The words `confirm`/`delete` do appear elsewhere on
+    # the page — in the delete modal, which is the point.)
+    for cell in _action_cells(codes_html):
+        assert "confirm(" not in cell, "the row's switch must not prompt"
+
+    # (b) the row carries a separate trash control that does not post anywhere by
+    #     itself — it opens the modal.
+    delete_control = re.search(r"<button[^>]*js-delete-code[^>]*>", codes_html)
+    assert delete_control, "the row must carry a dedicated delete control"
+    assert 'type="button"' in delete_control.group(0)
+    assert "openDeleteCode(3, this)" in delete_control.group(0)
+    assert 'title="Delete code permanently"' in delete_control.group(0)
+    assert "</form>" not in delete_control.group(0), "the trash control must not post"
+
+    # (c) the destructive path still opens the modal and still needs the typed code.
+    assert 'id="deleteCodeModal"' in codes_html
     assert 'id="deleteCodeForm"' in codes_html
     assert 'name="confirm_code"' in codes_html
+    assert 'id="delete-code-shown"' in codes_html
+    assert "openDeleteCode" in codes_html
+    assert "$('#deleteCodeModal').modal('show')" in codes_html
 
     routing_html = _get(manage_client, "/manage/routing", monkeypatch, ROUTING_PAGE)
     assert "return confirm('Delete route?')" in routing_html
+
+
+def test_the_delete_mode_toggle_governs_the_trash_control(manage_client, monkeypatch) -> None:
+    """`#delete-mode` is unchanged in meaning, but it now shows the trash control.
+
+    It used to re-point the deactivate button at a delete; it now governs a
+    control that exists only for deletion, so the two capabilities are separate
+    and neither is weakened.
+    """
+    html = _get(manage_client, "/manage/codes", monkeypatch, CODES_PAGE)
+
+    assert 'id="delete-mode"' in html
+    assert "document.body.classList.toggle('delete-mode', this.checked)" in html
+    # The trash control starts hidden and is revealed by the toggle.
+    assert "js-delete-code" in html
+    assert "display:none" in re.search(r"<button[^>]*js-delete-code[^>]*>", html).group(0)
+    # The old icon-swapping handler is gone, not merely unused.
+    assert "switchAction" not in html
+
+
+def test_the_rule_status_switch_posts_to_the_existing_edit_route(
+    manage_client, monkeypatch
+) -> None:
+    """The column is a control change, not a route change."""
+    html = _get(manage_client, "/manage/rules/10", monkeypatch, DETAIL_PAGE)
+
+    assert "<th>Status</th>" in html
+    assert 'action="/manage/rules/1/edit"' in html
+    # A hidden `0` precedes the checked box, so an unchecked switch still posts a
+    # value and the later one wins.
+    status_form = re.search(
+        r'<form method="post" action="/manage/rules/1/edit"[^>]*>(.*?)</form>',
+        html,
+        re.S,
+    )
+    assert status_form, "the status switch must be a real form posting to the edit route"
+    body = status_form.group(1)
+    assert 'name="active" value="0"' in body
+    assert 'name="active" value="1"' in body
+    assert 'name="csrf_token"' in body
+    assert 'onchange="this.form.submit()"' in body
+
+
+def test_the_catch_all_switch_is_disabled_with_its_reason(manage_client, monkeypatch) -> None:
+    """A hidden control explains nothing; a disabled one carries its reason."""
+    html = _get(manage_client, "/manage/rules/10", monkeypatch, DETAIL_PAGE)
+
+    # Rule id 2 is the catch-all in the fixture.
+    catch_all_form = re.search(
+        r'<form method="post" action="/manage/rules/2/edit"[^>]*>(.*?)</form>',
+        html,
+        re.S,
+    )
+    assert catch_all_form, "the catch-all still renders a status control"
+    body = catch_all_form.group(1)
+    assert "disabled" in body
+    assert 'aria-disabled="true"' in body
+    assert 'title="The catch-all cannot be deactivated — it is the group\'s fallback"' in body
+
+    # And its control is present, not removed: the panel's own convention.
+    assert 'aria-label="The catch-all cannot be deactivated"' in body
+
+
+def test_an_inactive_rule_row_is_marked(manage_client, monkeypatch) -> None:
+    """Off is visible at a glance, not only in the switch's position."""
+    rules = [
+        {**GROUP_RULES[0], "active": False},
+        GROUP_RULES[1],
+    ]
+    html = _get(
+        manage_client,
+        "/manage/rules/10",
+        monkeypatch,
+        {**DETAIL_PAGE, "/api/groups/10/rules": rules},
+    )
+
+    assert '<tr class="inactive">' in html
+    assert 'aria-label="Activate this rule"' in html
+    # The catch-all in the same table is still on, so the class is per row.
+    assert html.count('<tr class="inactive">') == 1
 
 
 def test_default_group_and_catch_all_controls_are_disabled_not_hidden(
