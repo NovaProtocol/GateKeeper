@@ -1,0 +1,234 @@
+{% extends "base.html" %}
+{% block title %}Pages · GateKeeper{% endblock %}
+{% block content %}
+<style>
+.page-pattern{font-family:'JetBrains Mono',monospace;font-size:.8rem;background:var(--bg-primary);padding:.2rem .5rem;border-radius:4px;border:1px solid var(--border)}
+.govern{font-size:.78rem;color:var(--text-secondary)}
+.govern a{color:var(--accent)}
+.govern .never{color:var(--danger)}
+.test-result{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;margin-right:auto;font-size:.75rem;font-family:'JetBrains Mono',monospace}
+.test-result .test-ok{color:var(--accent)}
+.test-result .test-bad{color:var(--danger)}
+.test-result .test-warn{color:var(--text-secondary)}
+.test-result .test-pending{color:var(--text-secondary)}
+</style>
+<div class="container">
+  <div class="stat-strip">
+    <div class="stat"><span class="stat-label">Total pages</span> <span class="stat-value">{{ pages|length }}</span></div>
+    <div class="stat"><span class="stat-label">Active</span> <span class="stat-value">{{ active_count }}</span></div>
+    <div class="stat"><span class="stat-label">Inactive</span> <span class="stat-value">{{ inactive_count }}</span></div>
+    <div class="stat"><span class="stat-label">Served</span> <span class="stat-value">{{ served_count }}</span></div>
+  </div>
+  <div class="card">
+    <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.75rem">
+      <h2>Custom Pages</h2>
+      <div class="header-actions">
+        <button class="btn btn-accent icon-btn" data-toggle="modal" data-target="#addPageModal" title="Add Page" aria-label="Add Page"><i class="fa-solid fa-plus" aria-hidden="true"></i></button>
+      </div>
+    </div>
+    <div class="card-body" style="padding:0">
+      <div class="table-scroll" tabindex="0" role="region" aria-label="Custom pages">
+      <table class="codes-table">
+        <thead><tr><th>Priority</th><th>Pattern</th><th>Governing rule</th><th>Content type</th><th>Status</th><th aria-label="Actions"></th></tr></thead>
+        <tbody>
+        {% for p in pages %}
+        <tr{% if not p.active %} class="inactive"{% endif %}>
+          <td style="font-family:'JetBrains Mono',monospace">
+            <div style="display:flex;align-items:center;gap:.35rem">
+              <span title="display_order {{ p.display_order }}">{{ loop.index }}</span>
+              <span style="display:flex;flex-direction:column;gap:.15rem">
+                {% set can_up = not loop.first %}
+                {% set can_down = not loop.last %}
+                <form method="post" action="/manage/pages/{{ p.id }}/order" style="display:inline;margin:0">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                  <input type="hidden" name="direction" value="up">
+                  <button class="btn" title="Move up{{ '' if can_up else ' (already first)' }}"{% if not can_up %} disabled aria-disabled="true"{% endif %} style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary);padding:0 .3rem;font-size:.65rem;line-height:1.1"><i class="fa-solid fa-chevron-up" aria-hidden="true"></i></button>
+                </form>
+                <form method="post" action="/manage/pages/{{ p.id }}/order" style="display:inline;margin:0">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                  <input type="hidden" name="direction" value="down">
+                  <button class="btn" title="Move down{{ '' if can_down else ' (already last)' }}"{% if not can_down %} disabled aria-disabled="true"{% endif %} style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary);padding:0 .3rem;font-size:.65rem;line-height:1.1"><i class="fa-solid fa-chevron-down" aria-hidden="true"></i></button>
+                </form>
+              </span>
+            </div>
+          </td>
+          <td>
+            <span class="page-pattern">{{ p.pattern }}</span>
+            {% if p.reach_warning %}<br><span class="tag tag-inactive" title="{{ p.reach_warning }}">never served</span>{% endif %}
+          </td>
+          <td class="govern">
+            {% if p.governance.resolved %}
+              {% if p.governance.no_group %}
+                {{ p.governance.sentence }}
+              {% else %}
+                This page is governed by Rule <a href="/manage/rules/{{ p.governance.group_id }}">{{ p.governance.group_name }}</a> - {{ p.governance.rule_path }} : {{ p.governance.label }}{% if not p.governance.served %}<br><span class="never">This page is not served — the request follows the gate instead.</span>{% endif %}
+              {% endif %}
+              <br><span title="A wildcard pattern can span hosts governed by different groups; this is the group that governs the sample URL.">sample: <code>{{ p.governance.host }}{{ p.governance.path }}</code></span>
+            {% else %}
+              {{ p.governance.reason }}
+            {% endif %}
+          </td>
+          <td style="font-family:'JetBrains Mono',monospace;font-size:.78rem">{{ p.content_type }}</td>
+          <td>
+            <form method="post" action="/manage/pages/{{ p.id }}/active" style="display:inline;margin:0">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <input type="hidden" name="active" value="{{ '0' if p.active else '1' }}">
+              <span class="toggle-wrapper">
+                <label class="toggle" title="{{ 'Deactivate this page' if p.active else 'Activate this page' }}">
+                  <input type="checkbox" {% if p.active %}checked{% endif %} onchange="this.form.submit()" aria-label="{{ 'Deactivate this page' if p.active else 'Activate this page' }}">
+                  <span class="toggle-slider"></span>
+                </label>
+                <span>{{ 'Active' if p.active else 'Inactive' }}</span>
+              </span>
+            </form>
+          </td>
+          <td class="actions-cell">
+            <div class="actions">
+            <button class="btn icon-btn" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary);font-size:.75rem" onclick="openEditPage({{ p.id }}, {{ p.pattern|tojson }}, {{ p.body|tojson }}, {{ p.content_type|tojson }}, {{ p.governance.sentence|tojson }}, {{ p.governance.served|tojson }})" title="Edit page" aria-label="Edit page"><i class="fa-solid fa-pen" aria-hidden="true"></i></button>
+            {% if p.sample_url %}<a href="{{ p.sample_url }}" target="_blank" rel="noopener" class="btn icon-btn" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary);font-size:.75rem" title="Open the sample URL" aria-label="Open the sample URL"><i class="fa-solid fa-arrow-up-right-from-square" aria-hidden="true"></i></a>{% endif %}
+            <form method="post" action="/manage/pages/{{ p.id }}/delete" onsubmit="return confirm('Delete this page?')" style="display:inline">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <button type="submit" class="btn btn-outline-danger icon-btn" title="Delete page" aria-label="Delete page"><i class="fa-solid fa-trash" aria-hidden="true"></i></button>
+            </form>
+            </div>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" style="text-align:center;color:var(--text-secondary);padding:1.5rem">No custom pages</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="modal fade" id="addPageModal" tabindex="-1" role="dialog" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered" role="document">
+    <div class="modal-content" style="background:var(--bg-card);border:1px solid var(--border);border-radius:8px">
+      <form method="post" action="/manage/pages">
+        <div class="modal-header" style="border-bottom:1px solid var(--border)">
+          <h5 class="modal-title" style="color:var(--text-primary)">Add Custom Page</h5>
+          <button type="button" class="close" data-dismiss="modal" aria-label="Close" style="color:var(--text-secondary)"><span aria-hidden="true">&times;</span></button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <div class="form-group">
+            <label for="add-pattern" style="color:var(--text-secondary);font-size:.85rem">Pattern <span style="color:var(--danger)">*</span></label>
+            <input type="text" class="form-control" id="add-pattern" name="pattern" placeholder="*.projectnova.download/robots.txt" required>
+            <small style="color:var(--text-secondary)">host-glob/path-glob. <code>*</code> spans any characters including <code>/</code>, <code>?</code> matches one. The gate is consulted first on the gatekeeper host and the apex for <code>/</code>, <code>/login</code>, <code>/logout</code> and <code>/manage/*</code>.</small>
+          </div>
+          <div class="form-group">
+            <label for="add-content-type" style="color:var(--text-secondary);font-size:.85rem">Content type</label>
+            <input type="text" class="form-control" id="add-content-type" name="content_type" value="text/plain; charset=utf-8">
+            <small style="color:var(--text-secondary)">Sent unchanged. <code>nosniff</code> makes this value authoritative, so do not label an HTML body <code>text/plain</code>.</small>
+          </div>
+          <div class="form-group">
+            <label for="add-body" style="color:var(--text-secondary);font-size:.85rem">Body</label>
+            <textarea class="form-control" id="add-body" name="body" rows="8" style="font-family:'JetBrains Mono',monospace;font-size:.78rem"></textarea>
+            <small style="color:var(--text-secondary)">Served byte for byte. No sanitising, no escaping.</small>
+          </div>
+        </div>
+        <div class="modal-footer" style="border-top:1px solid var(--border)">
+          <span id="add-test-result" class="test-result" role="status" aria-live="polite"></span>
+          <button type="button" class="btn icon-btn" onclick="testPageDraft('add')" title="Test before saving" aria-label="Test before saving"><i class="fa-solid fa-vial" aria-hidden="true"></i></button>
+          <button type="button" class="btn btn-secondary icon-btn" data-dismiss="modal" title="Cancel" aria-label="Cancel"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
+          <button type="submit" class="btn btn-accent icon-btn" title="Create" aria-label="Create"><i class="fa-solid fa-plus" aria-hidden="true"></i></button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<div class="modal fade" id="editPageModal" tabindex="-1" role="dialog" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered" role="document">
+    <div class="modal-content" style="background:var(--bg-card);border:1px solid var(--border);border-radius:8px">
+      <form method="post" id="editPageForm">
+        <div class="modal-header" style="border-bottom:1px solid var(--border)">
+          <h5 class="modal-title" style="color:var(--text-primary)">Edit Custom Page</h5>
+          <button type="button" class="close" data-dismiss="modal" aria-label="Close" style="color:var(--text-secondary)"><span aria-hidden="true">&times;</span></button>
+        </div>
+        <div class="modal-body">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <p id="edit-page-govern" class="govern" style="margin-bottom:1rem"></p>
+          <div class="form-group">
+            <label for="edit-pattern" style="color:var(--text-secondary);font-size:.85rem">Pattern <span style="color:var(--danger)">*</span></label>
+            <input type="text" class="form-control" id="edit-pattern" name="pattern" required>
+          </div>
+          <div class="form-group">
+            <label for="edit-content-type" style="color:var(--text-secondary);font-size:.85rem">Content type</label>
+            <input type="text" class="form-control" id="edit-content-type" name="content_type">
+          </div>
+          <div class="form-group">
+            <label for="edit-body" style="color:var(--text-secondary);font-size:.85rem">Body</label>
+            <textarea class="form-control" id="edit-body" name="body" rows="8" style="font-family:'JetBrains Mono',monospace;font-size:.78rem"></textarea>
+          </div>
+        </div>
+        <div class="modal-footer" style="border-top:1px solid var(--border)">
+          <span id="edit-test-result" class="test-result" role="status" aria-live="polite"></span>
+          <button type="button" class="btn icon-btn" onclick="testPageDraft('edit')" title="Test before saving" aria-label="Test before saving"><i class="fa-solid fa-vial" aria-hidden="true"></i></button>
+          <button type="button" class="btn btn-secondary icon-btn" data-dismiss="modal" title="Cancel" aria-label="Cancel"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
+          <button type="submit" class="btn btn-accent icon-btn" title="Save" aria-label="Save"><i class="fa-solid fa-floppy-disk" aria-hidden="true"></i></button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+<script>
+const _pageCsrf="{{ csrf_token }}";
+function openEditPage(id, pattern, body, contentType, governSentence, served){
+  document.getElementById('edit-pattern').value=pattern;
+  document.getElementById('edit-body').value=body;
+  document.getElementById('edit-content-type').value=contentType;
+  document.getElementById('edit-page-govern').textContent=governSentence||'';
+  document.getElementById('editPageForm').action='/manage/pages/'+id+'/edit';
+  $('#editPageModal').modal('show');
+}
+function _setPageResult(which,parts){
+  const el=document.getElementById(which+'-test-result');
+  if(!el) return;
+  el.innerHTML=parts.map(function(p){return '<span class="test-'+p.state+'">'+p.label+'</span>';}).join(' ');
+}
+/* The same host/path split the gate uses, so the probe asks about a URL the
+   pattern is meant to cover rather than about the pattern itself. */
+function _pageSample(pattern){
+  const i=pattern.indexOf('/');
+  if(i<0) return null;
+  const host=pattern.slice(0,i).replace(/[*?]+/g,'x')||'';
+  const path='/'+pattern.slice(i+1).replace(/[*?]+/g,'x');
+  if(!host) return null;
+  return {host:host, path:path};
+}
+async function testPageDraft(which){
+  const patternInput=document.getElementById(which==='add'?'add-pattern':'edit-pattern');
+  const pattern=patternInput?patternInput.value.trim():'';
+  const sample=_pageSample(pattern);
+  if(!pattern){_setPageResult(which,[{state:'bad',label:'enter a pattern first'}]);return;}
+  if(!sample){_setPageResult(which,[{state:'bad',label:'pattern needs a host and a /'}]);return;}
+  _setPageResult(which,[{state:'pending',label:'testing…'}]);
+  let gate;
+  try{
+    const r=await fetch('/manage/rules/test',{method:'POST',
+      headers:{'Content-Type':'application/json','X-CSRF-Token':_pageCsrf,'Accept':'application/json'},
+      body:JSON.stringify({csrf_token:_pageCsrf,host:sample.host,path:sample.path})});
+    gate=await r.json().catch(()=>({ok:false,error:'bad response'}));
+  }catch(e){gate={ok:false,error:'request failed'};}
+  const parts=[];
+  if(gate.matched_group!==undefined||gate.action){
+    parts.push({state:gate.action==='none'?'ok':'warn',
+      label:'sample '+sample.host+sample.path+' → '+(gate.action||'?')+' via '+(gate.matched_group||'(no group)')});
+    if(gate.action!=='none'){
+      parts.push({state:'bad',label:'not served: the gate answers this path first'});
+    }
+    const w=Array.isArray(gate.warnings)?gate.warnings:[];
+    if(w.length){
+      parts.push({state:'bad',label:'shadowed: '+w.map(function(x){
+        return String(x.rule||x.path||x.message||JSON.stringify(x)).replace(/[<>&]/g,'');}).join(', ')});
+    }
+  }else{
+    parts.push({state:'bad',label:'gate: '+(gate.detail||gate.error||'no answer')});
+  }
+  _setPageResult(which,parts);
+}
+</script>
+{% endblock %}

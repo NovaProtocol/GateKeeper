@@ -153,10 +153,22 @@ CODES = [
     },
 ]
 
+PAGE_ROWS: list[dict[str, Any]] = [
+    {
+        "id": 7,
+        "pattern": "*.projectnova.download/robots.txt",
+        "body": "User-agent: *\nDisallow: /\n",
+        "content_type": "text/plain; charset=utf-8",
+        "active": True,
+        "display_order": 0,
+    }
+]
+
 PAYLOADS = {
     "/api/groups": GROUPS,
     "/api/groups/10/rules": RULES,
     "/api/routes": ROUTES,
+    "/api/pages": PAGE_ROWS,
     "/api/codes": CODES,
 }
 
@@ -165,6 +177,7 @@ PAGES = [
     ("/manage/rules/10", "Rules"),
     ("/manage/codes", "Access Codes"),
     ("/manage/routing", "Routing"),
+    ("/manage/pages", "Custom Pages"),
 ]
 
 WIDTHS = [1440, 1280, 1024, 820, 600, 420]
@@ -192,7 +205,9 @@ class _FakeClient:
         return _FakeResponse({})
 
     async def post(self, url: str, **kwargs: Any) -> _FakeResponse:
-        return _FakeResponse({})
+        path = url.split("http://api:8002", 1)[-1]
+        # `POST /api/dry-run` resolves each page row's governing rule.
+        return _FakeResponse(PAYLOADS.get(path, {}))
 
     async def delete(self, url: str, **kwargs: Any) -> _FakeResponse:
         return _FakeResponse({})

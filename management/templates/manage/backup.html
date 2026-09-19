@@ -35,7 +35,7 @@
       <div class="card-header"><h2><i class="fa-solid fa-download" aria-hidden="true"></i> Export</h2></div>
       <div class="card-body">
         <p class="backup-note" style="margin-top:0">
-          Downloads the whole configuration as signed plain JSON: routes, rule groups, rules, access codes and settings.
+          Downloads the whole configuration as signed plain JSON: routes, rule groups, rules, access codes, settings and custom pages.
           Audit logs are not included; they are history, not configuration.
         </p>
         <table class="backup-counts">
@@ -46,6 +46,7 @@
             <tr><td>rules</td><td>{{ counts.rules }}</td></tr>
             <tr><td>codes</td><td>{{ counts.codes }}</td></tr>
             <tr><td>settings</td><td>{{ counts.settings }}</td></tr>
+            <tr><td>pages</td><td>{{ counts.pages }}</td></tr>
           </tbody>
         </table>
         <div class="backup-actions">

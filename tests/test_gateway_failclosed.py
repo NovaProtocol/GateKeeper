@@ -90,10 +90,15 @@ def make_route(host: str, upstream: str, port: int, rid: int = 1) -> Route:
     return route
 
 
-def install_cache(groups: list[RuleGroup], routes: list[Route] | None = None) -> None:
+def install_cache(
+    groups: list[RuleGroup],
+    routes: list[Route] | None = None,
+    pages: list[Any] | None = None,
+) -> None:
     module = gateway_module()
     module._CacheGroups = groups
     module._CacheRoutes = routes or []
+    module._CachePages = pages or []
     module._CacheTs = time.monotonic()
 
 
@@ -138,12 +143,23 @@ def upstream() -> Any:
 @pytest.fixture(autouse=True)
 def _isolate_gateway_state(upstream: Any) -> Any:
     module = gateway_module()
-    saved = (module._CacheGroups, module._CacheRoutes, module._CacheTs, dict(module._SettingCache))
+    saved = (
+        module._CacheGroups,
+        module._CacheRoutes,
+        module._CachePages,
+        module._CacheTs,
+        dict(module._SettingCache),
+    )
     _UpstreamHandler.hits.clear()
     yield
-    module._CacheGroups, module._CacheRoutes, module._CacheTs = saved[0], saved[1], saved[2]
+    module._CacheGroups, module._CacheRoutes, module._CachePages, module._CacheTs = (
+        saved[0],
+        saved[1],
+        saved[2],
+        saved[3],
+    )
     module._SettingCache.clear()
-    module._SettingCache.update(saved[3])
+    module._SettingCache.update(saved[4])
 
 
 def forward_auth(client: Any, host: str, path: str) -> Any:

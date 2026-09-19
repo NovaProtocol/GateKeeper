@@ -21,9 +21,10 @@ project/
 │ ├── config.py # pydantic-settings: SECRET_KEY, MANAGE_PASSWORD, DATABASE_URL, INTERNAL_API_KEY, DEPLOYMENT_TYPE, BACKUP_CODE
 │ ├── jwt.py # PyJWT HS256 iss=gatekeeper aud=projectnova.download exp configurable/8h/configurable + jti
 │ ├── csp.py # the site-wide security headers (CONTENT_SECURITY_POLICY, SECURITY_HEADERS, apply_security_headers)
-│ ├── models.py # 6 tables + settings + audit_logs (routes, rule_groups, rules, codes, settings, audit_logs with method/status_code/attempted_code/country)
+│ ├── models.py # 7 tables + settings + audit_logs (routes, rule_groups, rules, codes, custom_pages, settings, audit_logs with method/status_code/attempted_code/country)
 │ ├── settings_spec.py # the settings table: accepted values, defaults, fallback direction
 │ ├── security.py # pbkdf2_hmac sha512 100k, host_matches, path_matches, mask_code, apex_domain
+│ ├── pages.py # custom-page patterns: split_pattern, glob_match, sample_from_pattern
 │ ├── gate.py # rule dispatch + the unmatched-request decision (find_group_rule, resolve_rule_action)
 │ ├── geo.py # country resolution from CF-IPCountry + the static centroid table (country level only)
 │ ├── backup.py # signed plain-JSON export/restore of the config tables (HMAC-SHA256 over `config`)
@@ -50,7 +51,7 @@ project/
 
 All healthchecks: `python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:<port>/health')"`.
 
-## Data Model (6 tables + settings)
+## Data Model (7 tables + settings)
 
 | Table | Key columns |
 |-------|-------------|
@@ -58,6 +59,7 @@ All healthchecks: `python -c "import urllib.request; urllib.request.urlopen('htt
 | `rule_groups` | `name unique, domain, display_order, is_default` |
 | `rules` | `group_id, path, action(access_code|none|custom_password|deny), custom_password_hash/salt, allow_ip, allow_time, rate_limit, display_order, is_default` |
 | `codes` | `code unique, label, display_name, active, last_accessed` |
+| `custom_pages` | `pattern unique (host-glob/path-glob), body, content_type, active, display_order, created_at, updated_at` |
 | `settings` | `key PK, value, updated_at`. Keys the panel edits: `unmatched_action` (`access_code`/`deny`/`none`), `rate_limit_access_code_per_min` (1..1000), `session_lifetime_hours` (1..720), `maintenance_mode` (`true`/`false`), `maintenance_message` (≤200 chars), `log_retention_days` (7..3650), `geo_lookup_enabled` (`true`/`false`). The accepted values, defaults and fallback direction for each live in `shared/settings_spec.py`, which the API validator, both reader services and the manage form all read |
 | `audit_logs` | `ts, ip, host, path, action, code_id, rule_group_id, rule_id, method, status_code, attempted_code, country, latency_ms, request_id, user_agent, referer` |
 
@@ -92,21 +94,30 @@ request
           ↑ session_lifetime_hours is read where a cookie is minted, not here
 ```
 
+Serving order once the action is known:
+
+```
+maintenance → custom page (only when the action is `none`) → rule dispatch
+            → cookie → ?access_code= → redirect
+```
+
 Steps 2 and 3 are `shared/gate.py` and are the fail-closed core: a group that matched the host with no matching rule is always refused, while a host in no group follows `unmatched_action`. Step 1 sits above both so the maintenance switch means the same thing on every host and cannot be reached around. Because step 1 runs first, a request that `access_code` would have gated receives the `503` instead of a login redirect while maintenance is on, and turning it off restores exactly the previous behaviour. See [Auth Flow](auth-flow.md) for the decision table and [Rules](rules.md) for the catch-all invariant.
 
 ### Configuration vs history
 
-The five tables above (`routes`, `rule_groups`, `rules`, `codes`, `settings`) are
-**configuration**: they hold only in the `gatekeeper_data` volume, are not seeded
-from git, and have no migration to undo. `audit_logs` is **history** and is never
-touched by a configuration change.
+The six tables above (`routes`, `rule_groups`, `rules`, `codes`, `custom_pages`,
+`settings`) are **configuration**: they hold only in the `gatekeeper_data` volume,
+are not seeded from git, and have no migration to undo. `audit_logs` is
+**history** and is never touched by a configuration change.
 
 `shared/backup.py` exports the configuration as signed plain JSON and restores it
-in one transaction. The signature (HMAC-SHA256 over the canonicalised `config`,
-keyed by `SECRET_KEY`) covers integrity only: the file contains every access code
-in cleartext. Row ids are preserved so `audit_logs.code_id` / `rule_id` /
-`rule_group_id` keep resolving; a reference the restored configuration no longer
-satisfies is nulled, never cascaded into a deleted log row. See Backup & Restore.
+in one transaction. `custom_pages` is exported as an **optional** section, so a
+file written before it existed still validates and restores. The signature
+(HMAC-SHA256 over the canonicalised `config`, keyed by `SECRET_KEY`) covers
+integrity only: the file contains every access code in cleartext. Row ids are
+preserved so `audit_logs.code_id` / `rule_id` / `rule_group_id` keep resolving; a
+reference the restored configuration no longer satisfies is nulled, never
+cascaded into a deleted log row. See Backup & Restore.
 
 ### DB Init
 
@@ -118,10 +129,11 @@ satisfies is nulled, never cascaded into a deleted log row. See Backup & Restore
 Browser → Caddy :7000 → Auth Gateway :8001 /api/authz/forward-auth
  ├─ Rule lookup: RuleGroups ASC display_order → host_matches → Rules ASC → path_matches → first wins
  ├─ 200 / 302 / 403 per rule action
+ ├─ on a `none` action: serve the matching custom page, if one exists
  └─ on pass: longest-path Route match → proxy to upstream or redirect
 ```
 
-Cache: in-memory `RuleGroup+Route` polled every `CACHE_TTL=5s` under `asyncio.Lock` via `GET http://api:8002/api/routes|groups|rules` (`X-Internal-Api-Key` on `net-api` `internal:true`) — only `api:8002` imports `shared/db.py`. Code verification is `POST /api/auth/verify-*` on `net-api`. Audit via `BackgroundTasks → POST http://api:8002/api/logs` (`X-Internal-Api-Key` `internal:true`) + rate-limit `POST /api/auth/check-rate-limit {ip}` for `?access_code=` tries/min; `POST /api/routes/{id}/test` and `POST /api/routes/test` both `socket.create_connection((upstream,port))` and need `api` on `gatekeeper` to reach `portfolio_main:8000` etc.
+Cache: in-memory `RuleGroup+Route+custom page` polled every `CACHE_TTL=5s` under `asyncio.Lock` via `GET http://api:8002/api/routes|groups|rules|pages` (`X-Internal-Api-Key` on `net-api` `internal:true`) — only `api:8002` imports `shared/db.py`. Code verification is `POST /api/auth/verify-*` on `net-api`. Audit via `BackgroundTasks → POST http://api:8002/api/logs` (`X-Internal-Api-Key` `internal:true`) + rate-limit `POST /api/auth/check-rate-limit {ip}` for `?access_code=` tries/min; `POST /api/routes/{id}/test` and `POST /api/routes/test` both `socket.create_connection((upstream,port))` and need `api` on `gatekeeper` to reach `portfolio_main:8000` etc.
 
 ## Security headers
 

@@ -90,12 +90,23 @@ def _isolate_gateway_state() -> Any:
     handle would fail for a reason that has nothing to do with the code here.
     """
     module = gateway_module()
-    saved = (module._CacheGroups, module._CacheRoutes, module._CacheTs, dict(module._SettingCache))
+    saved = (
+        module._CacheGroups,
+        module._CacheRoutes,
+        module._CachePages,
+        module._CacheTs,
+        dict(module._SettingCache),
+    )
     module._httpx_client = None
     yield
-    module._CacheGroups, module._CacheRoutes, module._CacheTs = saved[0], saved[1], saved[2]
+    module._CacheGroups, module._CacheRoutes, module._CachePages, module._CacheTs = (
+        saved[0],
+        saved[1],
+        saved[2],
+        saved[3],
+    )
     module._SettingCache.clear()
-    module._SettingCache.update(saved[3])
+    module._SettingCache.update(saved[4])
     module._httpx_client = None
 
 

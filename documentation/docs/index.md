@@ -15,7 +15,7 @@ FastAPI gateway that protects every web app on one apex domain behind a signed a
 | **MySQL** | `gatekeeper_db` | `:3306` | Primary store | `net-data` |
 | **Documentation** | `gatekeeper_documentation` | `:8005` | MkDocs (FastAPI + granian) | `default` |
 
-Shared layer `shared/` holds `config.py` (pydantic-settings), `jwt.py` (`PyJWT HS256` `iss=gatekeeper` `aud=projectnova.download`, visitor `exp` = `session_lifetime_hours`, `manage_session` `8h`), `models.py` (6 tables + `settings` + `audit_logs` with `method/status_code/attempted_code`), `settings_spec.py` (the settings keys, their accepted values and their fallback direction, read by the API validator, both reader services and the manage form), `security.py` (pbkdf2, host/path match), `gate.py` (rule dispatch + the unmatched-request decision, shared by both gate paths), `rule_defaults.py` (catch-all backfill), `backup.py` (signed config export), `error_pages.py`; `shared/db.py` (async engine) is imported only by `api:8002` (`net-data` sole writer `gatekeeper_data` + `mysql_data`).
+Shared layer `shared/` holds `config.py` (pydantic-settings), `jwt.py` (`PyJWT HS256` `iss=gatekeeper` `aud=projectnova.download`, visitor `exp` = `session_lifetime_hours`, `manage_session` `8h`), `models.py` (7 tables + `settings` + `audit_logs` with `method/status_code/attempted_code`), `settings_spec.py` (the settings keys, their accepted values and their fallback direction, read by the API validator, both reader services and the manage form), `security.py` (pbkdf2, host/path match), `pages.py` (custom-page patterns: split, glob match, a representative sample), `gate.py` (rule dispatch + the unmatched-request decision, shared by both gate paths), `rule_defaults.py` (catch-all backfill), `backup.py` (signed config export), `error_pages.py`; `shared/db.py` (async engine) is imported only by `api:8002` (`net-data` sole writer `gatekeeper_data` + `mysql_data`).
 
 ```mermaid
 graph TB
@@ -36,6 +36,7 @@ Request → Caddy → Auth Gateway /api/authz/forward-auth
  ├─ valid gatekeeper_token → 200 → proxy to Route upstream
  ├─ valid ?access_code= → 302 + Set-Cookie (apex)
  ├─ valid custom_password → 200 (per rule)
+ ├─ rule action `none` + a matching custom page → the page body
  ├─ no rule matched in a matching group → 302 (always, see Rules)
  └─ no group matched the host → `unmatched_action` (default 302)
 ```
@@ -53,6 +54,7 @@ Request → Caddy → Auth Gateway /api/authz/forward-auth
 | [Docker](docker.md) | Images, compose, healthchecks |
 | [Routes](routes.md) | DB-driven host→upstream |
 | [Rules](rules.md) | Groups, actions, shadowing |
+| [Custom Pages](custom-pages.md) | Owner-authored bodies the gateway serves itself, matched by host+path glob |
 | [Logs & Audit](logs.md) | Audit, visitor country, the viewer map, top pages, settings, dry-run |
 
 ## How it is built

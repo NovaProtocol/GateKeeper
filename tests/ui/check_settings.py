@@ -190,9 +190,10 @@ def _install(
     routes: list[Route] | None = None,
     **settings: str,
 ) -> None:
-    """Seed both module-scoped caches, which is the only way to load them here."""
+    """Seed the module-scoped caches, which is the only way to load them here."""
     module._CacheGroups = groups
     module._CacheRoutes = routes or []
+    module._CachePages = []
     module._CacheTs = time.monotonic()
     module._SettingCache.clear()
     _install_settings(module, **settings)
