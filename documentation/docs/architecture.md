@@ -57,7 +57,7 @@ All healthchecks: `python -c "import urllib.request; urllib.request.urlopen('htt
 |-------|-------------|
 | `routes` | `host, path, route_type(proxy|redirect), upstream, port, redirect_target, redirect_code` |
 | `rule_groups` | `name unique, domain, display_order, is_default` |
-| `rules` | `group_id, path, action(access_code|none|custom_password|deny), custom_password_hash/salt, allow_ip, allow_time, rate_limit, display_order, is_default` |
+| `rules` | `group_id, path, action(access_code|none|custom_password|deny), custom_password_hash/salt, allow_ip, allow_time, rate_limit, display_order, is_default, active` |
 | `codes` | `code unique, label, display_name, active, last_accessed` |
 | `custom_pages` | `pattern unique (host-glob/path-glob), body, content_type, active, display_order, created_at, updated_at` |
 | `settings` | `key PK, value, updated_at`. Keys the panel edits: `unmatched_action` (`access_code`/`deny`/`none`), `rate_limit_access_code_per_min` (1..1000), `session_lifetime_hours` (1..720), `maintenance_mode` (`true`/`false`), `maintenance_message` (≤200 chars), `log_retention_days` (7..3650), `geo_lookup_enabled` (`true`/`false`). The accepted values, defaults and fallback direction for each live in `shared/settings_spec.py`, which the API validator, both reader services and the manage form all read |

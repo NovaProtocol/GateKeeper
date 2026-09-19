@@ -377,6 +377,185 @@ def test_deny_rule_still_denies(gateway_client: Any, upstream: Any) -> None:
     assert _UpstreamHandler.hits == []
 
 
+# --------------------------------------------------------------------------- #
+# `Rule.active` at the gate: the switch is real on both paths
+#
+# This is the suite that matters for the flag. If the gateway's cache dropped the
+# value — the one place where "it works in the panel and does nothing at the gate"
+# could happen — every test below would fail while the panel looked correct.
+# --------------------------------------------------------------------------- #
+
+
+def _deactivate(group: RuleGroup, path: str) -> None:
+    rule = next(r for r in group.rules if r.path == path)
+    rule.active = False
+
+
+def test_a_deactivated_rule_is_skipped_so_the_catch_all_decides(
+    gateway_client: Any, upstream: Any
+) -> None:
+    """Fall-through, not deny: the request is served by the rule below it."""
+    group = make_group(1, "portfolio", HOST, [("/private/*", "deny"), ("/*", "none")])
+    _deactivate(group, "/private/*")
+    install_cache([group], [make_route(HOST, *upstream)])
+
+    via_forward_auth = forward_auth(gateway_client, HOST, "/private/app")
+    via_proxy = proxy(gateway_client, HOST, "/private/app")
+
+    assert via_forward_auth.status_code == 200
+    assert via_proxy.status_code == 200
+    assert _UpstreamHandler.hits == ["/private/app"]
+
+
+def test_a_deactivated_rule_no_longer_gates(gateway_client: Any, upstream: Any) -> None:
+    """The same switch, in the other direction: an allow can be taken away."""
+    group = make_group(1, "portfolio", HOST, [("/public/*", "none"), ("/*", "access_code")])
+    _deactivate(group, "/public/*")
+    install_cache([group], [make_route(HOST, *upstream)])
+
+    via_forward_auth = forward_auth(gateway_client, HOST, "/public/app")
+    via_proxy = proxy(gateway_client, HOST, "/public/app")
+
+    assert via_forward_auth.status_code == 302
+    assert via_proxy.status_code == 302
+    assert _UpstreamHandler.hits == []
+
+
+def test_a_group_whose_only_matching_rule_is_off_is_still_refused(
+    gateway_client: Any, upstream: Any
+) -> None:
+    """The fail-closed branch, and the reason the catch-all cannot be switched off.
+
+    With the only matching rule inactive, the group matched the host and no active
+    rule matched the path, so the request is refused unconditionally — the setting
+    must not be able to re-open it.
+    """
+    group = make_group(1, "portfolio", HOST, [("/private/*", "none")])
+    _deactivate(group, "/private/*")
+    install_action("none")
+    install_cache([group], [make_route(HOST, *upstream)])
+
+    via_forward_auth = forward_auth(gateway_client, HOST, "/private/app")
+    via_proxy = proxy(gateway_client, HOST, "/private/app")
+
+    assert via_forward_auth.status_code == 302
+    assert via_proxy.status_code == 302
+    assert _UpstreamHandler.hits == []
+
+
+def test_a_rule_whose_flag_is_unset_still_governs(gateway_client: Any, upstream: Any) -> None:
+    """The partially-deployed case, through the real gate.
+
+    A cache built by an API that does not send `active` carries no value for it,
+    and a row read before the column existed reads as NULL. Both must read as
+    *active*: if silence meant "off", an un-upgraded API would hand every host to
+    whatever sits below each rule. `None is not False`, so it governs.
+    """
+    group = make_group(1, "portfolio", HOST, [("/private/*", "deny"), ("/*", "none")])
+    for rule in group.rules:
+        rule.active = None
+    install_cache([group], [make_route(HOST, *upstream)])
+
+    assert forward_auth(gateway_client, HOST, "/private/app").status_code == 403
+    assert proxy(gateway_client, HOST, "/private/app").status_code == 403
+
+
+class _CacheResponse:
+    def __init__(self, payload: Any) -> None:
+        self.status_code = 200
+        self._payload = payload
+
+    def json(self) -> Any:
+        return self._payload
+
+    def raise_for_status(self) -> None:
+        return None
+
+
+class _CacheClient:
+    """Stands in for httpx, answering the three cache reads."""
+
+    def __init__(self, rules_payload: list[dict[str, Any]]) -> None:
+        self.rules_payload = rules_payload
+
+    async def get(self, url: str, **kwargs: Any) -> _CacheResponse:
+        if url.endswith("/api/routes"):
+            return _CacheResponse([])
+        if url.endswith("/api/pages"):
+            return _CacheResponse([])
+        if url.endswith("/api/groups"):
+            return _CacheResponse(
+                [
+                    {
+                        "id": 1,
+                        "name": "portfolio",
+                        "domain": HOST,
+                        "display_order": 0,
+                        "is_default": False,
+                    }
+                ]
+            )
+        return _CacheResponse(self.rules_payload)
+
+
+def _rules_payload(*actives: Any) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for index, value in enumerate(actives):
+        row: dict[str, Any] = {
+            "id": index + 1,
+            "group_id": 1,
+            "path": f"/p{index}/*",
+            "action": "none",
+            "display_order": index,
+        }
+        if value is not _UNSET:
+            row["active"] = value
+        out.append(row)
+    return out
+
+
+class _Unset:
+    """Marker for "the API did not send this field", which is not `None`."""
+
+
+_UNSET = _Unset()
+
+
+@pytest.mark.parametrize(
+    ("sent", "expected"),
+    [
+        (True, True),
+        (False, False),
+        # Absent and NULL both mean active. These two are the whole reason the
+        # reading is `is not False` rather than a truthiness test.
+        (_UNSET, True),
+        (None, True),
+    ],
+)
+def test_the_cache_carries_the_flag_from_the_api(
+    monkeypatch: Any, sent: Any, expected: bool
+) -> None:
+    """The gateway never touches the database, so this is the only route in.
+
+    Without this, the toggle would work in `/manage` and do nothing at the gate —
+    the worst possible outcome for a switch, because it looks like it worked.
+    """
+    import asyncio
+
+    module = gateway_module()
+    module._CacheGroups = None
+    module._CacheRoutes = None
+    module._CachePages = None
+    module._CacheTs = 0.0
+    monkeypatch.setattr(module, "_get_httpx", lambda: _CacheClient(_rules_payload(sent)))
+
+    _, groups, _ = asyncio.run(module._load_caches())
+
+    assert len(groups) == 1
+    assert len(groups[0].rules) == 1
+    assert groups[0].rules[0].active is expected
+
+
 GATE_CASES = [
     pytest.param("group-no-rule", "access_code", 302, id="group-with-no-matching-rule"),
     pytest.param("no-group", "access_code", 302, id="no-group-default"),

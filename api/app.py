@@ -27,6 +27,7 @@ from shared.backup import verify as verify_backup
 from shared.config import get_config
 from shared.db import Base, get_db, get_engine, get_sessionmaker
 from shared.gate import DEFAULT_UNMATCHED_ACTION
+from shared.gate import _is_active as rule_is_active
 from shared.geo import (
     BLOCKED_ACTIONS,
     DEFAULT_GEO_MODE,
@@ -45,6 +46,7 @@ from shared.pages import validate_content_type, validate_pattern
 from shared.rule_defaults import (
     CATCH_ALL,
     add_is_default_column,
+    add_rule_active_column,
     apply_rule_defaults,
     invariant_problems,
 )
@@ -203,6 +205,37 @@ def validate_route_shape(payload: dict[str, Any]) -> dict[str, Any]:
     return {"route_type": "redirect", "redirect_target": target}
 
 
+def _parse_active(raw: Any) -> bool | None:
+    """Read an `active` payload value. Returns None when it is not one.
+
+    Accepts booleans and the `true`/`false`/`1`/`0` spellings, as strings or
+    numbers, with the same leniency `PUT /api/codes/{cid}` already has: the panel
+    posts a form value, other callers send JSON, and every spelling has to reach
+    the same column. Anything else is refused rather than guessed at.
+    """
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str) and raw.strip().lower() in ("true", "false", "1", "0"):
+        return raw.strip().lower() in ("true", "1")
+    if isinstance(raw, int):
+        return bool(raw)
+    return None
+
+
+def _guard_catch_all_active(obj: Rule, active: bool | None) -> None:
+    """Refuse switching the catch-all off.
+
+    Sits beside `cannot delete default rule` / `cannot move default rule` /
+    `cannot change default rule path`, and for the same reason: the catch-all is
+    the group's fallback decision. Deactivating it would leave every path in the
+    group that a narrower rule does not name refused, so one switch could make a
+    whole host answer nothing. `invariant_problems` reports the state if it ever
+    arrives by another route; this is what stops it being produced here.
+    """
+    if active is False and obj.is_default:
+        raise HTTPException(status_code=400, detail="the catch-all cannot be deactivated")
+
+
 def _shadowed_warnings(groups: list[RuleGroup]) -> dict[str, Any]:
     groups_sorted = sorted(groups, key=lambda g: g.display_order)
     shadowed_groups: list[dict[str, Any]] = []
@@ -225,6 +258,14 @@ def _shadowed_warnings(groups: list[RuleGroup]) -> dict[str, Any]:
         for i, r in enumerate(rules_sorted):
             for j in range(i):
                 ur = rules_sorted[j]
+                # An inactive rule shadows nothing: it is skipped by resolution,
+                # so the rule below it still fires. Reporting one as a shadow is
+                # the false alarm this list exists to avoid. The subject is still
+                # checked, though — an inactive rule that *is* shadowed cannot
+                # take effect even after it is switched back on, which is worth
+                # knowing.
+                if not rule_is_active(ur):
+                    continue
                 if path_matches(ur.path, _sample_path(r.path)) or ur.path == "/*":
                     shadowed_rules.append({"id": r.id, "path": r.path, "group_id": g.id, "shadowed_by": ur.id, "reason": f"shadowed by {ur.path}"})
                     break
@@ -406,6 +447,9 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
 
         def _migrate_rules(sync_conn):  # type: ignore[no-untyped-def]
             add_is_default_column(sync_conn)
+            # `active` exists before the seeding and backfill below run, so a
+            # live table comes back with every rule active rather than NULL.
+            add_rule_active_column(sync_conn)
 
         await conn.run_sync(_migrate_rules)
     async with get_sessionmaker()() as s:
@@ -415,13 +459,13 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
             grp = RuleGroup(name="*.*/*", domain="*.*/*", display_order=9999, is_default=True)
             s.add(grp)
             await s.flush()
-            r = Rule(group_id=grp.id, path="/*", action="access_code", display_order=0)
+            r = Rule(group_id=grp.id, path="/*", action="access_code", display_order=0, active=True)
             s.add(r)
             await s.commit()
         else:
             res2 = await s.execute(select(Rule).where(Rule.group_id == grp.id, Rule.path == "/*"))
             if not res2.scalars().first():
-                r = Rule(group_id=grp.id, path="/*", action="access_code", display_order=0)
+                r = Rule(group_id=grp.id, path="/*", action="access_code", display_order=0, active=True)
                 s.add(r)
                 await s.commit()
         for name, domain in [("gatekeeper.projectnova.download", "gatekeeper.projectnova.download"), ("projectnova.download", "projectnova.download")]:
@@ -854,6 +898,7 @@ def create_app() -> FastAPI:
             action=DEFAULT_CATCH_ALL_ACTION,
             display_order=0,
             is_default=True,
+            active=True,
         )
         db.add(catch_all)
         try:
@@ -949,7 +994,21 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="group not found")
         res = await db.execute(select(Rule).where(Rule.group_id == gid).order_by(Rule.display_order))
         rows = res.scalars().all()
-        return [{"id": r.id, "group_id": r.group_id, "path": r.path, "action": r.action, "allow_ip": r.allow_ip, "allow_time": r.allow_time, "rate_limit": r.rate_limit, "display_order": r.display_order, "is_default": bool(r.is_default)} for r in rows]
+        return [
+            {
+                "id": r.id,
+                "group_id": r.group_id,
+                "path": r.path,
+                "action": r.action,
+                "allow_ip": r.allow_ip,
+                "allow_time": r.allow_time,
+                "rate_limit": r.rate_limit,
+                "display_order": r.display_order,
+                "is_default": bool(r.is_default),
+                "active": r.active is not False,
+            }
+            for r in rows
+        ]
 
     @app.post("/api/groups/{gid}/rules", dependencies=[Depends(_require_internal)])
     async def create_rule(gid: int, payload: dict, db=Depends(get_db)):  # type: ignore[no-untyped-def]
@@ -983,6 +1042,9 @@ def create_app() -> FastAPI:
             (row for row in rows if not row.is_default), key=lambda row: row.display_order
         )
         r = Rule(group_id=gid, path=path, action=action, custom_password_hash=custom_hash, custom_password_salt=custom_salt, allow_ip=payload.get("allow_ip"), allow_time=payload.get("allow_time"), rate_limit=payload.get("rate_limit"), display_order=len(movable) + 1)
+        # Stated rather than inherited from the column default: a new rule that
+        # arrived switched off would look like it had no effect at all.
+        r.active = True  # type: ignore[assignment]
         db.add(r)
         # A new rule lands last, i.e. below the catch-all, which would leave it
         # permanently unreachable. Renumber so the catch-all stays last and the
@@ -994,7 +1056,13 @@ def create_app() -> FastAPI:
                 other.display_order = len(movable) + 1
         await db.commit()
         await db.refresh(r)
-        return {"id": r.id, "path": r.path, "action": r.action, "display_order": r.display_order}
+        return {
+            "id": r.id,
+            "path": r.path,
+            "action": r.action,
+            "display_order": r.display_order,
+            "active": r.active is not False,
+        }
 
     @app.put("/api/rules/{rid}/order", dependencies=[Depends(_require_internal)])
     async def order_rule(rid: int, payload: dict, db=Depends(get_db)):  # type: ignore[no-untyped-def]
@@ -1077,12 +1145,24 @@ def create_app() -> FastAPI:
             else:
                 obj.custom_password_hash = None  # type: ignore[assignment]
                 obj.custom_password_salt = None  # type: ignore[assignment]
+        if "active" in payload:
+            active = _parse_active(payload.get("active"))
+            if active is None:
+                raise HTTPException(status_code=400, detail="active must be true or false")
+            _guard_catch_all_active(obj, active)
+            obj.active = active  # type: ignore[assignment]
         for k in ("allow_ip", "allow_time", "rate_limit"):
             if k in payload:
                 setattr(obj, k, payload.get(k))
         await db.commit()
         await db.refresh(obj)
-        return {"id": obj.id, "path": obj.path, "action": obj.action, "display_order": obj.display_order}
+        return {
+            "id": obj.id,
+            "path": obj.path,
+            "action": obj.action,
+            "display_order": obj.display_order,
+            "active": obj.active is not False,
+        }
 
     @app.post("/api/dry-run")
     async def dry_run(payload: dict, db=Depends(get_db)):  # type: ignore[no-untyped-def]
@@ -1094,11 +1174,21 @@ def create_app() -> FastAPI:
         groups = res.scalars().all()
         matched_group = None
         matched_rule = None
+        # Rules that matched the path but were switched off. Reported rather than
+        # merely ignored: "this resolves to the catch-all" and "this resolves to
+        # the catch-all *because the rule you are looking at is off*" are
+        # different facts, and the panel's pre-save probe has to be able to say
+        # which one it is.
+        skipped_inactive: list[dict[str, Any]] = []
         for g in groups:
             if host_matches(g.domain, host):
                 matched_group = g
                 rules = sorted(g.rules, key=lambda r: r.display_order)
                 for r in rules:
+                    if not rule_is_active(r):
+                        if path_matches(r.path, path):
+                            skipped_inactive.append({"id": r.id, "path": r.path})
+                        continue
                     if path_matches(r.path, path):
                         matched_rule = r
                         break
@@ -1110,6 +1200,7 @@ def create_app() -> FastAPI:
             "matched_group": {"id": matched_group.id, "name": matched_group.name, "domain": matched_group.domain} if matched_group else None,
             "matched_rule": {"id": matched_rule.id, "path": matched_rule.path, "action": matched_rule.action} if matched_rule else None,
             "action": matched_rule.action if matched_rule else None,
+            "skipped_inactive": skipped_inactive,
             "warnings": warnings,
         }
 
@@ -1417,6 +1508,11 @@ def create_app() -> FastAPI:
             if not host_matches(g.domain, host):
                 continue
             for r in sorted(g.rules, key=lambda x: x.display_order):
+                # A switched-off rule is skipped here exactly as the gate skips it,
+                # so the two cannot disagree about which rule a password belongs
+                # to.
+                if not rule_is_active(r):
+                    continue
                 if not path_matches(r.path, path):
                     continue
                 if r.action == "custom_password" and r.custom_password_hash and r.custom_password_salt:
