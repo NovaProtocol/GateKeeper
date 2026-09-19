@@ -13,10 +13,4 @@ __pycache__/
 .pytest_cache/
 /docs/
 documentation/site/
-.agents/
-.superpowers/
-.opencode/
-.claude/
-.cursor/
-.continue/
 *.code-workspace
