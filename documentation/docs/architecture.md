@@ -105,8 +105,8 @@ Steps 2 and 3 are `shared/gate.py` and are the fail-closed core: a group that ma
 
 ### Configuration vs history
 
-The six tables above (`routes`, `rule_groups`, `rules`, `codes`, `custom_pages`,
-`settings`) are **configuration**: they hold only in the `gatekeeper_data` volume,
+The six **configuration** tables above (`routes`, `rule_groups`, `rules`,
+`codes`, `custom_pages`, `settings`) hold only in the `gatekeeper_data` volume,
 are not seeded from git, and have no migration to undo. `audit_logs` is
 **history** and is never touched by a configuration change.
 
@@ -118,6 +118,22 @@ integrity only: the file contains every access code in cleartext. Row ids are
 preserved so `audit_logs.code_id` / `rule_id` / `rule_group_id` keep resolving; a
 reference the restored configuration no longer satisfies is nulled, never
 cascaded into a deleted log row. See Backup & Restore.
+
+### Boot migrations kept on purpose
+
+Three pieces of code read like leftovers and are not. Each one is the mechanism
+by which a database or a backup file written by an older build survives a deploy:
+
+| Code | What it rescues |
+|------|-----------------|
+| `api/app.py:_migrate_routes` | A `routes` table that predates `path`, `route_type`, `redirect_target` or `redirect_code`, or whose `upstream` / `port` columns were still `NOT NULL`, or that still carries the single-column `ix_routes_host` index. It adds the columns, and where the old shape cannot be altered in place it rebuilds the table through `routes_new` and copies the rows across. |
+| `shared/rule_defaults.py:add_is_default_column` | A `rules` table created before `rules.is_default` existed. `PRAGMA table_info` first, then `ALTER TABLE`, so it runs once and is inert afterwards. |
+| `shared/rule_defaults.py:add_rule_active_column` | A `rules` table created before `rules.active` existed. Same guard; the constant `DEFAULT 1` means existing rows come back active. |
+| `shared/backup.py:derive_rule_defaults` / `RULES_HAVE_IS_DEFAULT` | A **backup file** written before `rules.is_default` was a column. The flag is derived at read time rather than required from the file, so an older export still restores. `RULES_HAVE_IS_DEFAULT` is a capability probe for a database whose `rules` table genuinely lacks the column, and it is why `VERSION` stays `1` — bumping it would refuse those files. |
+
+There is no Alembic in this stack: these guarded `ALTER TABLE` blocks *are* the
+migration path, and deleting one would strand every deployment that has not yet
+booted the newer schema.
 
 ### DB Init
 

@@ -8,10 +8,10 @@ FastAPI gateway that protects every web app on one apex domain behind a signed a
 
 | Service | Container | Port | Purpose | Network |
 |---------|-----------|------|---------|---------|
-| **Caddy** | `gatekeeper_caddy` | `:7000` (127.0.0.1) | Wildcard ingress + GateKeeper gate | `default`, `gatekeeper`, `gatekeeper`, `net-data` |
+| **Caddy** | `gatekeeper_caddy` | `:7000` (127.0.0.1) | Wildcard ingress + GateKeeper gate | `default`, `gatekeeper`, `cloudflared-tunnel` |
 | **Auth Gateway** | `gatekeeper_auth` | `:8001` | GateKeeper gate + wildcard proxy | `default`, `net-api`, `gatekeeper` |
-| **API** | `gatekeeper_api` | `:8002` + `:50051` (gRPC) | DB owner, CRUD, gRPC LogAuth | `net-api`, `net-data` |
-| **Management** | `gatekeeper_management` | `:8003` | Admin UI (Jinja + CSRF) | `net-api` |
+| **API** | `gatekeeper_api` | `:8002` | DB owner, CRUD | `net-api`, `net-data`, `gatekeeper` |
+| **Management** | `gatekeeper_management` | `:8003` | Admin UI (Jinja + CSRF) | `default`, `net-api` |
 | **MySQL** | `gatekeeper_db` | `:3306` | Primary store | `net-data` |
 | **Documentation** | `gatekeeper_documentation` | `:8005` | MkDocs (FastAPI + granian) | `default` |
 
@@ -24,7 +24,7 @@ graph TB
  CADDY --> AUTH["Auth Gateway :8001<br/>GateKeeper gate + proxy"]
  CADDY --> MGMT["Management :8003<br/>Jinja UI"]
  AUTH --> COOKIE["gatekeeper_token<br/>PyJWT HS256<br/>HttpOnly Lax Secure .apex"]
- AUTH --> API["API :8002 / :50051<br/>DB + gRPC"]
+ AUTH --> API["API :8002<br/>DB + CRUD"]
  MGMT --> API
  AUTH -.-> MGMT
  API --> DB[("MySQL 8.4 / SQLite<br/>gatekeeper_data + mysql_data")]
