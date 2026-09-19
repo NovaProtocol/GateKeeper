@@ -34,10 +34,11 @@ Every entry resolves to a page below. There is no second navigation: the dashboa
 | `POST /manage/groups` | Create group (`name`, `domain`) |
 | `POST /manage/groups/{gid}/edit` | Edit group (`name`, `domain`) — `domain` is disabled for the default group |
 | `POST /manage/groups/{gid}/order` | Move group up/down (`direction`) |
-| `GET /manage/rules/{gid}` | Rules in group (▲/▼ reorder, real positions) |
+| `GET /manage/rules/{gid}` | Rules in group (▲/▼ reorder, real positions, `active` switch) |
 | `POST /manage/rules/test` | Ask the gate what it would do with the typed host and path, before the rule is saved |
 | `POST /manage/groups/{gid}/rules` | Create rule (`path`, `action`, `custom_password`) — see `PUT /api/rules/{rid}` for edit |
 | `POST /manage/rules/{rid}/order` | Move rule up/down (`direction`); disabled on the catch-all, see `documentation/docs/rules.md` |
+| `POST /manage/rules/{rid}/edit` | Edit rule (`path`, `action`, `custom_password`) **and** the row's status switch (`active`), which posts to this same route |
 | `GET /manage/codes` | Codes list + create/edit, activate/deactivate, permanent delete, `?include_inactive=1` |
 | `GET /manage/logs` | Audit logs (filters host/ip/action/endpoint) |
 | `GET /manage/audit` | Viewer map (country, four aggregation modes) plus the per-visitor table: IPs, their recent pages and the code they used |
@@ -93,20 +94,28 @@ Form controls use one `.input` class. At `971500b`, `logs.html` carried 5 inputs
 
 Two blocks left the shared sheet in the same pass, because neither described a panel component. `.create-form` was 25 lines of rules referenced by no template: it is deleted. The four `.status-*` classes (`.status-card`, `.status-card-header`, `.status-label`, `.status-dot`) were used only by `landing.html`, the authenticated landing page rather than a `/manage/*` page: they moved into a page-local `<style>` block in that template, which is the same treatment `routing.html` and `logs.html` already give their page-specific rules.
 
-Controls that the server would refuse are rendered `disabled` with a `title` that says why (`aria-disabled="true"` alongside), rather than hidden. The default group's delete button and the group catch-all's delete button are the two cases: a control that is simply absent tells an operator nothing, while a greyed-out one that explains itself answers the question they were about to ask.
+Controls that the server would refuse are rendered `disabled` with a `title` that says why (`aria-disabled="true"` alongside), rather than hidden. The default group's delete button, the group catch-all's delete button and the catch-all's **status switch** are the three cases: a control that is simply absent tells an operator nothing, while a greyed-out one that explains itself answers the question they were about to ask. The catch-all's switch reads `title="The catch-all cannot be deactivated — it is the group's fallback"`, and the API refuses the same attempt with `400 the catch-all cannot be deactivated`.
+
+## Rules: the status switch
+
+Each rule row on `/manage/rules/{gid}` carries a **Status** switch (the same `.toggle` component the codes page uses). It posts `csrf_token` + `active` to the existing `/manage/rules/{rid}/edit` — no new route — and an inactive row renders with the `inactive` style so "off" is visible at a glance rather than only in the switch's position. The catch-all's switch is `disabled` with its reason in a `title`, and a refusal is logged as `rule_active_refused` rather than swallowed, so a control that does not take is visible in the container log instead of looking broken.
+
+The switch means `active`/inactive and nothing else. What skipping does — fall-through to the next matching rule, and the one case that is still refused — is documented in [Rules](rules.md).
 
 ## Codes
 
 `label`/`display_name`/`active`/`last_accessed`. Creating requires an explicit `code` value (`POST /api/codes {"code": "...", "label": "..."}` with `X-Internal-Api-Key`).
 
-A code has two different endings and the difference is the point:
+A code has two different endings **and two separate controls**, and the difference is the point:
 
-- **Deactivate** (`POST /manage/codes/{cid}/active` proxying `PUT /api/codes/{cid}` with `active`) flips the flag and keeps the row, so it can be turned back on. This is the reversible kill switch, and it is the same column the gate reads, so deactivation takes effect on the next request.
-- **Permanent delete** (`POST /manage/codes/{cid}/delete`) removes the row. Audit rows are history and are never deleted: `audit_logs.code_id` is nulled instead, the same policy a restore applies, so the row survives with its host, path and action intact. The response reports how many rows were detached.
+- **Deactivate** (`POST /manage/codes/{cid}/active` proxying `PUT /api/codes/{cid}` with `active`). This is the row's `.toggle` **switch**, and it is a state control: it posts `csrf_token` + `active` and nothing else, asks for no confirmation, and does not touch deletion. It is reversible from the same control, and it is the same column the gate reads, so deactivation takes effect on the next request.
+- **Permanent delete** (`POST /manage/codes/{cid}/delete`) removes the row. This is a **separate trash control** beside the switch, rendered `disabled` in the sense that it is hidden until the page-level **Permanent delete** toggle is on. It does not post anything itself: it opens the typed-confirm modal. Audit rows are history and are never deleted: `audit_logs.code_id` is nulled instead, the same policy a restore applies, so the row survives with its host, path and action intact. The response reports how many rows were detached.
 
-Inactive codes are hidden by default. The **Show inactive** toggle on the codes card re-requests the page with `?include_inactive=1`, which the API honours server-side (`GET /api/codes` filters inactive rows unless asked). Inactive rows render with the `tag-inactive` style and an **activate** control instead of a deactivate one.
+Inactive codes are hidden by default. The **Show inactive** toggle on the codes card re-requests the page with `?include_inactive=1`, which the API honours server-side (`GET /api/codes` filters inactive rows unless asked). Inactive rows render with the `tag-inactive` style, and the switch's `title`/`aria-label` change from *Deactivate code* to *Activate code*.
 
-The **Permanent delete** toggle turns each row's deactivate button into a delete button that opens a modal asking for the code to be typed out. The typed confirmation is re-checked on the **server**, against the code read back from the API with `secrets.compare_digest`, so a modal alone cannot be bypassed by a stale tab, a replayed form post or a script. A mismatch is `400`.
+The **Permanent delete** toggle governs the **trash control's visibility** — it shows and hides it, and it does not re-point the switch at a different action. The trash control opens a modal asking for the code to be typed out, and that typed confirmation is re-checked on the **server**, against the code read back from the API with `secrets.compare_digest`, so a modal alone cannot be bypassed by a stale tab, a replayed form post or a script. A mismatch is `400`.
+
+Both capabilities are kept, and the split is deliberate: a switch is a state indicator, and a switch that sometimes deletes misstates what it is. `DELETE`-style irreversibility never shares a control with a flag that is meant to be flipped back.
 
 `POST /api/codes/{cid}/revoke` still exists and still works; it is the older, deactivate-only spelling of the same flag. `PUT /api/codes/{cid}` accepts `active` as a boolean, an integer or the strings `"true"`/`"false"`/`"1"`/`"0"`, because the panel posts form values while other callers send JSON. Anything else is refused with `400 active must be true or false` rather than guessed at.
 

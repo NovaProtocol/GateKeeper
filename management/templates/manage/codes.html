@@ -19,7 +19,7 @@
           <span>Show inactive</span>
         </div>
         <div class="toggle-wrapper">
-          <label class="toggle" title="Turn the deactivate button into a permanent delete">
+          <label class="toggle" title="Show the trash control that deletes a code permanently">
             <input type="checkbox" id="delete-mode" aria-label="Permanent delete mode">
             <span class="toggle-slider"></span>
           </label>
@@ -43,20 +43,19 @@
           <td class="actions-cell" style="text-align:right;padding-right:1rem">
             <div class="actions">
             <button class="btn icon-btn" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary);font-size:.75rem" onclick="openEditCode({{ c.id }}, '{{ c.label or '' }}', '{{ c.display_name or c.label or '' }}', '{{ c.code }}')" title="Edit code" aria-label="Edit code"><i class="fa-solid fa-pen" aria-hidden="true"></i></button>
-            {% if c.active %}
-            <form method="post" action="/manage/codes/{{ c.id }}/active" style="display:inline">
+            {# The switch means `active` and nothing else, so it is reversible and
+               carries no confirm and no delete URL. Deleting is the separate trash
+               control beside it, still governed by the page-level delete toggle. #}
+            <label class="toggle" title="{{ 'Deactivate code' if c.active else 'Activate code' }}">
+              <input type="checkbox" {% if c.active %}checked{% endif %} onchange="toggleCodeActive(this, {{ c.id }})" aria-label="{{ 'Deactivate code' if c.active else 'Activate code' }}">
+              <span class="toggle-slider"></span>
+            </label>
+            <form method="post" action="/manage/codes/{{ c.id }}/active" id="code-active-{{ c.id }}" style="display:inline">
               <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-              <input type="hidden" name="active" value="0">
+              <input type="hidden" name="active" value="{{ '0' if c.active else '1' }}">
               <input type="hidden" name="code_value" value="{{ c.code }}">
-              <button type="submit" class="btn btn-outline-danger icon-btn js-deactivate" style="font-size:.75rem" data-cid="{{ c.id }}" data-code="{{ c.code }}" onclick="return switchAction(this, {{ c.id }}, 'Deactivate this code?')" title="Deactivate code" aria-label="Deactivate code"><i class="fa-solid fa-ban" aria-hidden="true"></i></button>
             </form>
-            {% else %}
-            <form method="post" action="/manage/codes/{{ c.id }}/active" style="display:inline">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-              <input type="hidden" name="active" value="1">
-              <button type="submit" class="btn icon-btn" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary);font-size:.75rem" title="Activate code" aria-label="Activate code"><i class="fa-solid fa-toggle-off" aria-hidden="true"></i></button>
-            </form>
-            {% endif %}
+            <button type="button" class="btn btn-outline-danger icon-btn js-delete-code" style="font-size:.75rem;display:none" data-cid="{{ c.id }}" data-code="{{ c.code }}" onclick="openDeleteCode({{ c.id }}, this)" title="Delete code permanently" aria-label="Delete code permanently"><i class="fa-solid fa-trash" aria-hidden="true"></i></button>
             </div>
           </td>
         </tr>
@@ -175,20 +174,21 @@ function openEditCode(id, label, display, code){
   document.getElementById('editCodeForm').action='/manage/codes/'+id+'/edit';
   $('#editCodeModal').modal('show');
 }
-function deleteModeOn(){
-  return document.getElementById('delete-mode').checked;
+/* The switch controls `active`/inactive and nothing else. It is a state
+   indicator, so it never deletes and never asks for a confirmation: the change
+   it makes is reversible from the same control. */
+function toggleCodeActive(box, cid){
+  box.closest('td').querySelector('#code-active-'+cid).submit();
 }
-/* The permanent-delete switch turns the row's deactivate control into a delete
-   control: same button, same position, different outcome, and the label changes
-   with the mode so the intent is visible before the click. The server re-checks
-   the typed code regardless; the modal is the affordance, not the guard. */
-function switchAction(button, cid, deactivateText){
-  if(!deleteModeOn()){ return confirm(deactivateText); }
+/* Deleting is a separate, dedicated control that only appears while the
+   page-level delete toggle is on. It does not post anything itself: it opens the
+   modal, and the server re-checks the typed code. The modal is the affordance,
+   not the guard. */
+function openDeleteCode(cid, button){
   document.getElementById('deleteCodeForm').action='/manage/codes/'+cid+'/delete';
   document.getElementById('delete-code-typed').value='';
   document.getElementById('delete-code-shown').textContent=button.getAttribute('data-code');
   $('#deleteCodeModal').modal('show');
-  return false;
 }
 document.getElementById('show-inactive')?.addEventListener('change',function(){
   var url=new URL(window.location.href);
@@ -198,12 +198,8 @@ document.getElementById('show-inactive')?.addEventListener('change',function(){
 });
 document.getElementById('delete-mode')?.addEventListener('change',function(){
   document.body.classList.toggle('delete-mode', this.checked);
-  document.querySelectorAll('.actions-cell .js-deactivate').forEach(function(btn){
-    var icon=btn.querySelector('i');
-    if(!icon){ return; }
-    icon.className=this.checked ? 'fa-solid fa-trash' : 'fa-solid fa-ban';
-    btn.title=this.checked ? 'Delete permanently' : 'Deactivate code';
-    btn.setAttribute('aria-label', btn.title);
+  document.querySelectorAll('.actions-cell .js-delete-code').forEach(function(btn){
+    btn.style.display=this.checked ? '' : 'none';
   }, this);
 });
 </script>
