@@ -30,7 +30,7 @@ from shared.geo import summarize as summarize_geo
 from shared.geo import totals as geo_totals
 from shared.models import Code
 from shared.error_pages import render_error_html, wants_html
-from shared.pages import split_pattern, sample_from_pattern
+from shared.pages import glob_match, sample_from_pattern, split_pattern
 from shared.security import apex_domain as shared_apex, mask_code
 from shared.settings_spec import (
     LOG_RETENTION_DAYS,
@@ -381,8 +381,30 @@ ACTION_LABELS = {
 RESERVED_PAGE_PATHS = ("/health", "/api/authz/forward-auth", "/logout")
 RESERVED_PAGE_PREFIXES = ("/documentation",)
 
+#: Paths reserved only where the pattern can reach the panel. They are not on
+#: the list above because the same path on a project host belongs to that
+#: project: `/static/*` is the panel's own stylesheet on the gatekeeper hosts,
+#: and a custom page must never answer it there or the panel renders unstyled.
+CONTROL_PLANE_ONLY_PATHS = ("/", "/login", "/logout", "/manage", "/static")
 
-def _page_reach_warning(pattern: str) -> str:
+
+def _is_manage_host(host_glob: str, apex: str) -> bool:
+    """Whether a pattern can name the gatekeeper panel or the apex it is on.
+
+    A conservative reading of the host half, on purpose: a warning that fires on
+    a host glob which merely *might* cover the panel is better than a silence on
+    one that does. `*` alone therefore counts, because it can.
+    """
+    glob = host_glob.strip().lower()
+    if glob in ("*", "*.*/*") or "gatekeeper" in glob:
+        return True
+    if glob.startswith("*."):
+        rest = glob[2:]
+        return rest == apex or glob_match(glob, apex) or glob_match(glob, f"gatekeeper.{apex}")
+    return glob == apex or glob == f"gatekeeper.{apex}"
+
+
+def _page_reach_warning(pattern: str, apex: str = "") -> str:
     """Why a page will never be served, or an empty string when it will.
 
     A warning rather than a refusal: the API accepts the pattern and the panel
@@ -390,7 +412,7 @@ def _page_reach_warning(pattern: str) -> str:
     incomplete, and the honest failure here is a dead row the operator can see.
     """
     try:
-        _host, path_glob = split_pattern(pattern)
+        host_glob, path_glob = split_pattern(pattern)
     except ValueError:
         return ""
     if path_glob in RESERVED_PAGE_PATHS:
@@ -408,6 +430,18 @@ def _page_reach_warning(pattern: str) -> str:
                 f"{prefix}/* is answered by GateKeeper's own Caddy on every host, "
                 "so this page will never be served."
             )
+    if apex and _is_manage_host(host_glob, apex):
+        if path_glob in CONTROL_PLANE_ONLY_PATHS:
+            return (
+                f"GateKeeper's own control plane answers {path_glob} on the "
+                "gatekeeper hosts, so this page will never be served there."
+            )
+        for prefix in ("/manage", "/static"):
+            if path_glob == prefix or path_glob.startswith(prefix + "/"):
+                return (
+                    f"GateKeeper's own control plane answers {prefix}/* on the "
+                    "gatekeeper hosts, so this page will never be served there."
+                )
     return ""
 
 
@@ -1493,12 +1527,15 @@ def create_app() -> FastAPI:
         pages = await _api_proxy_get("/api/pages")
         if not isinstance(pages, list):
             pages = []
+        apex = _apex_from_request(request)
         governances = await asyncio.gather(*[_page_governance(p) for p in pages])
         rows = []
         for page, governed in zip(pages, governances, strict=False):
             decorated = dict(page)
             decorated["governance"] = governed
-            decorated["reach_warning"] = _page_reach_warning(str(page.get("pattern") or ""))
+            decorated["reach_warning"] = _page_reach_warning(
+                str(page.get("pattern") or ""), apex
+            )
             decorated["sample_url"] = (
                 f"https://{governed['host']}{governed['path']}" if governed.get("host") else ""
             )

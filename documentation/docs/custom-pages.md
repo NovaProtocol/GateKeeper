@@ -20,7 +20,7 @@ custom_pages(id, pattern unique, body, content_type, active, display_order, crea
 Four tiers, and each one can only be reached if the one above it did not answer:
 
 ```
-1. GateKeeper's own control plane   /health, /documentation/*, login, /manage, /logout
+1. GateKeeper's own control plane   /health, /documentation/*, login, /manage, /logout, /static
 2. Custom page                      only when the governing rule's action is `none`
 3. Rule dispatch                    access_code / custom_password / deny / none
 4. Project route                    the upstream app
@@ -33,8 +33,14 @@ that handler carries no host matcher it claims that prefix on **every** host.
 `/api/authz/forward-auth` and `/logout` are literal gateway routes registered
 ahead of the wildcard. `/login` is different and worth knowing about: it is
 served by the wildcard proxy into the management service, so the gateway carries
-an explicit guard for it — a page can never answer `/login`, `/`, `/logout` or
-`/manage/*` on the gatekeeper host or the apex, whatever its pattern says.
+an explicit guard for it — a page can never answer `/login`, `/`, `/logout`,
+`/manage/*` or `/static/*` on the gatekeeper host or the apex, whatever its
+pattern says. `/static/*` is on that list because the panel's own stylesheet is
+served the same way the login page is: reserving `/login` but not the CSS it
+loads would leave the operator with a panel that answers and renders unstyled,
+which is a lockout by another route. The reserve is **host-scoped** — a project
+host's own `/static/*` is untouched, because the predicate is false for every
+non-manage host.
 `/robots.txt` on the gatekeeper host is **not** part of that guard and stays
 yours to intercept.
 
@@ -157,6 +163,12 @@ warns about in the row rather than refusing at the API:
 - the pattern targets `/health`, `/api/authz/forward-auth`, `/logout` or
   `/documentation/*`, so something above the page answers first;
 - the pattern is malformed, or another page matches first at a lower priority.
+
+A third case is warned about only when the pattern's host half can name the panel
+or the apex — a pattern over `/`, `/login`, `/logout`, `/manage/*` or
+`/static/*` there is reserved by the control plane. The same path on a project
+host is not, so `portfolio.projectnova.download/static/*` is a legitimate page
+and does not warn.
 
 ## Managing pages
 
