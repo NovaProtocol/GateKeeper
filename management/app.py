@@ -16,9 +16,7 @@ from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-import jwt
-from shared.jwt import create_access_token, create_custom_token, create_manage_token, decode_without_verify, verify_access_token, verify_custom_token, verify_manage_token
-from sqlalchemy import select
+from shared.jwt import create_access_token, create_custom_token, create_manage_token, decode_without_verify, verify_access_token, verify_manage_token
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from shared.client_ip import get_client_ip

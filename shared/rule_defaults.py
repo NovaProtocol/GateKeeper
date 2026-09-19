@@ -157,10 +157,9 @@ def add_rule_active_column(sync_conn: Any) -> bool:
 
     Guarded exactly like :func:`add_is_default_column`: `PRAGMA table_info` first,
     then `ALTER TABLE ADD COLUMN` inside a `try`. There is no Alembic in this
-    stack — `agent_stuff_to_do.md` still lists the guarded-`ALTER` pattern as the
-    house convention — and the column is additive with a constant default, so a
-    live table gains it without a rewrite while a fresh one already has it from
-    `create_all`.
+    stack, so the guarded `ALTER` is the migration path, and the column is
+    additive with a constant default, so a live table gains it without a rewrite
+    while a fresh one already has it from `create_all`.
 
     **This migration does not renumber anything.** `add_is_default_column`'s
     backfill (`apply_rule_defaults`) compacts each group's `display_order`; an

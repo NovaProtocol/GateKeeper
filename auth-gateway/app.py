@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import time
 import uuid
@@ -17,8 +16,6 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Stre
 from shared.jwt import create_access_token, create_custom_token, verify_access_token, verify_custom_token
 
 from shared.error_pages import render_error_html, render_maintenance_html, wants_html
-from sqlalchemy import select
-from sqlalchemy.orm import selectinload
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from shared.client_ip import get_client_ip
@@ -176,13 +173,6 @@ def _error_response(  # type: ignore[no-untyped-def]
 
 def _apex_from_host(host: str) -> str:
     return shared_apex_domain(host)
-
-
-def _current_apex(request: Request, host: str | None = None) -> str:
-    if host is None:
-        host = request.headers.get("X-Forwarded-Host") or request.headers.get("Host", "")
-        host = host.split(",")[0].strip().split(":")[0].lower()
-    return _apex_from_host(host)
 
 
 def _safe_redirect_target(target: str, apex: str) -> bool:
@@ -964,7 +954,6 @@ def create_app() -> FastAPI:
         t0 = time.monotonic()
         host = _get_forwarded_host(request)
         uri = _get_forwarded_uri(request)
-        proto = _get_forwarded_proto(request)
         path = urlsplit(uri).path or "/"
         if not path.startswith("/"):
             path = "/" + path

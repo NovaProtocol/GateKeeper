@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import csv
 import datetime as dt
 import io
@@ -8,15 +7,13 @@ import json
 import logging
 import secrets
 import socket
-import string
 import uuid
 from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request, Response
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
-from sqlalchemy import String, Text, delete, func, select, text, update
+from sqlalchemy import delete, func, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -26,7 +23,6 @@ from shared.backup import validate as validate_backup
 from shared.backup import verify as verify_backup
 from shared.config import get_config
 from shared.db import Base, get_db, get_engine, get_sessionmaker
-from shared.gate import DEFAULT_UNMATCHED_ACTION
 from shared.gate import _is_active as rule_is_active
 from shared.geo import (
     BLOCKED_ACTIONS,
@@ -66,7 +62,6 @@ from shared.security import (
     hash_custom_password,
     host_matches,
     is_valid_host,
-    mask_code,
     path_matches,
 )
 
