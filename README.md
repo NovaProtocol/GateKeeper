@@ -109,3 +109,12 @@ No hardcoded domains. Cookie domain is last two labels of host (`.example.com`).
 Rules, groups, routes, codes, settings and custom pages live only in the database volume, with no git history and no migration to undo. `/manage/backup` exports them as signed plain JSON and restores them from the same page.
 
 The signature (`HMAC-SHA256` over the canonicalised `config`, keyed by `SECRET_KEY`) proves the file came from this deployment and has not been altered. **It does not hide anything**: the file is plain text and contains every access code, so store it like a password. Restoring replaces the whole configuration in one transaction; audit references that no longer resolve are nulled rather than deleted. `pages` is an optional section, so a file written before custom pages existed still validates and restores.
+
+## Tests
+
+```bash
+uv run --no-project --with-requirements requirements.txt \
+  --with-requirements requirements-dev.txt pytest -q
+```
+
+The suite covers the gate's decision table (redirect, denial, magic link, custom page, maintenance), rule and code management, the manage panel's rendering and ordering controls, the backup round trip, and the boot migrations against a throwaway SQLite database — `tests/conftest.py` sets every environment variable and a temporary `DB_DIR` before anything imports `shared.config`. `tests/ui/` holds rendered-DOM checks (layout, tables, settings form) that run with Playwright rather than pytest.
