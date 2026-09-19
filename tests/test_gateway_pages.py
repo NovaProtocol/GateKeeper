@@ -375,9 +375,26 @@ def test_another_path_does_not_match_a_robots_pattern(gateway_client: Any, upstr
 # --------------------------------------------------------------------------- #
 
 
-@pytest.mark.parametrize("path", ["/login", "/logout", "/", "/manage", "/manage/pages"])
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/login",
+        "/logout",
+        "/",
+        "/manage",
+        "/manage/pages",
+        "/static/css/manage.css",
+        "/static/js/manage.js",
+    ],
+)
 def test_the_control_plane_is_never_shadowed(gateway_client: Any, upstream: Any, path: str) -> None:
-    """A pattern broad enough to swallow the panel must not reach these."""
+    """A pattern broad enough to swallow the panel must not reach these.
+
+    `/static/*` is on the list because the panel's own stylesheet is served by
+    the same wildcard proxy the login page is: a pattern could otherwise answer
+    the login *and* the CSS it loads, leaving the operator with an unstyled
+    panel, which is a lockout by another route.
+    """
     install_cache(
         [make_group(1, "gatekeeper", MANAGE_HOST, [("/*", "none")])],
         [make_route(MANAGE_HOST, *upstream)],
@@ -412,10 +429,16 @@ def test_the_predicate_itself() -> None:
     assert module._is_control_plane(MANAGE_HOST, "/", APEX)
     assert module._is_control_plane("gatekeeper", "/manage/pages", APEX)
     assert module._is_control_plane(APEX, "/login", APEX)
+    # The panel's own assets, which the wildcard proxy also serves.
+    assert module._is_control_plane(MANAGE_HOST, "/static/css/manage.css", APEX)
+    assert module._is_control_plane(APEX, "/static/css/manage.css", APEX)
     # Off the control plane, even on a manage host.
     assert not module._is_control_plane(MANAGE_HOST, "/robots.txt", APEX)
     # A different host entirely.
     assert not module._is_control_plane(HOST, "/login", APEX)
+    # `/static/*` is only reserved on the gatekeeper hosts: the same path on a
+    # project host belongs to that project.
+    assert not module._is_control_plane(HOST, "/static/css/site.css", APEX)
 
 
 # --------------------------------------------------------------------------- #

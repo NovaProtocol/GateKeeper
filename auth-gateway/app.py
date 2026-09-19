@@ -486,7 +486,8 @@ async def _maintenance_response(
 
 #: The paths on a manage host that are how the operator gets back into the
 #: panel, and therefore the paths a custom page may never answer for.
-_CONTROL_PLANE_PATHS = ("/", "/login", "/logout", "/manage")
+_CONTROL_PLANE_PATHS = ("/", "/login", "/logout", "/manage", "/static")
+_CONTROL_PLANE_PREFIXES = ("/manage", "/static")
 
 
 def _is_control_plane(host: str, path: str, apex: str) -> bool:
@@ -497,14 +498,16 @@ def _is_control_plane(host: str, path: str, apex: str) -> bool:
     no entry here — Caddy answers `/health` at the site level and the wildcard
     refuses `/api/authz/forward-auth` before this point — and `/logout` is a real
     route registered ahead of the wildcard. What is **not** ahead of the wildcard
-    is `/login` and the gatekeeper host's `/`: both are served by the wildcard
-    proxy into `gatekeeper_management`, so without this predicate a pattern like
-    `gatekeeper.projectnova.download/*` would swallow the login page and lock the
-    operator out of the panel.
+    is `/login`, the gatekeeper host's `/` and the panel's own `/static/*`: they
+    are served by the wildcard proxy into `gatekeeper_management`, so without
+    this predicate a pattern like `gatekeeper.projectnova.download/*` would
+    swallow the login page and the stylesheet it loads with it — the panel would
+    answer while rendering unstyled, which is the same lockout by another route.
 
     Narrow on purpose: only the manage hosts and the apex, and only the paths
     that reach the panel. `/robots.txt` on the gatekeeper host stays the
-    owner's to intercept.
+    owner's to intercept, and a project host's own `/static/*` is untouched
+    because this predicate is false for every non-manage host.
     """
     hostname = (host or "").split(",")[0].strip().split(":")[0].lower()
     if hostname not in _MANAGE_HOSTS and hostname != apex:
@@ -512,7 +515,7 @@ def _is_control_plane(host: str, path: str, apex: str) -> bool:
     p = path if path.startswith("/") else "/" + path
     if p in _CONTROL_PLANE_PATHS:
         return True
-    return p.startswith("/manage/")
+    return any(p.startswith(prefix + "/") for prefix in _CONTROL_PLANE_PREFIXES)
 
 
 def _find_page(host: str, path: str, pages: list[CustomPage]) -> CustomPage | None:
@@ -1176,7 +1179,9 @@ def create_app() -> FastAPI:
             if request.method in ("GET", "HEAD") and not _is_control_plane(host, raw_path, apex):
                 page = _find_page(host, raw_path, pages)
             if page is not None:
-                await _queue_page_audit(request, background_tasks, host, raw_path, ip, req_id, grp, rule)
+                await _queue_page_audit(
+                    request, background_tasks, host, raw_path, ip, req_id, grp, rule
+                )
                 # The stored bytes, whole, with the stored content type. Nothing
                 # escaped, sanitised or sniffed, and no header added beyond what
                 # the response type requires.

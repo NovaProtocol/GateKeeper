@@ -585,6 +585,25 @@ def test_a_page_the_control_plane_answers_first_is_warned_about(manage_client, m
     assert "/health" in html
 
 
+def test_the_panels_own_stylesheet_is_warned_about_on_a_panel_pattern(
+    manage_client, monkeypatch
+) -> None:
+    """`/static/*` is the panel's stylesheet, so a pattern over it warns.
+
+    The reserve is host-scoped: the same path on a project host belongs to that
+    project, which is why the warning only fires for a host glob that can name
+    the panel.
+    """
+    from management.app import _page_reach_warning
+
+    assert _page_reach_warning("gatekeeper.projectnova.download/static/*", "projectnova.download")
+    assert _page_reach_warning("*.projectnova.download/manage/pages", "projectnova.download")
+    assert _page_reach_warning("*/login", "projectnova.download")
+    # A project host keeps its own `/static`.
+    assert not _page_reach_warning("portfolio.projectnova.download/static/*", "projectnova.download")
+    assert not _page_reach_warning("*.projectnova.download/robots.txt", "projectnova.download")
+
+
 def test_a_page_create_without_a_csrf_token_is_refused(manage_client, monkeypatch) -> None:
     _install(monkeypatch)
     r = manage_client.post(
