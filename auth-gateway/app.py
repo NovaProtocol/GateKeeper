@@ -28,6 +28,7 @@ from shared.gate import DEFAULT_UNMATCHED_ACTION, find_group_rule, resolve_rule_
 from shared.geo import get_country
 from shared.models import Code, CustomPage, Route, Rule, RuleGroup
 from shared.pages import pattern_matches
+from shared.rule_defaults import DEFAULT_ACTIVE_READING
 from shared.security import apex_domain as shared_apex_domain
 from shared.security import host_matches, mask_code, verify_custom_password
 from shared.settings_spec import (
@@ -321,6 +322,11 @@ async def _load_caches() -> tuple[list[Route], list[RuleGroup], list[CustomPage]
                         for rrow in rr_resp.json():
                             rule = Rule(group_id=gr.id, path=rrow.get("path", "/"), action=rrow.get("action", "access_code"), display_order=rrow.get("display_order", 0))
                             rule.id = rrow.get("id", 0)  # type: ignore[attr-defined]
+                            # The gateway never touches the database, so this is the
+                            # only way the switch reaches the gate. A missing field
+                            # reads as active: an old API that does not send it must
+                            # not be able to silence every rule.
+                            rule.active = rrow.get("active", DEFAULT_ACTIVE_READING) is not False  # type: ignore[attr-defined]
                             rule.custom_password_hash = None  # type: ignore[attr-defined]
                             rule.custom_password_salt = None  # type: ignore[attr-defined]
                             # need hash for custom_password param check — fetch via direct rule lookup not exposed; keep verify via api

@@ -17,6 +17,20 @@ The first follows the ``unmatched_action`` setting. The second is a broken
 invariant, because every group is meant to end in a ``/*`` catch-all, and it is
 refused unconditionally: a setting must not be able to turn a data fault into an
 open proxy.
+
+**Skipping an inactive rule is fall-through, not deny.** A rule carrying
+``active=False`` is invisible to resolution, so the walk continues down the same
+group and normally meets the group's ``/*`` catch-all — which is the operator's
+own standing policy for everything they have not named. It never turns a refusal
+into an allow and it never turns an allow into a refusal; it only removes one
+candidate from the list. The two fail-closed cases above are unchanged: a group
+that matched the host with **no matching active rule** is still refused
+unconditionally, and ``unmatched_action`` still governs only "no group matched
+the host at all".
+
+A **missing** ``active`` reads as *active*, never as inactive. That direction is
+deliberate: an unreadable or pre-upgrade rule list must not be able to switch
+gating off, so "I was told nothing" means "the rule still governs".
 """
 
 from __future__ import annotations
@@ -24,6 +38,7 @@ from __future__ import annotations
 from typing import Any
 
 from shared.models import Rule, RuleGroup
+from shared.rule_defaults import DEFAULT_ACTIVE_READING
 from shared.security import host_matches, path_matches
 
 UNMATCHED_ACTIONS = ("access_code", "deny", "none")
@@ -45,19 +60,37 @@ def normalize_unmatched_action(value: Any) -> str:
     return DEFAULT_UNMATCHED_ACTION
 
 
+def _is_active(rule: Any) -> bool:
+    """Whether a rule takes part in resolution. A **missing** field means active.
+
+    ``is not False`` rather than a truthiness test, for two reasons that both
+    matter. An unreadable or not-yet-upgraded rule list omits the field, and
+    reading that as inactive would silence the rule — on a stack whose API has
+    not shipped the column yet, that is every rule. And a bare ``Rule(...)`` built
+    by a test fixture, or by the gateway's cache before this flag existed, carries
+    no such attribute at all; it must keep governing.
+    """
+    return getattr(rule, "active", DEFAULT_ACTIVE_READING) is not False
+
+
 def find_group_rule(
     host: str, path: str, groups: list[RuleGroup]
 ) -> tuple[RuleGroup | None, Rule | None]:
-    """First host-matching group, then the first rule in it whose path matches.
+    """First host-matching group, then the first matching rule in it that is active.
 
     Returns ``(group, None)`` when the group matched the host but nothing matched
     the path. That is the signal the callers need: ``(None, None)`` cannot be
-    told apart from "no group matched this host at all".
+    told apart from "no group matched this host at all". A rule that matched the
+    path but is inactive is skipped, so the walk continues down the group and the
+    result can equally mean "the only rules that matched were switched off" —
+    which the callers treat the same way as no match, i.e. fail closed.
     """
     for group in sorted(groups, key=lambda g: g.display_order):
         if not host_matches(group.domain, host):
             continue
         for rule in sorted(group.rules, key=lambda r: r.display_order):
+            if not _is_active(rule):
+                continue
             if path_matches(rule.path, path):
                 return group, rule
         return group, None

@@ -95,6 +95,30 @@ def _count(model) -> int:
     return asyncio.run(_run())
 
 
+def _seed_group(client, domain: str | None = None) -> int:
+    """A throwaway group with its own host, for tests about rule rows."""
+    r = client.post(
+        "/api/groups",
+        json={
+            "name": f"backup-{uuid.uuid4().hex[:10]}",
+            "domain": domain or f"{uuid.uuid4().hex[:10]}.backup-test",
+        },
+        headers=INTERNAL_KEY_HEADERS,
+    )
+    assert r.status_code == 200, r.text
+    return r.json()["id"]
+
+
+def _seed_rule(client, gid: int, path: str, action: str) -> int:
+    r = client.post(
+        f"/api/groups/{gid}/rules",
+        json={"path": path, "action": action},
+        headers=INTERNAL_KEY_HEADERS,
+    )
+    assert r.status_code == 200, r.text
+    return r.json()["id"]
+
+
 @pytest.fixture(autouse=True)
 def _restore_config(client):
     """Give every test one route to work with, then put everything back.
@@ -492,6 +516,122 @@ def test_rule_validation_refuses_a_password_rule_with_no_hash(client) -> None:
         rules[0]["custom_password_salt"] = None
 
     assert any("custom_password_hash" in p for p in _broken(client, "rules", mutate))
+
+
+# --------------------------------------------------------------------------- #
+# `rules[].active` in the file
+#
+# `VERSION` stays 1 and the field stays optional, because a required `active`
+# would refuse every backup taken before the column existed — which would destroy
+# the only rollback point there is at exactly the moment a schema change makes it
+# worth having.
+# --------------------------------------------------------------------------- #
+
+
+def test_rules_carry_active_in_the_export(client) -> None:
+    for row in _current_config(client)["rules"]:
+        assert isinstance(row["active"], bool)
+
+
+def test_version_is_unchanged_by_the_field(client) -> None:
+    """A field inside an existing section is not a new section."""
+    assert VERSION == 1
+    assert _export(client)["version"] == 1
+
+
+def test_a_file_without_active_still_validates(client) -> None:
+    """The pre-change file. This is the case the optional field exists for."""
+
+    def mutate(rules):
+        for row in rules:
+            row.pop("active", None)
+
+    assert _broken(client, "rules", mutate) == []
+
+
+def test_a_file_without_active_restores_every_rule_active(client) -> None:
+    config = copy.deepcopy(_current_config(client))
+    for row in config["rules"]:
+        row.pop("active", None)
+
+    r = _restore(client, _resign(config))
+    assert r.status_code == 200, r.text
+
+    restored = _current_config(client)["rules"]
+    assert restored, "the restore must not have emptied the rules"
+    assert all(row["active"] is True for row in restored), restored
+
+
+def test_a_deactivated_rule_round_trips(client) -> None:
+    gid = _seed_group(client)
+    rid = _seed_rule(client, gid, "/off/*", "none")
+
+    r = client.put(f"/api/rules/{rid}", json={"active": False}, headers=INTERNAL_KEY_HEADERS)
+    assert r.status_code == 200, r.text
+    assert _restore(client, _export(client)).status_code == 200
+
+    restored = next(row for row in _current_config(client)["rules"] if row["id"] == rid)
+    assert restored["active"] is False
+
+
+@pytest.mark.parametrize("bad", ["yes", 1, 0, None, []])
+def test_a_non_boolean_active_is_refused(client, bad) -> None:
+    def mutate(rules):
+        rules[0]["active"] = bad
+
+    assert any("active must be true or false" in p for p in _broken(client, "rules", mutate))
+
+
+def test_deactivating_the_catch_all_in_a_file_is_refused(client) -> None:
+    """The one shape the panel cannot produce, and the one that breaks the gate."""
+
+    def mutate(rules):
+        catch_all = next(row for row in rules if row.get("is_default"))
+        catch_all["active"] = False
+
+    problems = _broken(client, "rules", mutate)
+    assert any("catch-all cannot be deactivated" in p for p in problems), problems
+
+
+def test_an_inactive_catch_all_is_refused_even_when_it_is_not_flagged(client) -> None:
+    """A file can declare its catch-all by position instead of by the flag.
+
+    A restore reads the highest-`display_order` `/*` of a group as the catch-all
+    when the flag is absent, so keying the refusal only on `is_default` would let
+    a hand-edited file switch the fallback off past the check.
+    """
+    config = copy.deepcopy(_current_config(client))
+    group_id = config["groups"][0]["id"]
+    config["rules"] = [
+        {
+            "id": 1,
+            "group_id": group_id,
+            "path": "/named/*",
+            "action": "none",
+            "display_order": 0,
+            "active": True,
+        },
+        {
+            "id": 2,
+            "group_id": group_id,
+            "path": "/*",
+            "action": "access_code",
+            "display_order": 1,
+            "active": False,
+        },
+    ]
+
+    problems = validate(config)
+    assert any("catch-all cannot be deactivated" in p for p in problems), problems
+
+
+def test_an_inactive_narrow_rule_is_still_restorable(client) -> None:
+    """Refusing the catch-all must not refuse the ordinary case."""
+    gid = _seed_group(client)
+    rid = _seed_rule(client, gid, "/off/*", "none")
+    client.put(f"/api/rules/{rid}", json={"active": False}, headers=INTERNAL_KEY_HEADERS)
+
+    assert validate(_current_config(client)) == []
 
 
 @pytest.mark.parametrize(

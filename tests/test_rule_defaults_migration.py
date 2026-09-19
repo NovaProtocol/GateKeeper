@@ -32,13 +32,17 @@ from sqlalchemy.orm import Session
 from shared.models import Rule, RuleGroup
 from shared.rule_defaults import (
     add_is_default_column,
+    add_rule_active_column,
     apply_rule_defaults,
     diff_rows,
     invariant_problems,
     rule_rows,
 )
 
-#: The `rules` table as it stood *before* this phase: no `is_default`.
+#: The `rules` table as it stood *before* this phase: no `is_default`. It is also
+#: the shape from before `active` (a later, additive column), which is why the
+#: helper below runs both boot migrations before any ORM query — the mapped
+#: `Rule` selects every declared column, so a file missing one cannot be read.
 LEGACY_SCHEMA = """
 CREATE TABLE rule_groups (
     id INTEGER PRIMARY KEY,
@@ -164,14 +168,26 @@ def _column_present(path: Path) -> bool:
         conn.close()
 
 
+def _boot_migrations(conn: Any) -> bool:
+    """What the lifespan's `_migrate_rules` does, in the order it does it.
+
+    Both migrations are additive and independent, so a file that predates either
+    gains that column without a rewrite. Running both is what boot does, and the
+    ORM cannot read a table that is missing one of them.
+    """
+    ran = add_is_default_column(conn)
+    add_rule_active_column(conn)
+    return ran
+
+
 def _migrate(path: Path) -> dict[str, Any]:
     """Run the real migration over a legacy file and report the diff."""
     engine = create_engine(f"sqlite:///{path}")
     try:
-        # A sync `Connection` is what `add_is_default_column` expects: the boot
-        # path hands it one from `conn.run_sync`.
+        # A sync `Connection` is what these expect: the boot path hands them one
+        # from `conn.run_sync`.
         with engine.begin() as conn:
-            ran = add_is_default_column(conn)
+            ran = _boot_migrations(conn)
         assert ran is True, "the column was already present, so the ALTER did not run"
         assert _column_present(path), "the column is missing after the migration"
 
@@ -235,7 +251,7 @@ def test_existing_rows_default_to_not_the_catch_all() -> None:
     engine = create_engine(f"sqlite:///{path}")
     try:
         with engine.begin() as conn:
-            add_is_default_column(conn)
+            _boot_migrations(conn)
         with Session(engine) as session:
             values = [bool(r.is_default) for r in session.execute(select(Rule)).scalars()]
         assert values == [False, False, False]
@@ -375,7 +391,7 @@ def test_running_the_backfill_twice_changes_nothing() -> None:
     engine = create_engine(f"sqlite:///{path}")
     try:
         with engine.begin() as conn:
-            add_is_default_column(conn)
+            _boot_migrations(conn)
         first = asyncio.run(_run(path))
         assert first["changed"], "the first run should have work to do"
 

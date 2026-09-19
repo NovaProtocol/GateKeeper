@@ -35,6 +35,16 @@ DEFAULT_ACTION = "access_code"
 #: Actions a catch-all may carry. Mirrors the create-rule endpoint.
 KNOWN_ACTIONS = ("access_code", "none", "custom_password", "deny")
 
+#: What an absent ``rules.active`` reads as. This is the module's single reading of
+#: a missing value, shared by the ORM path and the gateway so they cannot drift.
+#:
+#: It is ``True`` — *active* — and that direction is deliberate. An inactive rule
+#: is skipped, so reading a missing field as inactive would switch gating off for
+#: every rule on a stack whose API has not yet been upgraded to send the field, or
+#: whose cache predates the column. The safe reading of "I was told nothing" is
+#: "the rule still governs".
+DEFAULT_ACTIVE_READING = True
+
 
 def rule_rows(groups: list[RuleGroup], rules: list[Rule]) -> list[dict[str, Any]]:
     """One row per rule: where it sits, and whether it is the catch-all.
@@ -103,6 +113,14 @@ def invariant_problems(groups: list[RuleGroup], rules: list[Rule]) -> list[str]:
             problems.append(f"group {group.id}: {len(flagged)} is_default rules, expected 1")
         if not catches:
             problems.append(f"group {group.id}: no /* catch-all")
+        # An inactive catch-all cannot be produced through the API or restored
+        # from a validated file, so it means a hand-edited database. The result is
+        # the fail-closed branch — every path the group does not name is refused
+        # — which is safe but must be visible at boot rather than discovered from
+        # a visitor.
+        for rule in catches:
+            if getattr(rule, "active", DEFAULT_ACTIVE_READING) is False:
+                problems.append(f"group {group.id}: the /* catch-all is inactive")
         ordered = sorted(rows, key=lambda r: (r.display_order, r.id or 0))
         if ordered and ordered[-1].path != CATCH_ALL:
             problems.append(f"group {group.id}: catch-all is not last")
@@ -129,6 +147,33 @@ def add_is_default_column(sync_conn: Any) -> bool:
         if "is_default" in {row[1] for row in rows}:
             return False
         sync_conn.execute(text("ALTER TABLE rules ADD COLUMN is_default BOOLEAN DEFAULT 0"))
+        return True
+    except Exception:
+        return False
+
+
+def add_rule_active_column(sync_conn: Any) -> bool:
+    """Add `rules.active` if the table predates it. Returns whether it ran.
+
+    Guarded exactly like :func:`add_is_default_column`: `PRAGMA table_info` first,
+    then `ALTER TABLE ADD COLUMN` inside a `try`. There is no Alembic in this
+    stack — `agent_stuff_to_do.md` still lists the guarded-`ALTER` pattern as the
+    house convention — and the column is additive with a constant default, so a
+    live table gains it without a rewrite while a fresh one already has it from
+    `create_all`.
+
+    **This migration does not renumber anything.** `add_is_default_column`'s
+    backfill (`apply_rule_defaults`) compacts each group's `display_order`; an
+    operator reading this one should know it is not that kind of migration.
+    `SQLite ALTER TABLE ADD COLUMN` with a constant `DEFAULT 1` populates every
+    existing row with `1`, so live rules come back **active** without a backfill
+    pass — and without a window in which a rule reads as inactive.
+    """
+    try:
+        rows = sync_conn.execute(text("PRAGMA table_info(rules)")).fetchall()
+        if "active" in {row[1] for row in rows}:
+            return False
+        sync_conn.execute(text("ALTER TABLE rules ADD COLUMN active BOOLEAN DEFAULT 1"))
         return True
     except Exception:
         return False
@@ -175,6 +220,7 @@ async def apply_rule_defaults(session: AsyncSession) -> dict[str, Any]:
                 action=DEFAULT_ACTION,
                 display_order=order,
                 is_default=True,
+                active=True,
             )
             session.add(chosen)
             rows.append(chosen)

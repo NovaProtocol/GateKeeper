@@ -50,6 +50,23 @@ class Rule(Base):
     #: only rule that cannot be deleted or moved. See `shared/backup.py` for the
     #: reading used when a configuration predates the column.
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)
+    #: Whether this rule takes part in resolution at all. An inactive rule is
+    #: **skipped**, so the request falls through to the next matching rule in the
+    #: group — normally the group's `/*` catch-all. It is a fall-through, never a
+    #: deny: the operator is choosing "not this rule", not "not this request".
+    #:
+    #: `nullable=False` is load-bearing, matching `CustomPage.active`. Every read
+    #: path treats a value that is not exactly `False` as active, so a NULL row
+    #: would show as *off* in the panel while the gate still used it.
+    #:
+    #: The catch-all cannot be switched off (the API refuses it) — deactivating it
+    #: would remove the group's fallback decision and leave whole hosts answering
+    #: nothing. `shared/rule_defaults.DEFAULT_ACTIVE_READING` is the single reading
+    #: of an absent value, shared by the ORM path and the gateway so they cannot
+    #: drift.
+    active: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=text("1")
+    )
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, server_default=func.now())
     group: Mapped[RuleGroup] = relationship("RuleGroup", back_populates="rules")
 

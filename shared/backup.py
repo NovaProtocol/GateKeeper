@@ -46,6 +46,7 @@ from shared.pages import (
     validate_content_type,
     validate_pattern,
 )
+from shared.rule_defaults import DEFAULT_ACTIVE_READING
 from shared.security import is_valid_host
 
 #: Bump when the config shape changes in a way old files cannot satisfy.
@@ -79,6 +80,18 @@ AUDIT_REFERENCES = {
 #: `rules.is_default` arrives with the mandatory-catch-all work. Present only so
 #: a configuration written before that column existed still restores after it.
 RULES_HAVE_IS_DEFAULT = hasattr(Rule, "is_default")
+
+#: The reading of an absent ``rules[].active``: **active**. The same reading the
+#: gateway, the ORM and the gate use, imported rather than restated so a file, a
+#: cache and a database cannot disagree about what silence means.
+#:
+#: Keeping the field optional is what keeps old files restorable. A required
+#: ``active`` would refuse every backup taken before the column existed — which
+#: would destroy the owner's only rollback point at exactly the moment a schema
+#: change makes it worth having. That is also why ``VERSION`` stays 1: this is a
+#: field inside the existing ``rules`` section, not a new section, so old and new
+#: files both validate.
+RULES_ACTIVE_DEFAULT = DEFAULT_ACTIVE_READING
 
 #: Settings the panel writes about itself rather than configuration the gateway
 #: runs on. Left out of the file: `backup_exported_at` changes on every export,
@@ -247,6 +260,10 @@ def _validate_rules(rows: list[dict[str, Any]], gids: set[int], problems: list[s
             problems.append(f"{where}: custom_password rule needs custom_password_hash and salt")
         if _int(row.get("display_order")) is None:
             problems.append(f"{where}: display_order must be an integer")
+        if "active" in row and not isinstance(row.get("active"), bool):
+            # Absent means active, and that is accepted — it is what makes a file
+            # written before the column restorable. Present-but-wrong is not.
+            problems.append(f"{where}: active must be true or false")
     # A group with no catch-all refuses every path it does not name, and since
     # `/*` became a reserved path there is no way to add one afterwards through
     # the panel: the group would have to be deleted and recreated. Refused here,
@@ -256,6 +273,36 @@ def _validate_rules(rows: list[dict[str, Any]], gids: set[int], problems: list[s
         if catches[gid] == 0:
             problems.append(
                 f"group {gid}: no /* catch-all, so every request for its host would be refused"
+            )
+    _refuse_inactive_catch_all(rows, problems)
+
+
+def _refuse_inactive_catch_all(rows: list[dict[str, Any]], problems: list[str]) -> None:
+    """Refuse a file whose effective catch-all is switched off, however spelled.
+
+    Checked as a second pass rather than per row, because the catch-all a restore
+    will actually rely on is not always the flagged one: `derive_rule_defaults`
+    marks the highest-``display_order`` ``/*`` of a group when the file predates
+    the flag. Keying only on ``is_default`` would let a hand-edited file declare
+    its catch-all by position and switch it off past the check.
+    """
+    by_group: dict[int, list[tuple[int, dict[str, Any]]]] = {}
+    for idx, row in enumerate(rows):
+        gid = _int(row.get("group_id"))
+        if gid is None or _text(row.get("path")) != "/*":
+            continue
+        by_group.setdefault(gid, []).append((idx, row))
+    for gid in sorted(by_group):
+        rows_of_group = by_group[gid]
+        flagged = [(i, r) for i, r in rows_of_group if r.get("is_default") is True]
+        if flagged:
+            effective = max(flagged, key=lambda pair: _int(pair[1].get("display_order")) or 0)
+        else:
+            effective = max(rows_of_group, key=lambda pair: _int(pair[1].get("display_order")) or 0)
+        if effective[1].get("active") is False:
+            problems.append(
+                f"rules[{effective[0]}]: the /* catch-all cannot be deactivated, "
+                "because its group would then have no fallback"
             )
 
 
@@ -463,6 +510,7 @@ def _rule_row(rule: Rule) -> dict[str, Any]:
         "allow_time": rule.allow_time,
         "rate_limit": rule.rate_limit,
         "display_order": rule.display_order,
+        "active": bool(rule.active),
     }
     if RULES_HAVE_IS_DEFAULT:
         row["is_default"] = bool(rule.is_default)
@@ -575,6 +623,7 @@ def _insert_all(db: AsyncSession, config: dict[str, Any]) -> None:
             allow_time=row.get("allow_time"),
             rate_limit=row.get("rate_limit"),
             display_order=_int(row.get("display_order")) or 0,
+            active=bool(row.get("active", RULES_ACTIVE_DEFAULT)),
         )
         if RULES_HAVE_IS_DEFAULT:
             # A file that predates the column says nothing about which rule is

@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import uuid
 
+import pytest
+
 from tests.conftest import TEST_INTERNAL_API_KEY
 
 INTERNAL_KEY_HEADERS = {"X-Internal-Api-Key": TEST_INTERNAL_API_KEY}
@@ -253,3 +255,165 @@ def test_new_rules_order_above_the_catch_all(client) -> None:
     ordered = _ordered(client, gid)
     assert [r["id"] for r in ordered] == [first, second, _catch_all(client, gid)["id"]]
     assert [r["display_order"] for r in ordered] == [0, 1, 2]
+
+
+# --------------------------------------------------------------------------- #
+# `Rule.active`: the switch, and the one rule it cannot touch
+# --------------------------------------------------------------------------- #
+
+
+def test_rule_list_reports_active(client) -> None:
+    """The gateway builds its cache from this list, so the flag has to be in it."""
+    gid = _create_group(client)
+    assert all(r["active"] is True for r in _rules(client, gid))
+
+
+def test_a_new_rule_is_created_active(client) -> None:
+    gid = _create_group(client)
+    created = _add_rule(client, gid, "/fresh/*", "none").json()
+    assert created["active"] is True
+    assert next(r for r in _rules(client, gid) if r["id"] == created["id"])["active"] is True
+
+
+def test_deactivating_a_rule_succeeds_and_is_reported(client) -> None:
+    gid = _create_group(client)
+    rid = _add_rule(client, gid, "/off/*", "none").json()["id"]
+
+    r = client.put(f"/api/rules/{rid}", json={"active": False}, headers=INTERNAL_KEY_HEADERS)
+    assert r.status_code == 200, r.text
+    assert r.json()["active"] is False
+    assert next(x for x in _rules(client, gid) if x["id"] == rid)["active"] is False
+
+
+def test_deactivating_the_catch_all_is_refused(client) -> None:
+    """Deactivating it removes the group's fallback, so a whole host goes dark."""
+    gid = _create_group(client)
+    rid = _catch_all(client, gid)["id"]
+
+    r = client.put(f"/api/rules/{rid}", json={"active": False}, headers=INTERNAL_KEY_HEADERS)
+    assert r.status_code == 400
+    assert r.json()["detail"] == "the catch-all cannot be deactivated"
+    # And it really is still active, not merely reported as such.
+    assert next(x for x in _rules(client, gid) if x["id"] == rid)["active"] is True
+
+
+def test_the_catch_all_can_still_be_switched_back_on(client) -> None:
+    """`active: true` is not the refused direction, even on the catch-all."""
+    gid = _create_group(client)
+    rid = _catch_all(client, gid)["id"]
+    r = client.put(f"/api/rules/{rid}", json={"active": True}, headers=INTERNAL_KEY_HEADERS)
+    assert r.status_code == 200
+    assert r.json()["active"] is True
+
+
+@pytest.mark.parametrize("spelling", ["false", "0", False, 0, "FALSE", " 0 "])
+def test_every_false_spelling_is_accepted(client, spelling) -> None:
+    """The panel posts a form string; other callers send JSON. Same column."""
+    gid = _create_group(client)
+    rid = _add_rule(client, gid, "/spelled/*", "none").json()["id"]
+
+    r = client.put(f"/api/rules/{rid}", json={"active": spelling}, headers=INTERNAL_KEY_HEADERS)
+    assert r.status_code == 200, r.text
+    assert r.json()["active"] is False
+
+
+@pytest.mark.parametrize("spelling", ["true", "1", True, 1, "TRUE"])
+def test_every_true_spelling_is_accepted(client, spelling) -> None:
+    gid = _create_group(client)
+    rid = _add_rule(client, gid, "/spelled/*", "none").json()["id"]
+    client.put(f"/api/rules/{rid}", json={"active": False}, headers=INTERNAL_KEY_HEADERS)
+
+    r = client.put(f"/api/rules/{rid}", json={"active": spelling}, headers=INTERNAL_KEY_HEADERS)
+    assert r.status_code == 200, r.text
+    assert r.json()["active"] is True
+
+
+@pytest.mark.parametrize("nonsense", ["maybe", "", "yes", None, [], {}])
+def test_a_nonsense_active_value_is_refused(client, nonsense) -> None:
+    gid = _create_group(client)
+    rid = _add_rule(client, gid, "/nonsense/*", "none").json()["id"]
+
+    r = client.put(f"/api/rules/{rid}", json={"active": nonsense}, headers=INTERNAL_KEY_HEADERS)
+    assert r.status_code == 400, r.text
+    assert r.json()["detail"] == "active must be true or false"
+    # Unchanged, rather than silently coerced.
+    assert next(x for x in _rules(client, gid) if x["id"] == rid)["active"] is True
+
+
+def test_a_rule_can_be_switched_off_and_on_again(client) -> None:
+    gid = _create_group(client)
+    rid = _add_rule(client, gid, "/toggle/*", "none").json()["id"]
+    for value, expected in ((False, False), (True, True)):
+        r = client.put(f"/api/rules/{rid}", json={"active": value}, headers=INTERNAL_KEY_HEADERS)
+        assert r.status_code == 200
+        assert r.json()["active"] is expected
+
+
+# --------------------------------------------------------------------------- #
+# The reporting paths agree with the gate
+# --------------------------------------------------------------------------- #
+
+
+def test_dry_run_reports_a_skipped_inactive_rule(client) -> None:
+    """`skipped_inactive` is what lets the probe say *why* a path resolves there."""
+    domain = _unique_domain()
+    gid = _create_group(client, domain)
+    rid = _add_rule(client, gid, "/off/*", "deny").json()["id"]
+    catch_all = _catch_all(client, gid)["id"]
+    client.put(f"/api/rules/{rid}", json={"active": False}, headers=INTERNAL_KEY_HEADERS)
+
+    r = client.post("/api/dry-run", json={"host": domain, "path": "/off/page"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["matched_rule"]["id"] == catch_all
+    assert body["skipped_inactive"] == [{"id": rid, "path": "/off/*"}]
+
+
+def test_dry_run_reports_no_skip_when_the_winner_is_active(client) -> None:
+    domain = _unique_domain()
+    gid = _create_group(client, domain)
+    rid = _add_rule(client, gid, "/on/*", "none").json()["id"]
+
+    body = client.post("/api/dry-run", json={"host": domain, "path": "/on/page"}).json()
+
+    assert body["matched_rule"]["id"] == rid
+    assert body["skipped_inactive"] == []
+
+
+def test_dry_run_skips_only_rules_that_matched_the_path(client) -> None:
+    """A switched-off rule that does not match the path is not a skipped candidate."""
+    domain = _unique_domain()
+    gid = _create_group(client, domain)
+    rid = _add_rule(client, gid, "/elsewhere/*", "deny").json()["id"]
+    client.put(f"/api/rules/{rid}", json={"active": False}, headers=INTERNAL_KEY_HEADERS)
+
+    body = client.post("/api/dry-run", json={"host": domain, "path": "/other"}).json()
+
+    assert body["skipped_inactive"] == []
+
+
+def test_an_inactive_rule_is_not_reported_as_a_shadower(client) -> None:
+    """It is skipped, so it shadows nothing and the warning would be false."""
+    domain = _unique_domain()
+    gid = _create_group(client, domain)
+    broad = _add_rule(client, gid, "/a/*", "none").json()["id"]
+    below = _add_rule(client, gid, "/a/b/*", "none").json()["id"]
+    # Baseline: while it is on, the narrower rule is reported as shadowed.
+    assert any(w.get("id") == below for w in client.get("/api/warnings").json()["rules"])
+
+    client.put(f"/api/rules/{broad}", json={"active": False}, headers=INTERNAL_KEY_HEADERS)
+
+    warnings = client.get("/api/warnings").json()
+    assert not [w for w in warnings["rules"] if w.get("id") == below], warnings
+
+
+def test_an_inactive_rule_is_still_reported_as_shadowed(client) -> None:
+    """The subject is still checked: a switched-off rule can be unusable when on."""
+    domain = _unique_domain()
+    gid = _create_group(client, domain)
+    _add_rule(client, gid, "/a/*", "none")
+    below = _add_rule(client, gid, "/a/b/*", "none").json()["id"]
+    client.put(f"/api/rules/{below}", json={"active": False}, headers=INTERNAL_KEY_HEADERS)
+
+    warnings = client.get("/api/warnings").json()
+    assert any(w.get("id") == below for w in warnings["rules"]), warnings

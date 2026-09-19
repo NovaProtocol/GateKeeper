@@ -135,7 +135,7 @@ mirror the create endpoints:
 |---|---|
 | `routes` | `host` present, `path` starts `/`, `route_type` ∈ `proxy`/`redirect`, proxy needs `upstream` and `port` 1..65535, redirect needs `redirect_target` and `redirect_code` ∈ 301/302/307/308, no duplicate host+path |
 | `groups` | `name` present and unique, `domain` present, `display_order` an integer, **exactly one** group `is_default` |
-| `rules` | `group_id` must exist in the same file, `path` starts `/`, `action` ∈ `access_code`/`none`/`custom_password`/`deny`, a `custom_password` rule must carry both hash and salt, `display_order` an integer, **every group has a `/*` catch-all** |
+| `rules` | `group_id` must exist in the same file, `path` starts `/`, `action` ∈ `access_code`/`none`/`custom_password`/`deny`, a `custom_password` rule must carry both hash and salt, `display_order` an integer, `active` boolean **when present**, **every group has a `/*` catch-all**, and **the catch-all is not `active: false`** |
 | `codes` | `code` present and unique, `active` boolean |
 | `settings` | `key` present and unique, `value` a string |
 
@@ -194,6 +194,16 @@ The `is_default` flag on rules arrives with the mandatory-catch-all work. A file
 written before that column existed simply omits it, and the restore derives it:
 the highest-`display_order` `/*` rule in each group becomes the default. A file
 from either side of that change restores under the newer code.
+
+`rules[].active` is **optional in the same way**, and `VERSION` stays `1` because
+it is a field inside the existing `rules` section rather than a new section. A
+file that omits it restores every rule **active** — not inactive. The direction
+matters: reading a missing value as "off" would let an upgrade silently take every
+rule out of the gate's walk, and a file written before the column is exactly the
+case where that would happen. `active` is refused only when it is present and not
+a boolean, or when it switches the `is_default` rule off — that state cannot be
+produced through the panel, and it would leave a group with no fallback, so every
+path the group does not name would be refused.
 
 ## Limitations
 
