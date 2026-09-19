@@ -125,7 +125,7 @@ ROUTES = [
         "host": "api.projectnova.download",
         "path": "/v1/*",
         "route_type": "proxy",
-        "upstream": "serverdashboard-dashboard",
+        "upstream": "docs-site",
         "port": 8100,
         "redirect_target": None,
         "redirect_code": None,

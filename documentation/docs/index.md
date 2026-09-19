@@ -55,6 +55,9 @@ Request → Caddy → Auth Gateway /api/authz/forward-auth
 | [Rules](rules.md) | Groups, actions, shadowing |
 | [Logs & Audit](logs.md) | Audit, visitor country, the viewer map, top pages, settings, dry-run |
 
-## House Reference
+## How it is built
 
-Follows `agent_stuff/reference/`: `fastapi/` (routers, Granian), `docker/` (slim, loopback, external nets), `gatekeeper/` (single cookie, GateKeeper gate, apex deduction), `conventions/docs-readme.md` (tracked `documentation/` MkDocs Material 1.6.1 on 8005).
+FastAPI on Granian, SQLAlchemy 2 async over SQLite, a Caddy wildcard as the only
+public ingress, and MkDocs Material serving this documentation on `:8005` inside
+the stack. Configuration comes from the environment; there is no committed
+`.env` file.
