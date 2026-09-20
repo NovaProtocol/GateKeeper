@@ -1,5 +1,11 @@
 # GateKeeper
 
+<div align="center">
+
+![GateKeeper](https://github.projectnova.download/public/projects/gatekeeper.svg)
+
+</div>
+
 One login for a family of self-hosted web apps.
 
 GateKeeper sits in front of every app I run and answers a single question before a request is
