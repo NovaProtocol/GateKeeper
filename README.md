@@ -117,4 +117,4 @@ uv run --no-project --with-requirements requirements.txt \
   --with-requirements requirements-dev.txt pytest -q
 ```
 
-The suite covers the gate's decision table (redirect, denial, magic link, custom page, maintenance), rule and code management, the manage panel's rendering and ordering controls, the backup round trip, and the boot migrations against a throwaway SQLite database — `tests/conftest.py` sets every environment variable and a temporary `DB_DIR` before anything imports `shared.config`. `tests/ui/` holds rendered-DOM checks (layout, tables, settings form) that run with Playwright rather than pytest.
+The suite covers the gate's decision table (redirect, denial, magic link, custom page, maintenance), rule and code management, the manage panel's rendering and ordering controls, the backup round trip, and the boot migrations against a throwaway SQLite database — `tests/conftest.py` sets every environment variable and a temporary `DB_DIR` before anything imports `shared.config`. `tests/ui/` holds rendered-DOM checks (layout, tables, settings form, the manage modals) that run with Playwright rather than pytest.

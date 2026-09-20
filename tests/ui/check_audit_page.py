@@ -491,6 +491,124 @@ def main() -> int:
             )
         check("every control has title + aria-label", missing, [])
 
+        # ---- map zoom: the wheel is focus-gated, the rest already worked ---- #
+        # The complaint was "maps isnt zoomable".  Drag, double-click, the +/- 
+        # control and the keyboard were all already fine; only the wheel was 
+        # disabled.  Enabling it outright would trap the reader on a long page, 
+        # so the wheel is enabled on focus and handed back on blur.  Each claim 
+        # below is a measurement:
+        #   * unfocused wheel      -> scrolls the PAGE, does not change zoom
+        #   * click                -> the container becomes activeElement
+        #   * focused wheel        -> changes zoom, page does NOT scroll
+        #   * blur                 -> the page scrolls again
+        #   * +/- and double-click -> still change zoom
+        print()
+        print("--- map zoom ---")
+        page.set_viewport_size({"width": 1440, "height": 1000})
+        page.goto(f"{BASE_URL}/manage/audit", wait_until="networkidle")
+        page.wait_for_timeout(1500)
+
+        # The map is built inside an IIFE, so there is no global handle and the
+        # test does not add one (a testability hook in shipped markup would be a
+        # production change made for the test's benefit).  The rendered zoom is
+        # read from the tile URLs instead: Leaflet requests
+        # `.../{z}/{x}/{y}.png`, so the served level is the observable.  The
+        # modal value is taken because mid-animation the old level's tiles are
+        # still in the DOM alongside the new ones.
+        def _zoom() -> Any:
+            levels = page.evaluate(
+                """
+                () => {
+                  const TILE = /\\/(\\d+)\\/\\d+\\/\\d+\\.png/;
+                  return Array.from(document.querySelectorAll('#audit-map img.leaflet-tile'))
+                    .map(t => (t.getAttribute('src') || '').match(TILE))
+                    .filter(Boolean).map(m => Number(m[1]));
+                }
+                """
+            )
+            if not levels:
+                return None
+            return max(set(levels), key=levels.count)
+
+        zoom_probe = page.evaluate(
+            "() => ({hasMap: document.querySelectorAll('#audit-map img.leaflet-tile').length > 0})"
+        )
+        if not zoom_probe["hasMap"]:
+            check("the map rendered tiles to read a zoom level from", False, True)
+        else:
+            box = page.evaluate(
+                """
+                () => {
+                  const r = document.getElementById('audit-map').getBoundingClientRect();
+                  return {x: r.left + r.width / 2, y: r.top + r.height / 2,
+                          vh: window.innerHeight};
+                }
+                """
+            )
+            page.evaluate("() => window.scrollTo(0, 0)")
+            page.mouse.move(box["x"], box["y"])
+
+            # (1) unfocused wheel must scroll the page, not zoom the map.
+            z0 = _zoom()
+            page.mouse.wheel(0, 300)
+            page.wait_for_timeout(250)
+            z1 = _zoom()
+            scrolled = page.evaluate("() => window.scrollY")
+            check("unfocused wheel leaves the zoom alone", z1, z0)
+            check("unfocused wheel scrolls the page instead", scrolled > 0, True)
+
+            # (2) clicking the map focuses its container.
+            page.evaluate("() => window.scrollTo(0, 0)")
+            page.wait_for_timeout(100)
+            page.mouse.click(box["x"], box["y"])
+            page.wait_for_timeout(250)
+            focused = page.evaluate(
+                "() => document.activeElement && document.activeElement.id"
+            )
+            check("clicking the map focuses the container", focused, "audit-map")
+
+            # (3) focused wheel must zoom, and must not scroll the page.
+            page.evaluate("() => window.scrollTo(0, 0)")
+            page.wait_for_timeout(100)
+            z2 = _zoom()
+            page.mouse.move(box["x"], box["y"])
+            page.mouse.wheel(0, -120)
+            page.wait_for_timeout(400)
+            z3 = _zoom()
+            scrolled_while_focused = page.evaluate("() => window.scrollY")
+            check("focused wheel changes the zoom level", z3 != z2, True)
+            check("focused wheel does not scroll the page", scrolled_while_focused, 0)
+            print(f"      zoom while focused: {z2} -> {z3}")
+
+            # (4) blur hands the wheel back to the page.
+            page.evaluate("() => document.activeElement && document.activeElement.blur()")
+            page.wait_for_timeout(150)
+            page.evaluate("() => window.scrollTo(0, 0)")
+            page.wait_for_timeout(100)
+            z4 = _zoom()
+            page.mouse.move(box["x"], box["y"])
+            page.mouse.wheel(0, 300)
+            page.wait_for_timeout(300)
+            check("after blur the wheel leaves the zoom alone", _zoom(), z4)
+            check("after blur the wheel scrolls the page again",
+                  page.evaluate("() => window.scrollY") > 0, True)
+
+            # (5) the interactions that already worked must keep working.
+            page.evaluate("() => window.scrollTo(0, 0)")
+            page.wait_for_timeout(100)
+            z5 = _zoom()
+            page.click(".leaflet-control-zoom-in")
+            page.wait_for_timeout(400)
+            check("the +/- control still zooms", _zoom() != z5, True)
+
+            page.evaluate("() => window.scrollTo(0, 0)")
+            page.wait_for_timeout(100)
+            z6 = _zoom()
+            page.mouse.dblclick(box["x"], box["y"])
+            page.wait_for_timeout(600)
+            check("double-click still zooms", _zoom() != z6, True)
+
+
         browser.close()
 
     print()
