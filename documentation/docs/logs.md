@@ -57,6 +57,13 @@ The page draws **radius-scaled circle markers**, not a heat layer. With country-
 
 A country the centroid table does not carry still counts, appears in the table, and is simply not plotted; the `Unknown` bucket behaves the same way. The card carries the top countries as text as well, so the numbers exist without the picture for a screen reader, a failed tile fetch or an export.
 
+The map's wheel zooms only while the map holds focus: clicking it focuses the
+container, clicking away hands the wheel straight back to the page. The wheel is
+left off by default because the same wheel scrolls this page and the per-visitor
+table below runs long, so a map that always swallowed it would trap the reader on
+the way past. Dragging, double-click, the `+`/`-` control and the keyboard work
+either way.
+
 `mode` is validated at the API (an unknown value is a `400` naming the accepted four); the page normalizes what it is given and falls back to `views`, so a hand-edited URL renders a page rather than an error.
 
 ## Clearing and pruning
