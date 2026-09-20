@@ -5,11 +5,11 @@
 | Layer | Choice |
 |-------|--------|
 | Runtime | Python 3.14-slim, Granian (ASGI) |
-| Framework | FastAPI modular — `shared/` + 3 services, not a Flask monolith |
+| Framework | FastAPI modular, `shared/` + 3 services, not a Flask monolith |
 | Cookie | `PyJWT HS256` (`SECRET_KEY`, `iss=gatekeeper`, `aud=projectnova.download`, `exp` = `session_lifetime_hours`, default 12h) |
-| DB | SQLAlchemy 2 async — `aiosqlite` (SQLite WAL) or `aiomysql` (MySQL 8.4). File `gatekeeper.db` at `DB_DIR=/data` |
+| DB | SQLAlchemy 2 async, `aiosqlite` (SQLite WAL) or `aiomysql` (MySQL 8.4). File `gatekeeper.db` at `DB_DIR=/data` |
 | Docs | MkDocs Material 1.6.1 on `:8005`, FastAPI + granian, USER appuser |
-| Proxy | Caddy 2 on `:7000` — wildcard `*.projectnova.download` → `gatekeeper_auth:8001` → DB Route lookup |
+| Proxy | Caddy 2 on `:7000`, wildcard `*.projectnova.download` → `gatekeeper_auth:8001` → DB Route lookup |
 
 ## 6-Service Topology
 
@@ -30,10 +30,10 @@ project/
 │ ├── backup.py # signed plain-JSON export/restore of the config tables (HMAC-SHA256 over `config`)
 │ ├── rule_defaults.py # boot backfill: exactly one `/*` catch-all per group, forced last
 │ ├── error_pages.py # wants_html, render_error_html, render_maintenance_html (dark theme)
-│ └── db.py # create_async_engine, async_sessionmaker, get_db() — imported only by api:8002 (net-data)
-├── auth-gateway/app.py # :8001 — RequestID, ProxyFix, CSP, slowapi, wildcard proxy (net-api → api:8002, no DB)
-├── api/app.py # :8002 — lifespan create_all + migrations + seed (net-data sole writer)
-├── management/app.py # :8003 — Jinja2 + StaticFiles, /manage/* UI (net-api → api:8002, no DB)
+│ └── db.py # create_async_engine, async_sessionmaker, get_db(), imported only by api:8002 (net-data)
+├── auth-gateway/app.py # :8001, RequestID, ProxyFix, CSP, slowapi, wildcard proxy (net-api → api:8002, no DB)
+├── api/app.py # :8002, lifespan create_all + migrations + seed (net-data sole writer)
+├── management/app.py # :8003, Jinja2 + StaticFiles, /manage/* UI (net-api → api:8002, no DB)
 ├── documentation/ # MkDocs site (this site)
 └── compose.yaml # 6 services (caddy, auth-gateway, api, management, mysql-db, documentation), gatekeeper_data + mysql_data
 ```
@@ -42,10 +42,10 @@ project/
 
 | Service | Build | Expose | Networks |
 |---------|-------|--------|----------|
-| caddy | `caddy/Dockerfile` | `127.0.0.1:7000:7000` | default, gatekeeper (owned) — sole tunnel ingress, no `net-data` |
-| auth-gateway | `auth-gateway/Dockerfile` | 8001 | default, net-api (`internal:true`), gatekeeper (owned) — no `net-data`, no `gatekeeper_data:/data`, no `shared/db.py` |
-| api | `api/Dockerfile` | 8002 | net-api (`internal:true`), net-data (`internal:true`), gatekeeper (owned) — sole `shared/db.py` owner (`gatekeeper_data:/data` + `mysql_data`) |
-| management | `management/Dockerfile` | 8003 | default, net-api (`internal:true`) — no `net-data`, no `shared/db.py` |
+| caddy | `caddy/Dockerfile` | `127.0.0.1:7000:7000` | default, gatekeeper (owned), sole tunnel ingress, no `net-data` |
+| auth-gateway | `auth-gateway/Dockerfile` | 8001 | default, net-api (`internal:true`), gatekeeper (owned), no `net-data`, no `gatekeeper_data:/data`, no `shared/db.py` |
+| api | `api/Dockerfile` | 8002 | net-api (`internal:true`), net-data (`internal:true`), gatekeeper (owned), sole `shared/db.py` owner (`gatekeeper_data:/data` + `mysql_data`) |
+| management | `management/Dockerfile` | 8003 | default, net-api (`internal:true`), no `net-data`, no `shared/db.py` |
 | mysql-db | `mysql:8.4` | 3306 | net-data (`internal:true`) |
 | documentation | `documentation/Dockerfile` | 8005 | default |
 
@@ -129,7 +129,7 @@ by which a database or a backup file written by an older build survives a deploy
 | `api/app.py:_migrate_routes` | A `routes` table that predates `path`, `route_type`, `redirect_target` or `redirect_code`, or whose `upstream` / `port` columns were still `NOT NULL`, or that still carries the single-column `ix_routes_host` index. It adds the columns, and where the old shape cannot be altered in place it rebuilds the table through `routes_new` and copies the rows across. |
 | `shared/rule_defaults.py:add_is_default_column` | A `rules` table created before `rules.is_default` existed. `PRAGMA table_info` first, then `ALTER TABLE`, so it runs once and is inert afterwards. |
 | `shared/rule_defaults.py:add_rule_active_column` | A `rules` table created before `rules.active` existed. Same guard; the constant `DEFAULT 1` means existing rows come back active. |
-| `shared/backup.py:derive_rule_defaults` / `RULES_HAVE_IS_DEFAULT` | A **backup file** written before `rules.is_default` was a column. The flag is derived at read time rather than required from the file, so an older export still restores. `RULES_HAVE_IS_DEFAULT` is a capability probe for a database whose `rules` table genuinely lacks the column, and it is why `VERSION` stays `1` — bumping it would refuse those files. |
+| `shared/backup.py:derive_rule_defaults` / `RULES_HAVE_IS_DEFAULT` | A **backup file** written before `rules.is_default` was a column. The flag is derived at read time rather than required from the file, so an older export still restores. `RULES_HAVE_IS_DEFAULT` is a capability probe for a database whose `rules` table genuinely lacks the column, and it is why `VERSION` stays `1`, bumping it would refuse those files. |
 
 There is no Alembic in this stack: these guarded `ALTER TABLE` blocks *are* the
 migration path, and deleting one would strand every deployment that has not yet
@@ -149,7 +149,7 @@ Browser → Caddy :7000 → Auth Gateway :8001 /api/authz/forward-auth
  └─ on pass: longest-path Route match → proxy to upstream or redirect
 ```
 
-Cache: in-memory `RuleGroup+Route+custom page` polled every `CACHE_TTL=5s` under `asyncio.Lock` via `GET http://api:8002/api/routes|groups|rules|pages` (`X-Internal-Api-Key` on `net-api` `internal:true`) — only `api:8002` imports `shared/db.py`. Code verification is `POST /api/auth/verify-*` on `net-api`. Audit via `BackgroundTasks → POST http://api:8002/api/logs` (`X-Internal-Api-Key` `internal:true`) + rate-limit `POST /api/auth/check-rate-limit {ip}` for `?access_code=` tries/min; `POST /api/routes/{id}/test` and `POST /api/routes/test` both `socket.create_connection((upstream,port))` and need `api` on `gatekeeper` to reach `portfolio_main:8000` etc.
+Cache: in-memory `RuleGroup+Route+custom page` polled every `CACHE_TTL=5s` under `asyncio.Lock` via `GET http://api:8002/api/routes|groups|rules|pages` (`X-Internal-Api-Key` on `net-api` `internal:true`), only `api:8002` imports `shared/db.py`. Code verification is `POST /api/auth/verify-*` on `net-api`. Audit via `BackgroundTasks → POST http://api:8002/api/logs` (`X-Internal-Api-Key` `internal:true`) + rate-limit `POST /api/auth/check-rate-limit {ip}` for `?access_code=` tries/min; `POST /api/routes/{id}/test` and `POST /api/routes/test` both `socket.create_connection((upstream,port))` and need `api` on `gatekeeper` to reach `portfolio_main:8000` etc.
 
 ## Security headers
 
@@ -217,7 +217,7 @@ The status is the same in every case, so the caller can branch on it without par
 
 ```
 default, net-api (internal), net-data (internal),
-gatekeeper (GateKeeper-owned routable network, `name: gatekeeper`) — join = permission to receive traffic,
+gatekeeper (GateKeeper-owned routable network, `name: gatekeeper`), join = permission to receive traffic,
 cloudflared-tunnel (external cloudflared-tunnel)
 ```
 

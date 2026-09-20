@@ -3,14 +3,13 @@
 `active` is one additive column with a constant default, so the migration is
 smaller than the `is_default` one and does not renumber anything. What it does
 have to prove is the thing that is easy to get wrong and hard to see: an existing
-rule must come back **active**. Reading `NULL` — or a missing value — as inactive
+rule must come back **active**. Reading `NULL`, or a missing value, as inactive
 would silently take every rule out of the gate's walk and hand every host to
 whatever sits below it, which is the opposite of fail-closed.
 
 So these tests do not assert "the column exists". They build throwaway SQLite
 files with the pre-`active` schema, run the migration over them, and check the
-column, every rule's flag, and that `display_order` was left exactly as it was —
-the point of difference from the `is_default` migration, which does renumber.
+column, every rule's flag, and that `display_order` was left exactly as it was, the point of difference from the `is_default` migration, which does renumber.
 
 Nothing here touches `/data/gatekeeper.db`: each case gets its own file under
 `/tmp`, built with the schema as it stood before the column.
@@ -32,7 +31,7 @@ from shared.rule_defaults import add_rule_active_column, invariant_problems
 
 #: The `rules` table as it stood *before* this change: no `active`. `is_default`
 #: is already present, so this is genuinely the current production shape and not
-#: some older one — the migration has to cope with the table the live stack holds
+#: some older one, the migration has to cope with the table the live stack holds
 #: today.
 LEGACY_SCHEMA = """
 CREATE TABLE rule_groups (
@@ -220,7 +219,7 @@ def test_missing_field_reads_as_active() -> None:
     explicit_off = Rule(path="/x", action="none", display_order=0)
     explicit_off.active = False
     assert _is_active(explicit_off) is False
-    # `None` is not `False`, so a NULL row still reads as active — which is why
+    # `None` is not `False`, so a NULL row still reads as active, which is why
     # the column is `nullable=False` in the first place.
     nulled = Rule(path="/x", action="none", display_order=0)
     nulled.active = None

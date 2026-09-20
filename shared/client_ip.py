@@ -6,7 +6,7 @@ authoritative source.
 
 ``X-Forwarded-For`` is **not** usable here and is the reason the audit log used
 to fill up with ``172.18.x.x``: cloudflared does not set it on the origin dial,
-so Caddy's ``reverse_proxy`` fills it with the immediate peer — the cloudflared
+so Caddy's ``reverse_proxy`` fills it with the immediate peer, the cloudflared
 container's own bridge address. Every visitor then collapsed into one identity,
 which also meant the per-IP rate limiter throttled the whole internet as if it
 were a single caller.
@@ -14,7 +14,7 @@ were a single caller.
 Trust model: only the tunnel may reach the origin. ``gatekeeper_caddy`` is the
 sole member of ``cloudflared-tunnel`` besides cloudflared itself, and its port
 is loopback-bound, so an inbound request cannot arrive from anywhere but
-Cloudflare. These headers are plain strings — if the origin ever becomes
+Cloudflare. These headers are plain strings, if the origin ever becomes
 directly reachable, they are forgeable and only the peer address is
 trustworthy.
 """

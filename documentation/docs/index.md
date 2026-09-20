@@ -1,6 +1,6 @@
 # GateKeeper
 
-FastAPI gateway that protects every web app on one apex domain behind a signed access-code cookie. Caddy `GateKeeper gate` is the only gate — apps hold zero auth code and zero GateKeeper secrets.
+FastAPI gateway that protects every web app on one apex domain behind a signed access-code cookie. Caddy `GateKeeper gate` is the only gate, apps hold zero auth code and zero GateKeeper secrets.
 
 **Stack:** Python 3.14 · FastAPI + Granian · SQLAlchemy 2 (async) · MySQL 8.4 / SQLite · Caddy 2 · PyJWT · Docker Compose
 
@@ -19,7 +19,7 @@ Shared layer `shared/` holds `config.py` (pydantic-settings), `jwt.py` (`PyJWT H
 
 ```mermaid
 graph TB
- TUN["Cloudflare Tunnel / Browser"] --> CADDY["Caddy :7000<br/>wildcard — 3 handles"]
+ TUN["Cloudflare Tunnel / Browser"] --> CADDY["Caddy :7000<br/>wildcard, 3 handles"]
  CADDY --> DOC["Docs :8005<br/>MkDocs"]
  CADDY --> AUTH["Auth Gateway :8001<br/>GateKeeper gate + proxy"]
  CADDY --> MGMT["Management :8003<br/>Jinja UI"]

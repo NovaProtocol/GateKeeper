@@ -6,7 +6,7 @@ The cases below pin that claim by request rather than by reading:
 
 * the bytes are the stored bytes, with the stored content type, on two hosts;
 * a non-``GET`` request is not a page request and follows the gate;
-* a page whose governing rule is ``access_code`` is **not** served — the visitor
+* a page whose governing rule is ``access_code`` is **not** served, the visitor
   is redirected to login, exactly as before this feature existed;
 * ``deny`` still denies;
 * an inactive page falls through;
@@ -14,7 +14,7 @@ The cases below pin that claim by request rather than by reading:
 * one audit row, marked ``custom_page``, is written.
 
 The gateway loads its caches over HTTP from ``api:8002``, which is unreachable
-here, so they are injected directly — the same technique
+here, so they are injected directly, the same technique
 ``test_gateway_failclosed.py`` uses for ``_CacheGroups``. They are module-scoped
 state, hence the autouse fixture that saves and restores all three.
 """
@@ -210,7 +210,7 @@ def test_a_cookie_less_request_gets_the_bytes(gateway_client: Any, upstream: Any
 
 
 def test_the_stored_bytes_are_served_byte_for_byte(gateway_client: Any, upstream: Any) -> None:
-    """No escaping, no sanitising, no sniffing — the owner's bytes."""
+    """No escaping, no sanitising, no sniffing, the owner's bytes."""
     html = '<p>gone</p><script>window.location="/";</script>'
     install_cache(
         [make_group(1, "portfolio", HOST, [("/*", "none")])],

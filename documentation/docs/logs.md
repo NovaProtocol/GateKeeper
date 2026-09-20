@@ -10,9 +10,9 @@ GET /api/logs/export?format=csv
 GET /api/logs/by-ip?limit=50 # grouped by ip → {calls, recent[5], codes}
 DELETE /api/logs/clear # X-Internal-Api-Key
 POST /api/logs/prune?days= # X-Internal-Api-Key, days 7..3650, defaults to the stored setting
-POST /api/logs # internal ingest — auth-gateway BackgroundTasks X-Internal-Api-Key
+POST /api/logs # internal ingest, auth-gateway BackgroundTasks X-Internal-Api-Key
 POST /api/auth/check-rate-limit {ip} # X-Internal-Api-Key → {allowed,count,limit}
-GET|PUT /api/settings[/{key}] # settings table — PUT needs X-Internal-Api-Key
+GET|PUT /api/settings[/{key}] # settings table, PUT needs X-Internal-Api-Key
 ```
 
 - Host/path filters use `LIKE%` glob; `code` matches `code_label/code_value/attempted_code`.
@@ -95,8 +95,8 @@ A row exactly on the cutoff is kept: the window is "older than N days", not "not
 
 When no rule matched, the row carries `matched_action` = the governing fallback (`access_code`, `deny`, or `none`, i.e. the `unmatched_action` setting) with `rule_id` and `rule_group_id` both null, and `action` = what happened (`no_cookie_redirect`, `deny`, `none_gate`). So `action='no_cookie_redirect'` with `matched_action='access_code'` and no `rule_id` is a request that was refused because nothing matched, not because a rule asked for it. A group that matched the host without a matching rule reports the same `matched_action='access_code'` regardless of the setting, because that state is always refused (see Rules → When nothing matches).
 
-`GET /api/warnings` — shadowed groups/rules. The dashboard banner is its only reader in the panel: the old `/manage/warnings` page is gone, because on a healthy gateway the endpoint answers `{groups: [], rules: []}` and the page rendered two empty tables.
-`POST /api/dry-run {host,path}` — preview what rule would match.
+`GET /api/warnings`, shadowed groups/rules. The dashboard banner is its only reader in the panel: the old `/manage/warnings` page is gone, because on a healthy gateway the endpoint answers `{groups: [], rules: []}` and the page rendered two empty tables.
+`POST /api/dry-run {host,path}`, preview what rule would match.
 
 The second action string a request can carry without a rule behind it is `maintenance_mode`, written by both gate paths while `maintenance_mode` is on. With it, `action` and `matched_action` are both `maintenance_mode` and `rule_id`, `rule_group_id` and `code_id` are all null, so a maintenance refusal is distinguishable from a rule that refused for its own reasons.
 
@@ -105,7 +105,7 @@ The second action string a request can carry without a rule behind it is `mainte
 - `RequestIDMiddleware` → `X-Request-ID` (echoed).
 - `structlog` JSON on gateway.
 - `CSPMiddleware` (`default-src self`) + `ProxyFixMiddleware` + `X-Forwarded-*`.
-- `audit_logs.ip` holds the **visitor** address (max 64 chars) — resolved by `shared/client_ip.py`, never the cloudflared container's bridge address.
+- `audit_logs.ip` holds the **visitor** address (max 64 chars), resolved by `shared/client_ip.py`, never the cloudflared container's bridge address.
 - `audit_logs.country` holds the **visitor's country** (2 chars), resolved by
   `shared/geo.py` from `CF-IPCountry`, or `NULL` when it is absent, a sentinel, or
   not a country code.

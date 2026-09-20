@@ -1,5 +1,5 @@
 site_name: GateKeeper · Documentation
-site_description: Documentation for GateKeeper — FastAPI gateway with signed-cookie, DB-driven routing, and rule-group dispatch
+site_description: Documentation for GateKeeper, FastAPI gateway with signed-cookie, DB-driven routing, and rule-group dispatch
 site_author: NovaProtocol
 repo_url: https://github.com/NovaProtocol/GateKeeper
 repo_name: NovaProtocol/GateKeeper

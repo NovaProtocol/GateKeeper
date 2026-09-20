@@ -11,7 +11,7 @@ All services use `python:3.14-slim`, `PYTHONDONTWRITEBYTECODE=1`, `pip --no-cach
 | management | `management/Dockerfile` | `granian --interface asgi --host 0.0.0.0 --port 8003` (+ jinja2, python-multipart) |
 | caddy | `caddy/Dockerfile` | `caddy:2-alpine` |
 | documentation | `documentation/Dockerfile` | `mkdocs build` then `granian --port 8005` |
-| mysql-db | `mysql:8.4` | — |
+| mysql-db | `mysql:8.4` | n/a |
 
 ## Compose
 

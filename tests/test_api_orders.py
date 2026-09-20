@@ -7,7 +7,7 @@ against a real database.
 Every group created through `POST /api/groups` now arrives with its `/*`
 catch-all, flagged and last, and that catch-all is pinned: it can neither be
 moved nor swapped with. So a group's *movable* rules are the ones above it, and
-the last test is the one that matters operationally — a rule added to a group
+the last test is the one that matters operationally, a rule added to a group
 lands above the catch-all and therefore takes effect immediately, which is the
 shape the old `/*`-first layout made impossible.
 """

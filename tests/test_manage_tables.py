@@ -5,7 +5,7 @@ invisible in review and one of them shipped in three templates unnoticed:
 
 1. The last cell of a row must stay a table cell. An inline `display:flex` on a
    `<td>` drops it out of the table layout algorithm, so it stops stretching to
-   its row's height and its bottom border ends early — the column borders no
+   its row's height and its bottom border ends early, the column borders no
    longer meet. The layout belongs on an inner `.actions` wrapper.
 2. Every icon-only control in a table row must carry a non-empty `aria-label`.
    Removing the visible word removes the accessible name, so the label has to
@@ -251,7 +251,7 @@ def test_destructive_row_controls_keep_their_confirm(manage_client, monkeypatch)
     assert "return confirm('Delete rule?')" in detail_html
 
     # Codes: the row now carries two separate controls, and only one of them is
-    # destructive. The switch is a state indicator — it maps to `active` and is
+    # destructive. The switch is a state indicator, it maps to `active` and is
     # reversible from the same control, so it asks for nothing and posts nothing
     # but the flag. The irreversible path keeps its typed confirmation, which is
     # checked on the server: the modal is the affordance, the route is the guard.
@@ -279,12 +279,12 @@ def test_destructive_row_controls_keep_their_confirm(manage_client, monkeypatch)
     assert "delete" not in form_html, "the switch must not carry a delete URL"
     # Nothing in the row's action cell asks for a confirmation: the switch's own
     # change is reversible. (The words `confirm`/`delete` do appear elsewhere on
-    # the page — in the delete modal, which is the point.)
+    # the page, in the delete modal, which is the point.)
     for cell in _action_cells(codes_html):
         assert "confirm(" not in cell, "the row's switch must not prompt"
 
     # (b) the row carries a separate trash control that does not post anywhere by
-    #     itself — it opens the modal.
+    #     itself, it opens the modal.
     delete_control = re.search(r"<button[^>]*js-delete-code[^>]*>", codes_html)
     assert delete_control, "the row must carry a dedicated delete control"
     assert 'type="button"' in delete_control.group(0)
@@ -359,7 +359,7 @@ def test_the_catch_all_switch_is_disabled_with_its_reason(manage_client, monkeyp
     body = catch_all_form.group(1)
     assert "disabled" in body
     assert 'aria-disabled="true"' in body
-    assert 'title="The catch-all cannot be deactivated — it is the group\'s fallback"' in body
+    assert 'title="The catch-all cannot be deactivated, it is the group\'s fallback"' in body
 
     # And its control is present, not removed: the panel's own convention.
     assert 'aria-label="The catch-all cannot be deactivated"' in body
@@ -393,7 +393,7 @@ def test_default_group_and_catch_all_controls_are_disabled_not_hidden(
     assert 'aria-disabled="true"' in rules_html
 
     detail_html = _get(manage_client, "/manage/rules/10", monkeypatch, DETAIL_PAGE)
-    assert 'title="The catch-all cannot be deleted — delete the group instead"' in detail_html
+    assert 'title="The catch-all cannot be deleted, delete the group instead"' in detail_html
     # The catch-all's own delete form must be gone, not merely disabled.
     assert 'class="tag tag-inactive">default<' in detail_html
 

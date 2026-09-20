@@ -373,7 +373,7 @@ def test_a_bad_domain_is_a_warning_not_a_refusal(client) -> None:
 
 def test_a_group_without_a_catch_all_is_refused(client) -> None:
     """Since `/*` became a reserved path, a group without a catch-all cannot be
-    repaired through the panel — only deleted and recreated. So a file carrying
+    repaired through the panel, only deleted and recreated. So a file carrying
     one is refused, with the reason, rather than applied into a host that
     answers nothing."""
     gid = client.post(
@@ -522,7 +522,7 @@ def test_rule_validation_refuses_a_password_rule_with_no_hash(client) -> None:
 # `rules[].active` in the file
 #
 # `VERSION` stays 1 and the field stays optional, because a required `active`
-# would refuse every backup taken before the column existed — which would destroy
+# would refuse every backup taken before the column existed: which would destroy
 # the only rollback point there is at exactly the moment a schema change makes it
 # worth having.
 # --------------------------------------------------------------------------- #

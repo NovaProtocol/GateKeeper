@@ -8,7 +8,7 @@ route for a path that is not really the project's business.
 
 A page is not a fixed path list. A row holds a **pattern** describing a URL
 shape, the first match wins by priority, and the panel shows the priority number
-with ▲/▼ raise/lower and a deactivate switch — the same controls, in the same
+with ▲/▼ raise/lower and a deactivate switch, the same controls, in the same
 order, as Rules.
 
 ```sql
@@ -33,12 +33,12 @@ that handler carries no host matcher it claims that prefix on **every** host.
 `/api/authz/forward-auth` and `/logout` are literal gateway routes registered
 ahead of the wildcard. `/login` is different and worth knowing about: it is
 served by the wildcard proxy into the management service, so the gateway carries
-an explicit guard for it — a page can never answer `/login`, `/`, `/logout`,
+an explicit guard for it, a page can never answer `/login`, `/`, `/logout`,
 `/manage/*` or `/static/*` on the gatekeeper host or the apex, whatever its
 pattern says. `/static/*` is on that list because the panel's own stylesheet is
 served the same way the login page is: reserving `/login` but not the CSS it
 loads would leave the operator with a panel that answers and renders unstyled,
-which is a lockout by another route. The reserve is **host-scoped** — a project
+which is a lockout by another route. The reserve is **host-scoped**: a project
 host's own `/static/*` is untouched, because the predicate is false for every
 non-manage host.
 `/robots.txt` on the gatekeeper host is **not** part of that guard and stays
@@ -52,8 +52,8 @@ Tier 4 is unchanged, and untouched by any of this.
 
 **Maintenance mode is above all four tiers**, so it is the one case where a page
 does not appear even though its pattern matched and its rule allows `none`. While
-`maintenance_mode` is on, every request gets the maintenance `503` — including
-`/robots.txt` — and turning the switch off restores the page exactly. That
+`maintenance_mode` is on, every request gets the maintenance `503`, including
+`/robots.txt`, and turning the switch off restores the page exactly. That
 ordering is deliberate rather than an oversight: an operator who turns maintenance
 on expects the whole site to say so, and a robots file during an outage is not
 worth a special case.
@@ -73,13 +73,13 @@ gatekeeper.projectnova.download/*
 |-------|---------|
 | `*` | any sequence of characters, **including `/`** |
 | `?` | exactly one character |
-| anything else | itself, literally — `*.` is a dot, not a regex |
+| anything else | itself, literally, `*.` is a dot, not a regex |
 
 Anchored at both ends: `/robots.txt` does not match `/robots.txt.bak`, and
 `/a/*` does not match `/ab`. Hosts compare case-insensitively and paths
 case-sensitively, which is the split the rule vocabulary already makes.
 `*.example.com` matches the bare `example.com` as well as any subdomain of it,
-mirroring `host_matches` — so a page and a rule that both name `*.example.com`
+mirroring `host_matches`, so a page and a rule that both name `*.example.com`
 cover the same set of hosts. `*` alone matches any host.
 
 The glob vocabulary is deliberately **not** the rules' vocabulary. A rule path is
@@ -93,13 +93,13 @@ never the reason a body is served.
 ### Precedence
 
 `display_order` ascending, then `id`; the first match is the only match. Nothing
-merges and nothing cascades — a response is one row's body, or it is not a page
+merges and nothing cascades, a response is one row's body, or it is not a page
 response at all. Both priority tables in the panel mean the same thing, which is
 why the column is called `Priority` on both.
 
 The gate holds the page list for `CACHE_TTL = 5s`, so a new or edited page takes
 up to five seconds to appear. If the list cannot be read at all the gateway keeps
-its stale copy, and if it has none it treats that as "no page matched" — never as
+its stale copy, and if it has none it treats that as "no page matched", never as
 "some page matched".
 
 ## The body and the content type
@@ -111,7 +111,7 @@ inline redirect is a legitimate use and stays one.
 - `content_type` is sent as the response's type. `X-Content-Type-Options:
   nosniff` is applied to every response on this stack, so the declared value is
   the only thing a browser has to go on. **Do not label an HTML body
-  `text/plain`** — with `nosniff` it will be shown as text, not rendered.
+  `text/plain`**, with `nosniff` it will be shown as text, not rendered.
 - A bare `text/*` type gains `; charset=utf-8`; a stored value that already
   names a charset keeps it.
 - `body` is capped at **256 KiB** (262,144 characters). The cap exists because
@@ -129,9 +129,9 @@ renders the document.
 
 A `robots.txt` body is plain text and is not a place to put policy about crawling
 *this* site, beyond the file's own vocabulary. A `none` rule makes exactly the
-matched path public on every host that pattern governs — which is the intent for
+matched path public on every host that pattern governs, which is the intent for
 a robots file, since a crawler arrives without a cookie and must be able to read
-it — but it is a gate decision, not a side effect. It grants nothing beyond the
+it, but it is a gate decision, not a side effect. It grants nothing beyond the
 pattern's paths.
 
 ## The governing rule, and why a page may never be served
@@ -145,12 +145,12 @@ A page is served only when the rule that governs its host and path has the actio
 | `access_code` | `302` to login, exactly as before |
 | `custom_password` | `302` to login, exactly as before |
 | `deny` | the themed `403` |
-| no group for the host | `settings.unmatched_action` — and the page is not served |
+| no group for the host | `settings.unmatched_action`, and the page is not served |
 
 The panel states this per row rather than leaving it to be discovered: every page
 carries a banner naming the group and rule that govern a representative URL, and
 a page whose action is not `none` says so on the same line. The representative is
-a **sample**, not a promise — a wildcard can span hosts governed by different
+a **sample**, not a promise, a wildcard can span hosts governed by different
 groups, and the banner can only report one of them.
 
 Both modals also carry a **Test before saving** control, which asks the gate the
@@ -165,7 +165,7 @@ warns about in the row rather than refusing at the API:
 - the pattern is malformed, or another page matches first at a lower priority.
 
 A third case is warned about only when the pattern's host half can name the panel
-or the apex — a pattern over `/`, `/login`, `/logout`, `/manage/*` or
+or the apex, a pattern over `/`, `/login`, `/logout`, `/manage/*` or
 `/static/*` there is reserved by the control plane. The same path on a project
 host is not, so `portfolio.projectnova.download/static/*` is a legitimate page
 and does not warn.
@@ -195,7 +195,7 @@ Refusals, each naming its reason:
 |-----------|----------|
 | no `/`, an empty host half, an empty path half, whitespace, or `..` in the pattern | `400` |
 | pattern longer than 1024 characters | `400` |
-| `content_type` with a CR or LF | `400` — it becomes a response header, so a line break there is response splitting |
+| `content_type` with a CR or LF | `400`, it becomes a response header, so a line break there is response splitting |
 | `content_type` that is not `type/subtype` | `400` |
 | body over 256 KiB | `400` |
 | a pattern that already exists | `409` |
@@ -208,7 +208,7 @@ operator could not create. A dead row is visible on the page that lists it.
 ## Audit
 
 Every request answered by a page writes one row with `action = "custom_page"` and
-`matched_action = "custom_page"` — the greppable marker that a page, rather than
+`matched_action = "custom_page"`, the greppable marker that a page, rather than
 a rule, produced the body. `rule_group_id` and `rule_id` carry the rule that
 allowed it, because that is the interesting fact, and the status is `200` for a
 page served. A request the gate refused writes no page row; the refusal is
@@ -252,7 +252,7 @@ User-agent: *
 Disallow: /
 ```
 
-This page and Portfolio's own route no longer coexist for that path — the route
+This page and Portfolio's own route no longer coexist for that path, the route
 is gone, and GateKeeper answers instead.
 
 ### The `noindex` signals are unchanged
@@ -266,5 +266,5 @@ Portfolio's `noindex` signals, which remain exactly as they were:
 That is deliberate. The header is the primary mechanism precisely because
 middleware in the app cannot cover the separately-containerised documentation
 service, so removing it would quietly undo an earlier decision rather than tidy
-anything. A custom page cannot set `X-Robots-Tag` at all — see above — and is not
+anything. A custom page cannot set `X-Robots-Tag` at all, see above, and is not
 a substitute for either signal.

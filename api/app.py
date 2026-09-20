@@ -256,7 +256,7 @@ def _shadowed_warnings(groups: list[RuleGroup]) -> dict[str, Any]:
                 # An inactive rule shadows nothing: it is skipped by resolution,
                 # so the rule below it still fires. Reporting one as a shadow is
                 # the false alarm this list exists to avoid. The subject is still
-                # checked, though — an inactive rule that *is* shadowed cannot
+                # checked, though, an inactive rule that *is* shadowed cannot
                 # take effect even after it is switched back on, which is worth
                 # knowing.
                 if not rule_is_active(ur):

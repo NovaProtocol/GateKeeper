@@ -381,8 +381,8 @@ def test_deny_rule_still_denies(gateway_client: Any, upstream: Any) -> None:
 # `Rule.active` at the gate: the switch is real on both paths
 #
 # This is the suite that matters for the flag. If the gateway's cache dropped the
-# value — the one place where "it works in the panel and does nothing at the gate"
-# could happen — every test below would fail while the panel looked correct.
+# value: the one place where "it works in the panel and does nothing at the gate"
+# could happen: every test below would fail while the panel looked correct.
 # --------------------------------------------------------------------------- #
 
 
@@ -427,7 +427,7 @@ def test_a_group_whose_only_matching_rule_is_off_is_still_refused(
     """The fail-closed branch, and the reason the catch-all cannot be switched off.
 
     With the only matching rule inactive, the group matched the host and no active
-    rule matched the path, so the request is refused unconditionally — the setting
+    rule matched the path, so the request is refused unconditionally, the setting
     must not be able to re-open it.
     """
     group = make_group(1, "portfolio", HOST, [("/private/*", "none")])
@@ -537,8 +537,7 @@ def test_the_cache_carries_the_flag_from_the_api(
 ) -> None:
     """The gateway never touches the database, so this is the only route in.
 
-    Without this, the toggle would work in `/manage` and do nothing at the gate —
-    the worst possible outcome for a switch, because it looks like it worked.
+    Without this, the toggle would work in `/manage` and do nothing at the gate, the worst possible outcome for a switch, because it looks like it worked.
     """
     import asyncio
 

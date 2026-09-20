@@ -7,7 +7,7 @@ fails in one place rather than in production.
 
 The vocabulary is deliberately not the rules' vocabulary: `*` crosses `/`, so a
 page pattern names a URL shape rather than a prefix. The two no-match cases at
-the end exist because that is exactly the difference — `/robots.txt` must not
+the end exist because that is exactly the difference, `/robots.txt` must not
 cover `/robots.txt.bak`, and `/a/*` must not cover `/ab`.
 """
 

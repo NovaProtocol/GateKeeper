@@ -540,7 +540,7 @@ def main() -> int:
 
     failures: list[str] = []
     print("=" * 78)
-    print("RENDERED-DOM PROOF — manage layout, width and table invariants")
+    print("RENDERED-DOM PROOF, manage layout, width and table invariants")
     print("=" * 78)
 
     with sync_playwright() as p:

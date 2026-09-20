@@ -26,16 +26,16 @@ whole configuration to a file, and restores the configuration from one.
 Plain, indented JSON. Not a JWT, not a container format: you can read it, diff it
 and edit it in any editor.
 
-- `version` — the file format. Currently `1`. A file with any other version is
+- `version`, the file format. Currently `1`. A file with any other version is
   refused as `bad-version` before anything else is checked, so a file from a
   future release fails with the reason rather than a signature complaint.
-- `created_at` — when the export was taken. Informational; not signed.
-- `config` — everything that is configuration, sorted by row id.
-- `sig` — HMAC-SHA256, hex, over the canonicalised `config` **only**.
+- `created_at`, when the export was taken. Informational; not signed.
+- `config`, everything that is configuration, sorted by row id.
+- `sig`, HMAC-SHA256, hex, over the canonicalised `config` **only**.
 
 `pages` is **optional**, and that is deliberate. Every file written before
 [custom pages](custom-pages.md) existed has no such key, and `validate()` refuses
-a file with a missing required section — so promoting it to a required section
+a file with a missing required section, so promoting it to a required section
 would make every earlier backup unrestorable, and bumping `version` would refuse
 them too. Either would destroy the only rollback point that exists at exactly the
 moment it is needed. A file with no `pages` key therefore validates, restores, and
@@ -197,11 +197,11 @@ from either side of that change restores under the newer code.
 
 `rules[].active` is **optional in the same way**, and `VERSION` stays `1` because
 it is a field inside the existing `rules` section rather than a new section. A
-file that omits it restores every rule **active** — not inactive. The direction
+file that omits it restores every rule **active**: not inactive. The direction
 matters: reading a missing value as "off" would let an upgrade silently take every
 rule out of the gate's walk, and a file written before the column is exactly the
 case where that would happen. `active` is refused only when it is present and not
-a boolean, or when it switches the `is_default` rule off — that state cannot be
+a boolean, or when it switches the `is_default` rule off, that state cannot be
 produced through the panel, and it would leave a group with no fallback, so every
 path the group does not name would be refused.
 

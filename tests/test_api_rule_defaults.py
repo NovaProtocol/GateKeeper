@@ -5,12 +5,12 @@ lucky. Before it, "every group ends in a `/*` catch-all" was a convention nobody
 enforced, and the gate had to assume it. These tests pin the three halves of the
 enforcement:
 
-1. **schema and backfill** — the column arrives through the guarded `ALTER
+1. **schema and backfill**: the column arrives through the guarded `ALTER
    TABLE`, and the backfill gives every group exactly one flagged catch-all,
    sorted last, with a report showing what moved;
-2. **the API guards** — a default rule cannot be deleted, reordered, or renamed,
+2. **the API guards**: a default rule cannot be deleted, reordered, or renamed,
    and `/*` is reserved for it;
-3. **the group lifecycle** — a new group seeds its own catch-all, and deleting
+3. **the group lifecycle**: a new group seeds its own catch-all, and deleting
    the group is the one way to remove it.
 
 The backfill runs on real databases in `tests/test_rule_defaults_migration.py`.

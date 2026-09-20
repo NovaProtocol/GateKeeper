@@ -6,7 +6,7 @@ issues exactly one `PUT` carrying only the fields the owner actually filled in.
 What the API does with that call is covered in `test_api_groups.py`.
 
 The default-group case is the one that matters: the template disables the domain
-input, so the payload must not carry a `domain` key at all — the API's
+input, so the payload must not carry a `domain` key at all, the API's
 `cannot change default domain` guard is the backstop, not the only defence.
 """
 

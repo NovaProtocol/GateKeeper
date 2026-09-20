@@ -1,12 +1,12 @@
 """Resolution with `Rule.active`: skipping is fall-through, not deny.
 
-Pure and fast — no HTTP and no database. The flags here are the ones that decide
+Pure and fast, no HTTP and no database. The flags here are the ones that decide
 what a visitor gets, so each case is written as the consequence rather than as a
 list comparison:
 
 * a switched-off rule is skipped, so the request falls through to the catch-all;
 * a switched-off rule cannot shadow an active one, whatever its position;
-* a group whose only path-matching rule is off is still **refused** — the
+* a group whose only path-matching rule is off is still **refused**: the
   fail-closed branch, unchanged by this feature;
 * a `Rule` with no `active` attribute at all still governs, which is what keeps
   an un-upgraded API or an old cache from silencing every rule;
@@ -92,7 +92,7 @@ def test_a_rule_with_no_active_attribute_still_governs() -> None:
     """The partially-deployed case, which must never switch gating off.
 
     The stand-in is a plain object with the fields resolution reads and **no**
-    `active` at all — the shape a bare `Rule(...)` has on a stack whose API has
+    `active` at all, the shape a bare `Rule(...)` has on a stack whose API has
     not shipped the column, and the shape an in-memory cache built before it
     would carry. The mapped `Rule` class always has the attribute (it is a
     declarative column), so a real `Rule` cannot express this case.
@@ -157,7 +157,7 @@ def test_unmatched_action_still_only_applies_without_a_group() -> None:
 
 @pytest.mark.parametrize("active", [True, False])
 def test_find_group_rule_is_deterministic_for_a_repeated_probe(active: bool) -> None:
-    """Two calls with the same data agree — the gateway caches for 5s."""
+    """Two calls with the same data agree, the gateway caches for 5s."""
     group = _group(1, "app.test")
     group.rules = [
         _rule(1, "/a/*", "access_code", 0, active=active),

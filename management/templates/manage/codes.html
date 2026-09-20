@@ -36,7 +36,7 @@
         {% for c in codes %}
         <tr data-code-label="{{ c.label or '' }}" data-code-display="{{ c.display_name or c.label or '' }}" data-code-value="{{ c.code }}"{% if not c.active %} class="inactive"{% endif %}>
           <td><span class="code-value">{{ c.code }}</span></td>
-          <td><span class="label-value{% if not c.label and not c.display_name %} empty{% endif %}">{{ c.display_name or c.label or '—' }}</span></td>
+          <td><span class="label-value{% if not c.label and not c.display_name %} empty{% endif %}">{{ c.display_name or c.label or ' - ' }}</span></td>
           <td><span class="tag {{ 'tag-active' if c.active else 'tag-inactive' }}">{{ 'Active' if c.active else 'Inactive' }}</span></td>
           <td class="date-value">{{ c.created_at }}</td>
           <td class="date-value">{{ c.last_accessed or 'never' }}</td>

@@ -7,12 +7,12 @@ rules(group_id, path, action, custom_password_hash, custom_password_salt, displa
 
 Resolution and the unmatched-request decision live in `shared/gate.py`; both the `forward_auth` check and the wildcard proxy call it, so they cannot drift apart.
 
-- `display_order` decides priority — lower first. `*.*/*` default group is pinned bottom.
+- `display_order` decides priority, lower first. `*.*/*` default group is pinned bottom.
 - `domain` supports `*` prefix (`*.projectnova.download`).
-- `path` uses `/*` prefix match — and it is **exact** otherwise. `/documentation` matches only that one path; `/documentation/*` is what covers `/documentation/rules/`.
+- `path` uses `/*` prefix match, and it is **exact** otherwise. `/documentation` matches only that one path; `/documentation/*` is what covers `/documentation/rules/`.
 - `action`: `access_code` (check cookie/magic link), `none` (allow), `custom_password` (per-rule password), `deny` (403).
-- `active`: whether the rule takes part in resolution at all. `true` on every rule that existed before the column arrived, and on everything the panel creates. An **inactive rule is skipped** — see [Deactivating a rule](#deactivating-a-rule).
-- `allow_ip`, `allow_time`, `rate_limit` are **reserved** — stored, not enforced on hot path.
+- `active`: whether the rule takes part in resolution at all. `true` on every rule that existed before the column arrived, and on everything the panel creates. An **inactive rule is skipped**: see [Deactivating a rule](#deactivating-a-rule).
+- `allow_ip`, `allow_time`, `rate_limit` are **reserved**: stored, not enforced on hot path.
 
 A rule with `action = none` allows the request, and the gateway may then answer it itself with a [custom page](custom-pages.md) instead of proxying to the upstream. The page never changes what the rule decides: it only runs where the rule has already said `none`.
 
@@ -20,18 +20,18 @@ A rule with `action = none` allows the request, and the gateway may then answer 
 
 `/manage/rules/{gid}` carries a **Status** switch per rule (`PUT /api/rules/{rid}` with `active`). It is a state control and nothing else: it does not delete, it does not ask for a confirmation, and flipping it back restores exactly the previous behaviour.
 
-**Skipping is fall-through, not deny.** An inactive rule is invisible to resolution, so the request continues down the group and normally meets the group's `/*` catch-all — which is the operator's own standing policy for everything they have not named. The switch is therefore "not this rule", never "not this request":
+**Skipping is fall-through, not deny.** An inactive rule is invisible to resolution, so the request continues down the group and normally meets the group's `/*` catch-all, which is the operator's own standing policy for everything they have not named. The switch is therefore "not this rule", never "not this request":
 
 | Scenario | Result |
 |----------|--------|
 | A narrower rule is switched off | The next matching rule below it decides, normally the catch-all |
 | A broad rule is switched off | A rule below it that could never fire starts matching again |
-| Every rule matching the path is switched off | The group matched the host with no matching active rule, so the request is **refused** — the fail-closed branch above, unchanged |
+| Every rule matching the path is switched off | The group matched the host with no matching active rule, so the request is **refused**: the fail-closed branch above, unchanged |
 | The catch-all is switched off | **Not possible**: `400 the catch-all cannot be deactivated` |
 
-The last row is the load-bearing guard, and it sits beside `cannot delete default rule` / `cannot move default rule` / `cannot change default rule path`. The catch-all *is* the fallback, so switching it off would leave every path in its group that no narrower rule names refused — one switch making a whole host answer nothing, which is the failure the mandatory-catch-all invariant exists to prevent. The control is rendered `disabled` with the reason in its `title`, and the panel logs `rule_active_refused` if the API refuses it anyway.
+The last row is the load-bearing guard, and it sits beside `cannot delete default rule` / `cannot move default rule` / `cannot change default rule path`. The catch-all *is* the fallback, so switching it off would leave every path in its group that no narrower rule names refused, one switch making a whole host answer nothing, which is the failure the mandatory-catch-all invariant exists to prevent. The control is rendered `disabled` with the reason in its `title`, and the panel logs `rule_active_refused` if the API refuses it anyway.
 
-`active` is not nullable, and a **missing value reads as active** on every path — the ORM, the gateway's 5-second cache and the backup validator. That is deliberate: an API that does not send the field, or a cache built before the column existed, must not be able to silence every rule at once.
+`active` is not nullable, and a **missing value reads as active** on every path, the ORM, the gateway's 5-second cache and the backup validator. That is deliberate: an API that does not send the field, or a cache built before the column existed, must not be able to silence every rule at once.
 
 Audit consequence: a row records whichever rule **actually matched**, so a previously-shadowed path simply starts resolving differently and the trail says so. Nothing rewrites history.
 
@@ -55,13 +55,13 @@ Worth knowing before reaching for it: the seeded default group is `*.*/*`, which
 
 ## Reordering
 
-Both lists are ordered in the UI with ▲/▼ buttons (no drag, no JS dependency) and the `Order` column shows the real position (1, 2, 3…) rather than the raw sparse `display_order`. The arrows are disabled where the API would refuse or no-op: on the first/last row, and on the default group. The real position is a deliberate choice — renaming and deleting rows leave gaps in `display_order`, so a contiguous list is what an operator can actually reason about; the stored value stays visible in the number's `title`.
+Both lists are ordered in the UI with ▲/▼ buttons (no drag, no JS dependency) and the `Order` column shows the real position (1, 2, 3…) rather than the raw sparse `display_order`. The arrows are disabled where the API would refuse or no-op: on the first/last row, and on the default group. The real position is a deliberate choice, renaming and deleting rows leave gaps in `display_order`, so a contiguous list is what an operator can actually reason about; the stored value stays visible in the number's `title`.
 
 An inactive rule keeps its arrows and its edit control. Switching a rule off does not freeze it: reordering one while it is off is how a rule is staged before it is switched on.
 
 Underlying endpoints, both `X-Internal-Api-Key`:
 
-- `PUT /api/groups/{gid}/order {"direction": "up|down"}` — `400 cannot reorder default`, `400 cannot swap with default`.
+- `PUT /api/groups/{gid}/order {"direction": "up|down"}`, `400 cannot reorder default`, `400 cannot swap with default`.
 - `PUT /api/rules/{rid}/order {"direction": "up|down"}` returns `400 direction must be up|down`, `400 cannot move default rule`, or `400 cannot swap with default rule`.
 
 Each swap trades `display_order` with the adjacent row; at the ends the API returns `{"ok": true}` without changing anything.
@@ -72,18 +72,18 @@ Each swap trades `display_order` with the adjacent row; at the ends the API retu
 
 The default group is the catch-all the gate falls back to, so its **`domain` is fixed**: the modal disables the input, and the API refuses a change with `400 cannot change default domain`, matching the neighbouring `cannot reorder default` / `cannot delete default` guards. Its **`name` stays editable**.
 
-Validation mirrors `PUT /api/rules/{rid}` — each field is checked only when present, so a pure rename cannot be refused for an unrelated reason:
+Validation mirrors `PUT /api/rules/{rid}`, each field is checked only when present, so a pure rename cannot be refused for an unrelated reason:
 
 | Response | When |
 |----------|------|
 | `400 name required` | `name` present but empty |
 | `400 domain required` | `domain` present but empty |
-| `400 invalid domain` | `domain` fails `is_valid_host` — `*/` / `*.example.com` / `*.*/*` all pass |
+| `400 invalid domain` | `domain` fails `is_valid_host`, `*/` / `*.example.com` / `*.*/*` all pass |
 | `400 cannot change default domain` | `domain` present on the default group |
 | `409 group exists` | `name` collides with another group (`name` is `unique`) |
 | `404 not found` | no such group |
 
-`GET /api/groups` reports `is_default`, which is also how the lifespan seed finds the default group — keyed on the flag rather than on the name `*.*/*`, so renaming it cannot cause a second default group to be seeded on restart.
+`GET /api/groups` reports `is_default`, which is also how the lifespan seed finds the default group, keyed on the flag rather than on the name `*.*/*`, so renaming it cannot cause a second default group to be seeded on restart.
 
 ## The mandatory catch-all
 
@@ -119,7 +119,7 @@ A rule added through the API takes effect on the first request: the catch-all is
 
 Order within a group is otherwise what it was. The migration renumbers each group's rules `0..n-1` in their existing ascending order with the catch-all moved to the end, and a catch-all that was already last produces no change at all.
 
-Shadowing is still possible and still reported: `GET /api/warnings` reports `/*` rules that hide later rules, and the dashboard renders the result as a banner that appears only when there is something to report. An **inactive** rule is never reported as the shadower — it is skipped, so it hides nothing and the warning would be false — but it is still reported as the rule being shadowed, because that rule cannot take effect even after it is switched back on. The old `/manage/warnings` page rendered two empty tables on a healthy gateway and is gone; the endpoint it read is unchanged.
+Shadowing is still possible and still reported: `GET /api/warnings` reports `/*` rules that hide later rules, and the dashboard renders the result as a banner that appears only when there is something to report. An **inactive** rule is never reported as the shadower, it is skipped, so it hides nothing and the warning would be false, but it is still reported as the rule being shadowed, because that rule cannot take effect even after it is switched back on. The old `/manage/warnings` page rendered two empty tables on a healthy gateway and is gone; the endpoint it read is unchanged.
 
 ## Testing a rule before saving
 

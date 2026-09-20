@@ -1,6 +1,6 @@
 """Unit tests for :mod:`shared.client_ip`.
 
-Pure module — no app, no client fixture. ``shared.client_ip`` is what decides
+Pure module, no app, no client fixture. ``shared.client_ip`` is what decides
 what lands in ``audit_logs.ip`` and what keys the per-IP rate limiter, so the
 precedence order is the whole contract.
 """
