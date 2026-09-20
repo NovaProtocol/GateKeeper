@@ -165,6 +165,13 @@ The map is Leaflet 1.9.4 from `cdn.jsdelivr.net`, which `script-src` and `style-
 
 A tile host missing from `img-src` is a silent break: the script loads, the container renders and every tile is refused with nothing on the page to say so. That is why the check in `tests/ui/check_audit_page.py` reads the served header and counts the tile responses in a real browser rather than trusting the page source.
 
+Wheel zoom is deliberately not on by default: the same wheel scrolls the page, and
+this page's per-visitor table runs long, so a map that always swallowed it would trap
+the reader on the way past. Instead the wheel zooms only while the map holds focus —
+clicking the map focuses its container, clicking away releases it, and the legend says
+so. Dragging, double-click, the `+`/`-` control and the keyboard work either way, so the
+wheel is an addition rather than the only way in.
+
 The page degrades rather than failing. No rows, no centroids to plot, a blocked tile host or an offline browser all end at the same place: the card renders a sentence instead of a map, the country table carries the same numbers, and nothing raises. Leaflet keeps its own DOM and is driven imperatively rather than through a reactive binding, because a reactive layer cannot own that element.
 
 Clearing is the destructive control on that page and the only one with nothing behind it, so `POST /manage/logs/clear` checks the session, the CSRF pair, the origin and a typed `DELETE` before issuing `DELETE /api/logs/clear`. The modal is the affordance; the gate is the route. The card also shows the current audit row count, because an empty table and a table whose rows were just deleted look identical without a number.
