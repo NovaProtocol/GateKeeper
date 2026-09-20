@@ -10,6 +10,8 @@
 .status-label{font-family:'JetBrains Mono',monospace;font-size:.7rem;letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}
 .status-dot{font-family:'JetBrains Mono',monospace;font-size:.7rem;color:var(--text-secondary);display:inline-flex;align-items:center;gap:.35rem}
 .status-dot .dot{width:7px;height:7px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 6px var(--accent-dim);display:inline-block}
+.status-dot.is-off{color:var(--text-secondary)}
+.status-dot.is-off .dot{background:var(--text-secondary);box-shadow:0 0 0 6px rgba(128,128,128,.15)}
 </style>
 {% endblock %}
 {% block content %}
@@ -17,13 +19,24 @@
   <div class="card status-card">
     <div class="card-header status-card-header">
       <span class="status-label"><i class="fa-solid fa-terminal"></i> $ gatekeeper --status</span>
+      {% if authenticated %}
       <span class="status-dot"><span class="dot"></span> authenticated</span>
+      {% else %}
+      <span class="status-dot is-off"><span class="dot"></span> unauthenticated</span>
+      {% endif %}
     </div>
     <div class="card-body" style="padding:2.25rem 2.5rem;text-align:center">
+      {% if authenticated %}
       <h1 style="font-size:1.25rem;font-weight:700;margin-bottom:.6rem;line-height:1.4">Welcome, you are authenticated as <span style="color:var(--text-primary)">{{ name }}</span></h1>
       <div style="display:inline-block;font-family:'JetBrains Mono',monospace;font-size:.9rem;color:var(--accent);background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:.55rem 1rem;margin-bottom:.9rem;word-break:break-all">{{ masked_code }}</div>
       <div style="font-family:'JetBrains Mono',monospace;font-size:.75rem;color:var(--text-secondary);margin-bottom:1.35rem">{{ apex }} · expires in {{ exp_label }}</div>
-      <p style="color:var(--text-secondary);font-size:.9rem;margin:0">Your access code is valid. Browse any app under <span style="color:var(--text-primary);font-family:'JetBrains Mono',monospace">projectnova.download</span> without re-authenticating.</p>
+      <p style="color:var(--text-secondary);font-size:.9rem;margin:0">Your access code is valid. Browse any app under <span style="color:var(--text-primary);font-family:'JetBrains Mono',monospace">{{ apex }}</span> without re-authenticating.</p>
+      {% else %}
+      <h1 style="font-size:1.25rem;font-weight:700;margin-bottom:.6rem;line-height:1.4">You are not authenticated</h1>
+      <div style="font-family:'JetBrains Mono',monospace;font-size:.75rem;color:var(--text-secondary);margin-bottom:1.35rem">{{ apex }}</div>
+      <p style="color:var(--text-secondary);font-size:.9rem;margin:0 0 1.5rem">This host is the gate in front of the apps under <span style="color:var(--text-primary);font-family:'JetBrains Mono',monospace">{{ apex }}</span>. A valid access code is needed before anything behind it will load.</p>
+      <a href="/login" class="btn btn-accent" style="display:inline-flex;align-items:center;gap:.5rem"><i class="fa-solid fa-key" aria-hidden="true"></i> Enter an access code</a>
+      {% endif %}
     </div>
   </div>
 </div>

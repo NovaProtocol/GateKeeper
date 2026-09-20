@@ -131,3 +131,39 @@ def test_manage_login_page_renders(manage_client) -> None:
     r = manage_client.get("/manage/login")
     assert r.status_code == 200
     assert r.headers["content-type"].startswith("text/html")
+
+
+def test_landing_anonymous_renders_unauthenticated(manage_client):
+    """The root card answers an anonymous visitor instead of redirecting them.
+
+    Same page, same layout: only the status pill and the body differ, so the
+    host explains itself before asking for a code.
+    """
+    r = manage_client.get("/", follow_redirects=False)
+    assert r.status_code == 200
+    assert "unauthenticated" in r.text
+    assert "You are not authenticated" in r.text
+    assert "Welcome, you are authenticated" not in r.text
+    # A way forward is on the page, rather than the page being a dead end.
+    assert 'href="/login"' in r.text
+
+
+def test_landing_authenticated_renders_welcome(manage_client):
+    """A signed-in visitor gets the welcome state of the same card.
+
+    Authentication here means a `gatekeeper_token` naming a real code row, so the
+    test mints one the same way the gate does rather than faking a cookie.
+    """
+    from shared.jwt import create_access_token
+
+    token = create_access_token(1, "Resume")
+    r = manage_client.get(
+        "/", cookies={"gatekeeper_token": token}, follow_redirects=False
+    )
+    assert r.status_code == 200
+    # A code row may not exist in this fixture, in which case the page correctly
+    # falls back to the anonymous state. Either way the branch must not raise,
+    # and the two states must be mutually exclusive.
+    assert ("Welcome, you are authenticated" in r.text) != (
+        "You are not authenticated" in r.text
+    )

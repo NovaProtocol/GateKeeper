@@ -896,9 +896,29 @@ def create_app() -> FastAPI:
     @app.get("/", response_class=HTMLResponse)
     async def landing(request: Request) -> Response:
         code = await _get_authenticated_code(request)
+        apex = _apex_from_request(request)
         if not code:
-            redirect = quote(str(request.url.path) + (f"?{request.url.query}" if request.url.query else ""), safe="")
-            return RedirectResponse(url=f"/login?redirect={redirect}", status_code=302)
+            # The same status card answers either way: signed in or not. Sending
+            # an anonymous visitor to the login form told them nothing about what
+            # they had arrived at, and the card is a better answer to "what is
+            # this host" than a password box.
+            csrf = _get_csrf_token(request)
+            resp = templates.TemplateResponse(
+                request,
+                "landing.html",
+                {
+                    "request": request,
+                    "authenticated": False,
+                    "name": "",
+                    "masked_code": "",
+                    "csrf_token": csrf,
+                    "exp_label": "",
+                    "apex": apex,
+                },
+            )
+            if not request.cookies.get("csrf_token"):
+                resp.set_cookie(key="csrf_token", value=csrf, path="/", samesite="lax", secure=True)
+            return resp
         name = _display_name(code)
         masked = _masked(code.code)
         csrf = _get_csrf_token(request)
@@ -920,8 +940,7 @@ def create_app() -> FastAPI:
                     exp_label = f"{mins}m"
         except Exception:
             pass
-        apex = _apex_from_request(request)
-        resp = templates.TemplateResponse(request, "landing.html", {"request": request, "name": name, "masked_code": masked, "code": code, "csrf_token": csrf, "exp_label": exp_label, "apex": apex})
+        resp = templates.TemplateResponse(request, "landing.html", {"request": request, "authenticated": True, "name": name, "masked_code": masked, "code": code, "csrf_token": csrf, "exp_label": exp_label, "apex": apex})
         if not request.cookies.get("csrf_token"):
             resp.set_cookie(key="csrf_token", value=csrf, path="/", samesite="lax", secure=True)
         return resp
