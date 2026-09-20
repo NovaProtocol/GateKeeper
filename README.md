@@ -2,7 +2,7 @@
 
 <div align="center">
 
-![GateKeeper](https://github.projectnova.download/public/projects/gatekeeper.svg)
+![GateKeeper](https://github.projectnova.download/public/project/gatekeeper.svg)
 
 </div>
 
