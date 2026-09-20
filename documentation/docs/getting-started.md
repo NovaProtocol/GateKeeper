@@ -68,7 +68,7 @@ One habit worth forming on day one: take an export from `/manage/backup` before 
 
 1. Open `/manage/login` → enter `MANAGE_PASSWORD`.
 2. Go to **Codes** → Create with explicit `code` value.
-3. Share `https://app.example.com/page?access_code=<code>` — first hit sets cookie and strips param.
+3. Share `https://app.example.com/page?access_code=<code>`, first hit sets cookie and strips param.
 
 ## 5. Local Dev (without Docker)
 

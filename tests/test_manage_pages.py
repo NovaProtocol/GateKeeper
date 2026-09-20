@@ -514,7 +514,7 @@ def test_the_monitoring_alias_carries_the_query_string_nowhere(manage_client, mo
 
 def test_the_template_under_the_new_name_has_no_old_heading(manage_client, monkeypatch) -> None:
     html = _get(manage_client, "/manage/audit", monkeypatch)
-    assert "Monitoring —" not in html
+    assert "Monitoring  - " not in html
 
 
 def test_the_warnings_route_is_absent_from_the_app(manage_client, monkeypatch) -> None:

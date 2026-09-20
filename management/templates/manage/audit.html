@@ -89,7 +89,7 @@
           {% for p in points %}
           <tr>
             <td>{{ p.name }}</td>
-            <td style="font-family:'JetBrains Mono',monospace">{{ p.cc or '—' }}</td>
+            <td style="font-family:'JetBrains Mono',monospace">{{ p.cc or ' - ' }}</td>
             <td style="font-family:'JetBrains Mono',monospace">{{ p.count }}</td>
             <td style="font-family:'JetBrains Mono',monospace">{{ '%.1f'|format((p.share or 0) * 100) }}%</td>
           </tr>
@@ -118,7 +118,7 @@
               <div style="display:flex;gap:.5rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"><span style="color:var(--text-secondary)">{{ r.ts }}</span> <span style="font-family:'JetBrains Mono',monospace">{{ r.host }}{{ r.path }}</span> <span class="tag tag-active" style="font-size:.65rem">{{ r.action }}</span> {% if r.code_label %}<span style="color:var(--accent)">{{ r.code_label }}</span>{% elif r.attempted_code %}<span style="color:var(--danger)">{{ r.attempted_code }}</span>{% endif %}</div>
             {% endfor %}
           </td>
-          <td style="font-size:.8rem">{{ it.codes|join(', ') if it.codes else '—' }}</td>
+          <td style="font-size:.8rem">{{ it.codes|join(', ') if it.codes else ' - ' }}</td>
         </tr>
         {% else %}
         <tr><td colspan="4" style="text-align:center;color:var(--text-secondary);padding:1.5rem">No traffic recorded yet</td></tr>

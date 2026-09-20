@@ -1,7 +1,7 @@
 """Smoke tests for the current stack.
 
 Each service is exercised through its own ``TestClient`` so the real lifespan
-runs — for the API that means the schema is created and the default rule groups
+runs, for the API that means the schema is created and the default rule groups
 are seeded, which is what the seed assertions below rely on.
 
 The old Flask-era tests here asserted the pre-rewrite forward-auth contract

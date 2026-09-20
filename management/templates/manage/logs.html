@@ -57,7 +57,7 @@
                 </div>
               </div>
             {% else %}
-              <span style="color:var(--text-secondary)">{% if l.attempted_code %}{{ l.attempted_code }}{% else %}—{% endif %}</span>
+              <span style="color:var(--text-secondary)">{% if l.attempted_code %}{{ l.attempted_code }}{% else %} - {% endif %}</span>
             {% endif %}
           </td>
           <td><span class="tag tag-active">{{ l.action }}{% if l.status_code %} {{ l.status_code }}{% endif %}</span></td>
@@ -103,10 +103,10 @@
       const data=await r.json();
       const logs=data.logs||[];
       const total=data.total||0;
-      if(logs.length===0){ done=true; statusEl.textContent= total ? 'End — '+total+' total' : 'No more logs'; return; }
+      if(logs.length===0){ done=true; statusEl.textContent= total ? 'End, '+total+' total' : 'No more logs'; return; }
       for(const l of logs){
         const tr=document.createElement('tr');
-        const codeLabel=l.code_label ? `<span style="color:var(--accent)">${l.code_label}</span>` : (l.code_value ? l.code_value.slice(0,8)+'…' : (l.attempted_code||'—'));
+        const codeLabel=l.code_label ? `<span style="color:var(--accent)">${l.code_label}</span>` : (l.code_value ? l.code_value.slice(0,8)+'…' : (l.attempted_code||' - '));
         const host=(l.host||'').replace(/</g,'&lt;');
         const path=(l.path||'').replace(/</g,'&lt;');
         tr.innerHTML=`<td style="white-space:nowrap">${l.ts||''}</td><td style="font-family:'JetBrains Mono',monospace;font-size:.8rem">${l.ip||''}</td><td style="font-family:'JetBrains Mono',monospace;font-size:.8rem;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${host}">${host}</td><td style="font-family:'JetBrains Mono',monospace;font-size:.8rem;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${path}">${path}</td><td style="font-size:.8rem">${codeLabel}</td><td><span class="tag tag-active">${l.action||''}${l.status_code?' '+l.status_code:''}</span></td><td style="font-family:'JetBrains Mono',monospace;font-size:.7rem;color:var(--text-secondary)">${l.request_id||''}</td>`;
@@ -114,7 +114,7 @@
       }
       page+=1;
       const rendered=body.querySelectorAll('tr').length;
-      if(rendered>=total || logs.length<perPage){ done=true; statusEl.textContent='End — '+total+' total'; } else { statusEl.textContent='Scroll for more — '+rendered+'/'+total; }
+      if(rendered>=total || logs.length<perPage){ done=true; statusEl.textContent='End, '+total+' total'; } else { statusEl.textContent='Scroll for more, '+rendered+'/'+total; }
     }catch(e){ statusEl.textContent='Load failed: '+e.message; done=true; }
     finally{ loading=false; }
   }

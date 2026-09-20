@@ -394,7 +394,7 @@
     display: inline;
   }
 
-  /* The last cell of every action table stays a real table cell — flex belongs
+  /* The last cell of every action table stays a real table cell, flex belongs
      on the inner wrapper, because `display:flex` on a <td> drops it out of the
      table layout algorithm and its border no longer spans the row height. */
   .actions-cell {
@@ -414,7 +414,7 @@
   }
 
   /* .card clips for its rounded corners, so a wide table needs its own scroll
-     box — otherwise the clipped columns cannot be reached at all. */
+     box, otherwise the clipped columns cannot be reached at all. */
   .table-scroll {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
@@ -443,7 +443,7 @@
   .btn-sm{padding:.4rem .85rem;font-size:.8rem;border-radius:6px}
 
   /* Dashboard: two operational columns while there is room, stacked when there
-     is not. `minmax(0, 1fr)` matters — a grid column defaults to `auto`, which
+     is not. `minmax(0, 1fr)` matters, a grid column defaults to `auto`, which
      lets a long host/path string widen the track past its share and push the
      document sideways. The row gap is left to `.card`'s own margin so a stacked
      column does not get a double space between its cards. */
@@ -560,7 +560,7 @@
 
   /* A dialog taller than the window was clipped by `.modal`'s own
      `overflow: hidden`, which left the backdrop drawn and the dialog cut off
-     below the fold — the bottom of the form, submit button included, was
+     below the fold, the bottom of the form, submit button included, was
      simply not reachable. The content box is capped instead and the body is
      what scrolls, so the header and the footer stay where they are.
 
@@ -582,7 +582,7 @@
   }
 
   @media (max-width: 820px) {
-    /* The card keeps `overflow: hidden` — it carries the rounded corners, and
+    /* The card keeps `overflow: hidden`, it carries the rounded corners, and
        unclipping it lets the wide table push the whole document sideways.
        The scroll wrapper above is what keeps every column reachable; this
        block only tightens the header for its flex-wrap case. */

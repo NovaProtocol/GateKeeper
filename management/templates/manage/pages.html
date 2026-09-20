@@ -61,7 +61,7 @@
               {% if p.governance.no_group %}
                 {{ p.governance.sentence }}
               {% else %}
-                This page is governed by Rule <a href="/manage/rules/{{ p.governance.group_id }}">{{ p.governance.group_name }}</a> - {{ p.governance.rule_path }} : {{ p.governance.label }}{% if not p.governance.served %}<br><span class="never">This page is not served — the request follows the gate instead.</span>{% endif %}
+                This page is governed by Rule <a href="/manage/rules/{{ p.governance.group_id }}">{{ p.governance.group_name }}</a> - {{ p.governance.rule_path }} : {{ p.governance.label }}{% if not p.governance.served %}<br><span class="never">This page is not served, the request follows the gate instead.</span>{% endif %}
               {% endif %}
               <br><span title="A wildcard pattern can span hosts governed by different groups; this is the group that governs the sample URL.">sample: <code>{{ p.governance.host }}{{ p.governance.path }}</code></span>
             {% else %}

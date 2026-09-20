@@ -198,7 +198,7 @@ def same_origin(request: Request, apex: str | None = None) -> bool:
 
 
 def _get_ip(request: Request) -> str:
-    """Visitor address, not the tunnel's — see :mod:`shared.client_ip`."""
+    """Visitor address, not the tunnel's, see :mod:`shared.client_ip`."""
     return get_client_ip(request)
 
 
@@ -319,7 +319,7 @@ async def _load_caches() -> tuple[list[Route], list[RuleGroup], list[CustomPage]
                             rule.active = rrow.get("active", DEFAULT_ACTIVE_READING) is not False  # type: ignore[attr-defined]
                             rule.custom_password_hash = None  # type: ignore[attr-defined]
                             rule.custom_password_salt = None  # type: ignore[attr-defined]
-                            # need hash for custom_password param check — fetch via direct rule lookup not exposed; keep verify via api
+                            # need hash for custom_password param check, fetch via direct rule lookup not exposed; keep verify via api
                             gr.rules.append(rule)
                 except Exception:
                     pass
@@ -491,13 +491,13 @@ def _is_control_plane(host: str, path: str, apex: str) -> bool:
 
     Custom pages sit below the control plane in priority, and this is what makes
     that true rather than assumed. `/health` and `/api/authz/forward-auth` need
-    no entry here — Caddy answers `/health` at the site level and the wildcard
-    refuses `/api/authz/forward-auth` before this point — and `/logout` is a real
+    no entry here, Caddy answers `/health` at the site level and the wildcard
+    refuses `/api/authz/forward-auth` before this point, and `/logout` is a real
     route registered ahead of the wildcard. What is **not** ahead of the wildcard
     is `/login`, the gatekeeper host's `/` and the panel's own `/static/*`: they
     are served by the wildcard proxy into `gatekeeper_management`, so without
     this predicate a pattern like `gatekeeper.projectnova.download/*` would
-    swallow the login page and the stylesheet it loads with it — the panel would
+    swallow the login page and the stylesheet it loads with it, the panel would
     answer while rendering unstyled, which is the same lockout by another route.
 
     Narrow on purpose: only the manage hosts and the apex, and only the paths
@@ -718,7 +718,7 @@ async def _audit_log_async(
             pass
     except Exception:
         pass
-    # audit fallback removed — API-only DB; api:8002 is sole writer (internal:true)
+    # audit fallback removed, API-only DB; api:8002 is sole writer (internal:true)
 
 
 def _queue_audit(background_tasks: BackgroundTasks, **kw: Any) -> None:
@@ -942,7 +942,7 @@ def create_app() -> FastAPI:
         if request.method == "POST" and not same_origin(request, apex):
             ct = (await request.form()).get("csrf_token") if request.headers.get("content-type", "").startswith("application/x-www-form") else None
             if ct is None or not secrets.compare_digest(str(ct), request.cookies.get("csrf_token", "")):
-                # still clear but require origin — fail closed with 403
+                # still clear but require origin, fail closed with 403
                 return JSONResponse(status_code=403, content={"detail": "Cross-site request rejected"})
         resp = RedirectResponse(url="/login", status_code=302)
         _clear_gatekeeper_cookie(resp, apex)

@@ -335,7 +335,7 @@ def main() -> int:
 
     failures: list[str] = []
     print("=" * 78)
-    print("RENDERED-DOM PROOF — manage table layout")
+    print("RENDERED-DOM PROOF, manage table layout")
     print("=" * 78)
 
     with sync_playwright() as p:

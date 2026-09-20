@@ -3,7 +3,7 @@
 The manage panel never touches the database: it relays to `api:8002` with the
 internal key. So these tests drive a recording stand-in for the httpx client and
 assert the three gates on every mutating route, the two-step preview/apply
-shape, and the honesty the page promises in words — that the file is plaintext,
+shape, and the honesty the page promises in words, that the file is plaintext,
 and that a preview does not write.
 
 The rendering assertions parse real HTML from the template, so a change that

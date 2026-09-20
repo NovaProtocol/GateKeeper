@@ -4,7 +4,7 @@
 `PUT /api/rules/{rid}`: each field is checked only when it is actually present
 in the payload, so a pure rename cannot be refused for an unrelated reason.
 
-The default group is special — its domain is the catch-all the gate falls back
+The default group is special, its domain is the catch-all the gate falls back
 to, so it is refused with the same `cannot … default` wording the neighbouring
 order and delete endpoints already use. Its *name* stays editable.
 """

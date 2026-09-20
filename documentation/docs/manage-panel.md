@@ -22,7 +22,7 @@ Every entry resolves to a page below. There is no second navigation: the dashboa
 
 | Path | Purpose |
 |------|---------|
-| `GET /manage` | Dashboard — stat strip, warning banner, recent traffic, top pages, code health |
+| `GET /manage` | Dashboard, stat strip, warning banner, recent traffic, top pages, code health |
 | `GET/POST /manage/routing` | Routes CRUD (`host`, `path`, `proxy` upstream:port or `redirect` target:code) + `POST /{id}/test` |
 | `POST /manage/routing/test` | Probe the values currently in the route modal: upstream reachability, and the gate's verdict for the typed host and path |
 | `GET/POST /manage/pages` | Custom pages list and create (`pattern`, `body`, `content_type`) |
@@ -32,11 +32,11 @@ Every entry resolves to a page below. There is no second navigation: the dashboa
 | `POST /manage/pages/{pid}/delete` | Delete a page |
 | `GET /manage/rules` | Rule groups list (▲/▼ reorder, ✎ edit) |
 | `POST /manage/groups` | Create group (`name`, `domain`) |
-| `POST /manage/groups/{gid}/edit` | Edit group (`name`, `domain`) — `domain` is disabled for the default group |
+| `POST /manage/groups/{gid}/edit` | Edit group (`name`, `domain`), `domain` is disabled for the default group |
 | `POST /manage/groups/{gid}/order` | Move group up/down (`direction`) |
 | `GET /manage/rules/{gid}` | Rules in group (▲/▼ reorder, real positions, `active` switch) |
 | `POST /manage/rules/test` | Ask the gate what it would do with the typed host and path, before the rule is saved |
-| `POST /manage/groups/{gid}/rules` | Create rule (`path`, `action`, `custom_password`) — see `PUT /api/rules/{rid}` for edit |
+| `POST /manage/groups/{gid}/rules` | Create rule (`path`, `action`, `custom_password`), see `PUT /api/rules/{rid}` for edit |
 | `POST /manage/rules/{rid}/order` | Move rule up/down (`direction`); disabled on the catch-all, see `documentation/docs/rules.md` |
 | `POST /manage/rules/{rid}/edit` | Edit rule (`path`, `action`, `custom_password`) **and** the row's status switch (`active`), which posts to this same route |
 | `GET /manage/codes` | Codes list + create/edit, activate/deactivate, permanent delete, `?include_inactive=1` |
@@ -47,7 +47,7 @@ Every entry resolves to a page below. There is no second navigation: the dashboa
 | `GET/POST /manage/settings` | Seven editable settings in sections, plus a read-only environment panel |
 | `POST /manage/logs/prune` | Delete audit rows past the retention window (`confirm=PRUNE`), rendering the count back onto the page that posted it |
 | `POST /manage/logs/clear` | Delete every audit row (`confirm=DELETE`), checked on the server |
-| `GET /manage/backup` | Backup — signed plain-JSON export, and a two-step restore |
+| `GET /manage/backup` | Backup, signed plain-JSON export, and a two-step restore |
 | `GET /manage/backup/download` | Streams the configuration export as a download |
 | `POST /manage/backup/restore` | Preview or apply a restore (`file` + `confirm=REPLACE` + `stage`) |
 
@@ -84,9 +84,9 @@ This also pays off structurally: dropping the widest column's text is part of wh
 
 ## Table layout
 
-The action cell of every row is a real table cell — `<td class="actions-cell"><div class="actions">…</div></td>`. The flex layout must not go on the `<td>` itself: `display:flex` on a table cell takes it out of the table layout algorithm, so it stops stretching to its row height and its bottom border ends early, and the column borders no longer meet. The layout lives once in `manage.css` (`.actions-cell`, `.actions`, `.actions form`, `.icon-btn`) rather than as an inline style repeated per template.
+The action cell of every row is a real table cell, `<td class="actions-cell"><div class="actions">…</div></td>`. The flex layout must not go on the `<td>` itself: `display:flex` on a table cell takes it out of the table layout algorithm, so it stops stretching to its row height and its bottom border ends early, and the column borders no longer meet. The layout lives once in `manage.css` (`.actions-cell`, `.actions`, `.actions form`, `.icon-btn`) rather than as an inline style repeated per template.
 
-`.card` keeps `overflow: hidden` for its rounded corners, so every table sits inside a `.table-scroll` wrapper that scrolls it: `tabindex="0"`, `role="region"` and an `aria-label`, because an unfocusable scroll box is itself an accessibility defect. Without it the clipped columns are not merely off-screen but unreachable — the document does not scroll at all.
+`.card` keeps `overflow: hidden` for its rounded corners, so every table sits inside a `.table-scroll` wrapper that scrolls it: `tabindex="0"`, `role="region"` and an `aria-label`, because an unfocusable scroll box is itself an accessibility defect. Without it the clipped columns are not merely off-screen but unreachable, the document does not scroll at all.
 
 `base.html` loads `manage.css` with `?v=5`; bump that when the stylesheet changes so a cached copy cannot make a correct deploy look broken.
 
@@ -94,13 +94,13 @@ Form controls use one `.input` class. At `971500b`, `logs.html` carried 5 inputs
 
 Two blocks left the shared sheet in the same pass, because neither described a panel component. `.create-form` was 25 lines of rules referenced by no template: it is deleted. The four `.status-*` classes (`.status-card`, `.status-card-header`, `.status-label`, `.status-dot`) were used only by `landing.html`, the authenticated landing page rather than a `/manage/*` page: they moved into a page-local `<style>` block in that template, which is the same treatment `routing.html` and `logs.html` already give their page-specific rules.
 
-Controls that the server would refuse are rendered `disabled` with a `title` that says why (`aria-disabled="true"` alongside), rather than hidden. The default group's delete button, the group catch-all's delete button and the catch-all's **status switch** are the three cases: a control that is simply absent tells an operator nothing, while a greyed-out one that explains itself answers the question they were about to ask. The catch-all's switch reads `title="The catch-all cannot be deactivated — it is the group's fallback"`, and the API refuses the same attempt with `400 the catch-all cannot be deactivated`.
+Controls that the server would refuse are rendered `disabled` with a `title` that says why (`aria-disabled="true"` alongside), rather than hidden. The default group's delete button, the group catch-all's delete button and the catch-all's **status switch** are the three cases: a control that is simply absent tells an operator nothing, while a greyed-out one that explains itself answers the question they were about to ask. The catch-all's switch reads `title="The catch-all cannot be deactivated, it is the group's fallback"`, and the API refuses the same attempt with `400 the catch-all cannot be deactivated`.
 
 ## Rules: the status switch
 
-Each rule row on `/manage/rules/{gid}` carries a **Status** switch (the same `.toggle` component the codes page uses). It posts `csrf_token` + `active` to the existing `/manage/rules/{rid}/edit` — no new route — and an inactive row renders with the `inactive` style so "off" is visible at a glance rather than only in the switch's position. The catch-all's switch is `disabled` with its reason in a `title`, and a refusal is logged as `rule_active_refused` rather than swallowed, so a control that does not take is visible in the container log instead of looking broken.
+Each rule row on `/manage/rules/{gid}` carries a **Status** switch (the same `.toggle` component the codes page uses). It posts `csrf_token` + `active` to the existing `/manage/rules/{rid}/edit`, no new route, and an inactive row renders with the `inactive` style so "off" is visible at a glance rather than only in the switch's position. The catch-all's switch is `disabled` with its reason in a `title`, and a refusal is logged as `rule_active_refused` rather than swallowed, so a control that does not take is visible in the container log instead of looking broken.
 
-The switch means `active`/inactive and nothing else. What skipping does — fall-through to the next matching rule, and the one case that is still refused — is documented in [Rules](rules.md).
+The switch means `active`/inactive and nothing else. What skipping does, fall-through to the next matching rule, and the one case that is still refused, is documented in [Rules](rules.md).
 
 ## Codes
 
@@ -113,7 +113,7 @@ A code has two different endings **and two separate controls**, and the differen
 
 Inactive codes are hidden by default. The **Show inactive** toggle on the codes card re-requests the page with `?include_inactive=1`, which the API honours server-side (`GET /api/codes` filters inactive rows unless asked). Inactive rows render with the `tag-inactive` style, and the switch's `title`/`aria-label` change from *Deactivate code* to *Activate code*.
 
-The **Permanent delete** toggle governs the **trash control's visibility** — it shows and hides it, and it does not re-point the switch at a different action. The trash control opens a modal asking for the code to be typed out, and that typed confirmation is re-checked on the **server**, against the code read back from the API with `secrets.compare_digest`, so a modal alone cannot be bypassed by a stale tab, a replayed form post or a script. A mismatch is `400`.
+The **Permanent delete** toggle governs the **trash control's visibility**: it shows and hides it, and it does not re-point the switch at a different action. The trash control opens a modal asking for the code to be typed out, and that typed confirmation is re-checked on the **server**, against the code read back from the API with `secrets.compare_digest`, so a modal alone cannot be bypassed by a stale tab, a replayed form post or a script. A mismatch is `400`.
 
 Both capabilities are kept, and the split is deliberate: a switch is a state indicator, and a switch that sometimes deletes misstates what it is. `DELETE`-style irreversibility never shares a control with a flag that is meant to be flipped back.
 
@@ -167,8 +167,7 @@ A tile host missing from `img-src` is a silent break: the script loads, the cont
 
 Wheel zoom is deliberately not on by default: the same wheel scrolls the page, and
 this page's per-visitor table runs long, so a map that always swallowed it would trap
-the reader on the way past. Instead the wheel zooms only while the map holds focus —
-clicking the map focuses its container, clicking away releases it, and the legend says
+the reader on the way past. Instead the wheel zooms only while the map holds focus, clicking the map focuses its container, clicking away releases it, and the legend says
 so. Dragging, double-click, the `+`/`-` control and the keyboard work either way, so the
 wheel is an addition rather than the only way in.
 

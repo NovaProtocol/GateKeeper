@@ -2,7 +2,7 @@
 
 House style: every environment variable the app reads is set here *before*
 ``shared.config`` (and therefore any app module) is imported, and the run gets
-its own throwaway SQLite database under ``/tmp`` — never the real
+its own throwaway SQLite database under ``/tmp``, never the real
 ``/data/gatekeeper.db``.
 
 ``shared.config.get_config`` is ``lru_cache``d, so the environment below is read

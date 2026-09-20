@@ -41,7 +41,7 @@ from shared.rule_defaults import (
 
 #: The `rules` table as it stood *before* this phase: no `is_default`. It is also
 #: the shape from before `active` (a later, additive column), which is why the
-#: helper below runs both boot migrations before any ORM query — the mapped
+#: helper below runs both boot migrations before any ORM query, the mapped
 #: `Rule` selects every declared column, so a file missing one cannot be read.
 LEGACY_SCHEMA = """
 CREATE TABLE rule_groups (
@@ -74,14 +74,14 @@ def _db_path() -> Path:
 
 #: Each case is (groups, rules) in the shapes the live database holds.
 #:
-#: * `live` — the production shape: the default group plus two project groups,
+#: * `live`, the production shape: the default group plus two project groups,
 #:   every catch-all already last. Expected diff: the flag only.
-#: * `catch_all_masked` — the documented live trap: a project group whose `/*`
+#: * `catch_all_masked`, the documented live trap: a project group whose `/*`
 #:   sits above a narrower rule, so the narrower rule can never fire.
-#: * `no_catch_all` — a group created before groups were seeded.
-#: * `two_catch_alls` — one is dead weight; exactly one must end up flagged.
-#: * `empty_group` — no rules at all; the catch-all must be inserted.
-#: * `empty_db` — nothing to migrate.
+#: * `no_catch_all`, a group created before groups were seeded.
+#: * `two_catch_alls`, one is dead weight; exactly one must end up flagged.
+#: * `empty_group`, no rules at all; the catch-all must be inserted.
+#: * `empty_db`, nothing to migrate.
 CASES: dict[str, tuple[list[tuple], list[tuple]]] = {
     "live": (
         [

@@ -1,4 +1,4 @@
-"""Shared error page helper — GateKeeper dark theme.
+"""Shared error page helper, GateKeeper dark theme.
 
 Used by both auth-gateway and management so every 404/403 is themed
 consistently. House tokens: --bg-primary #0a0a0f, --bg-card #1a1a28,
@@ -92,7 +92,7 @@ def render_error_html(
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{status} — {esc_title} · GateKeeper</title>
+<title>{status}, {esc_title} · GateKeeper</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -121,7 +121,7 @@ body{{font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;background
   <div class="card">
     <div style="padding:2.5rem;text-align:center">
       {subtitle_html}
-      <div style="font-family:'JetBrains Mono',monospace;font-size:.75rem;color:var(--accent);margin-bottom:.75rem;letter-spacing:.08em;text-transform:uppercase">{status} — {esc_title}</div>
+      <div style="font-family:'JetBrains Mono',monospace;font-size:.75rem;color:var(--accent);margin-bottom:.75rem;letter-spacing:.08em;text-transform:uppercase">{status}, {esc_title}</div>
       <h1 style="font-size:1.45rem;font-weight:800;margin-bottom:.6rem;line-height:1.3">{esc_title}</h1>
       <p style="color:var(--text-secondary);font-size:.95rem;line-height:1.6;margin-bottom:1.5rem">{esc_message}</p>
       {extra_html}

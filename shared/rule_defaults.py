@@ -38,7 +38,7 @@ KNOWN_ACTIONS = ("access_code", "none", "custom_password", "deny")
 #: What an absent ``rules.active`` reads as. This is the module's single reading of
 #: a missing value, shared by the ORM path and the gateway so they cannot drift.
 #:
-#: It is ``True`` — *active* — and that direction is deliberate. An inactive rule
+#: It is ``True``, *active*, and that direction is deliberate. An inactive rule
 #: is skipped, so reading a missing field as inactive would switch gating off for
 #: every rule on a stack whose API has not yet been upgraded to send the field, or
 #: whose cache predates the column. The safe reading of "I was told nothing" is
@@ -115,8 +115,8 @@ def invariant_problems(groups: list[RuleGroup], rules: list[Rule]) -> list[str]:
             problems.append(f"group {group.id}: no /* catch-all")
         # An inactive catch-all cannot be produced through the API or restored
         # from a validated file, so it means a hand-edited database. The result is
-        # the fail-closed branch — every path the group does not name is refused
-        # — which is safe but must be visible at boot rather than discovered from
+        # the fail-closed branch, every path the group does not name is refused
+        #, which is safe but must be visible at boot rather than discovered from
         # a visitor.
         for rule in catches:
             if getattr(rule, "active", DEFAULT_ACTIVE_READING) is False:
@@ -166,7 +166,7 @@ def add_rule_active_column(sync_conn: Any) -> bool:
     operator reading this one should know it is not that kind of migration.
     `SQLite ALTER TABLE ADD COLUMN` with a constant `DEFAULT 1` populates every
     existing row with `1`, so live rules come back **active** without a backfill
-    pass — and without a window in which a rule reads as inactive.
+    pass, and without a window in which a rule reads as inactive.
     """
     try:
         rows = sync_conn.execute(text("PRAGMA table_info(rules)")).fetchall()

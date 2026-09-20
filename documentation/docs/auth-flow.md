@@ -35,7 +35,7 @@ Turning the switch off restores the previous behaviour exactly, because nothing 
 ## Rule Dispatch
 
 1. Load `RuleGroups` ordered by `display_order` (is_default `*.*/*` last).
-2. `host_matches(group.domain, host)` — supports `*.` prefix and exact.
+2. `host_matches(group.domain, host)`, supports `*.` prefix and exact.
 3. Within group, `Rules` ordered by `display_order`; first `path_matches(rule.path, uri.path)` wins (`/*` prefix).
 4. No match → default group's first rule.
 
@@ -47,7 +47,7 @@ Turning the switch off restores the previous behaviour exactly, because nothing 
 | Group matched the host, no rule matched the path | **Always** redirect to login. Never governed by a setting. Every group is meant to end in a `/*` catch-all, so this state means that invariant is broken, and a setting must not be able to turn a config fault into an open proxy. |
 | No group matched the host | `settings` `unmatched_action`, one of `access_code` (default) / `deny` / `none` |
 
-When the action is `none`, one more step runs before the route lookup: a matching [custom page](custom-pages.md) is served from the gateway itself. The check lives **inside** the `none` branch, so it never runs for `access_code`, `custom_password` or `deny` — a page cannot open a gate that was closed, and the paths that gate were not otherwise touched. Only `GET` and `HEAD` are served, and GateKeeper's own control plane (`/login`, `/`, `/logout`, `/manage/*` and `/static/*` on the gatekeeper host and the apex) is answered by the gate whatever a pattern says. `/static/*` is included because the panel's own stylesheet is served through the same wildcard proxy as its pages: reserving the pages but not the asset would leave the panel reachable and unstyled. The reserve is host-scoped, so a project host's `/static/*` is unaffected.
+When the action is `none`, one more step runs before the route lookup: a matching [custom page](custom-pages.md) is served from the gateway itself. The check lives **inside** the `none` branch, so it never runs for `access_code`, `custom_password` or `deny`, a page cannot open a gate that was closed, and the paths that gate were not otherwise touched. Only `GET` and `HEAD` are served, and GateKeeper's own control plane (`/login`, `/`, `/logout`, `/manage/*` and `/static/*` on the gatekeeper host and the apex) is answered by the gate whatever a pattern says. `/static/*` is included because the panel's own stylesheet is served through the same wildcard proxy as its pages: reserving the pages but not the asset would leave the panel reachable and unstyled. The reserve is host-scoped, so a project host's `/static/*` is unaffected.
 
 The seeded default group's domain is `*.*/*`, which `host_matches` treats as "any host", so in a healthy database no request reaches the third row. Reaching it means the default group is missing or its `domain` no longer matches everything, which is why the setting exists as a backstop rather than as everyday policy.
 
@@ -55,7 +55,7 @@ The seeded default group's domain is `*.*/*`, which `host_matches` treats as "an
 
 `auth-gateway` reads the setting through a 60s-cached `GET /api/settings/unmatched_action` (`X-Internal-Api-Key` on `net-api`); any error falls back to `access_code`, and that fallback is cached too, so a settings outage makes the gateway stricter rather than slower. Every value it does read is passed through `shared/settings_spec.py:read_value()` first, so a row edited by hand or restored from an older file cannot be acted on unless the panel's own validation would accept it.
 
-`CACHE_TTL=5s` in-memory under `asyncio.Lock` — auth-gateway loads `Route`+`RuleGroup` via `GET http://api:8002/api/routes|groups|rules` (`X-Internal-Api-Key` on `net-api` `internal:true`), `api:8002` is sole `shared/db.py` owner (`net-data`). All auth paths audit via `BackgroundTasks → POST http://api:8002/api/logs` (`X-Internal-Api-Key`, `internal:true`); on failure keep stale cache / drop audit — no direct DB fallback in `auth-gateway`.
+`CACHE_TTL=5s` in-memory under `asyncio.Lock`, auth-gateway loads `Route`+`RuleGroup` via `GET http://api:8002/api/routes|groups|rules` (`X-Internal-Api-Key` on `net-api` `internal:true`), `api:8002` is sole `shared/db.py` owner (`net-data`). All auth paths audit via `BackgroundTasks → POST http://api:8002/api/logs` (`X-Internal-Api-Key`, `internal:true`); on failure keep stale cache / drop audit, no direct DB fallback in `auth-gateway`.
 
 ## Cookie
 
@@ -84,14 +84,14 @@ Per-rule `custom_password_hash/salt` (`pbkdf2_hmac sha512 100k`). Checked as:
 
 `audit_logs.ip`, the per-IP rate limiter, and the `X-Forwarded-For` header forwarded upstream all use `shared/client_ip.py:get_client_ip()`, which resolves in this order:
 
-1. `CF-Connecting-IP` — set by Cloudflare at the edge, forwarded by cloudflared. The authoritative source.
-2. `True-Client-IP`, then `X-Real-IP` — equivalent edge headers.
-3. `X-Forwarded-For[0]` — kept as a fallback for non-Cloudflare callers.
+1. `CF-Connecting-IP`, set by Cloudflare at the edge, forwarded by cloudflared. The authoritative source.
+2. `True-Client-IP`, then `X-Real-IP`, equivalent edge headers.
+3. `X-Forwarded-For[0]`, kept as a fallback for non-Cloudflare callers.
 4. The peer address.
 
-`X-Forwarded-For` alone is **not** usable on this stack: cloudflared does not set it on the origin dial, so Caddy's `reverse_proxy` fills it with the immediate peer — the cloudflared container's own bridge address (`172.18.x.x`). Every visitor then collapsed into a single identity, and the per-IP rate limiter throttled all visitors as one. Result is truncated to 64 chars to match the `audit_logs.ip` column.
+`X-Forwarded-For` alone is **not** usable on this stack: cloudflared does not set it on the origin dial, so Caddy's `reverse_proxy` fills it with the immediate peer, the cloudflared container's own bridge address (`172.18.x.x`). Every visitor then collapsed into a single identity, and the per-IP rate limiter throttled all visitors as one. Result is truncated to 64 chars to match the `audit_logs.ip` column.
 
-Trust model: only the tunnel may reach the origin (`gatekeeper_caddy` is the sole `cloudflared-tunnel` member and its port is loopback-bound to `127.0.0.1:7000`), so an inbound request cannot arrive from anywhere but Cloudflare. These headers are plain strings — if the origin ever becomes directly reachable they are forgeable.
+Trust model: only the tunnel may reach the origin (`gatekeeper_caddy` is the sole `cloudflared-tunnel` member and its port is loopback-bound to `127.0.0.1:7000`), so an inbound request cannot arrive from anywhere but Cloudflare. These headers are plain strings, if the origin ever becomes directly reachable they are forgeable.
 
 ## Visitor country
 
@@ -103,8 +103,8 @@ The gateway reads it once per request, gated by the `geo_lookup_enabled` setting
 
 ## Rate Limit (access_code tries/min)
 
-`settings` `rate_limit_access_code_per_min` (default 5) enforced per-IP in `auth-gateway` via `POST /api/auth/check-rate-limit {ip}` on `api:8002` (`internal:true` `X-Internal-Api-Key`) — counts `audit_logs` last 60s. On deny → `429`.
+`settings` `rate_limit_access_code_per_min` (default 5) enforced per-IP in `auth-gateway` via `POST /api/auth/check-rate-limit {ip}` on `api:8002` (`internal:true` `X-Internal-Api-Key`), counts `audit_logs` last 60s. On deny → `429`.
 
 ## Login
 
-`GET /` or `GET /login` → if valid cookie, redirect to `?redirect=` target (validated by `_safe_redirect_target` against apex). `POST /` / `POST /login` validates form `code`, sets `gatekeeper_token`, rate-limited `5/min` per visitor IP (`shared/client_ip.py` — see Visitor IP above).
+`GET /` or `GET /login` → if valid cookie, redirect to `?redirect=` target (validated by `_safe_redirect_target` against apex). `POST /` / `POST /login` validates form `code`, sets `gatekeeper_token`, rate-limited `5/min` per visitor IP (`shared/client_ip.py`, see Visitor IP above).

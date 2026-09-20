@@ -103,7 +103,7 @@ def _apex_from_request(request: Request) -> str:
 
 
 def _derive_login_host(redirect_target: str, apex: str) -> str:
-    """Hostname only, no path — validated against apex to avoid display injection."""
+    """Hostname only, no path, validated against apex to avoid display injection."""
     try:
         th = (urlsplit(redirect_target).hostname or "").lower()
         if th and (th == apex or th.endswith("." + apex)):
@@ -185,7 +185,7 @@ async def _verify_code_by_id(cid: int) -> Code | None:
         c.id = data.get("code_id", cid)  # type: ignore[attr-defined]
         c.active = True  # type: ignore[attr-defined]
         if not c.code:
-            # fetch via /api/codes/{id} is public but need code value for mask — fetch from data["code"] if present
+            # fetch via /api/codes/{id} is public but need code value for mask, fetch from data["code"] if present
             # if api didn't return code, keep label/display_name
             c.code = "***"
         return c
@@ -489,7 +489,7 @@ async def _page_governance(page: dict[str, Any]) -> dict[str, Any]:
     rule_text = f"{rule.get('path')}" if rule else "(no rule matched)"
     sentence = f"This page is governed by Rule {group.get('name')} - {rule_text} : {label}"
     if not served:
-        sentence += " — this page is not served at all; the request follows the gate instead"
+        sentence += ", this page is not served at all; the request follows the gate instead"
     return {
         "resolved": True,
         "host": host,

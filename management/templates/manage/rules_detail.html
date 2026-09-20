@@ -53,7 +53,7 @@
             <form method="post" action="/manage/rules/{{ r.id }}/edit" style="margin:0">
               <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
               <input type="hidden" name="active" value="0">
-              <label class="toggle"{% if r.is_default %} title="The catch-all cannot be deactivated — it is the group's fallback"{% else %} title="{{ 'Deactivate this rule' if r.active is not sameas false else 'Activate this rule' }}"{% endif %}>
+              <label class="toggle"{% if r.is_default %} title="The catch-all cannot be deactivated, it is the group's fallback"{% else %} title="{{ 'Deactivate this rule' if r.active is not sameas false else 'Activate this rule' }}"{% endif %}>
                 <input type="checkbox" name="active" value="1" onchange="this.form.submit()"{% if r.active is not sameas false %} checked{% endif %}{% if r.is_default %} disabled aria-disabled="true"{% endif %} aria-label="{{ 'The catch-all cannot be deactivated' if r.is_default else ('Deactivate this rule' if r.active is not sameas false else 'Activate this rule') }}">
                 <span class="toggle-slider"></span>
               </label>
@@ -63,7 +63,7 @@
             <div class="actions">
             <button class="btn icon-btn" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary);font-size:.75rem" data-rule-edit="{{ r.id }}" title="Edit rule" aria-label="Edit rule"><i class="fa-solid fa-pen" aria-hidden="true"></i></button>
             {% if r.is_default %}
-            <button class="btn btn-outline-danger icon-btn" style="font-size:.75rem" disabled aria-disabled="true" title="The catch-all cannot be deleted — delete the group instead" aria-label="The catch-all cannot be deleted"><i class="fa-solid fa-trash" aria-hidden="true"></i></button>
+            <button class="btn btn-outline-danger icon-btn" style="font-size:.75rem" disabled aria-disabled="true" title="The catch-all cannot be deleted, delete the group instead" aria-label="The catch-all cannot be deleted"><i class="fa-solid fa-trash" aria-hidden="true"></i></button>
             {% else %}
             <form method="post" action="/manage/rules/{{ r.id }}/delete" onsubmit="return confirm('Delete rule?')" style="display:inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn btn-outline-danger icon-btn" style="font-size:.75rem" title="Delete rule" aria-label="Delete rule"><i class="fa-solid fa-trash" aria-hidden="true"></i></button></form>
             {% endif %}
@@ -88,8 +88,7 @@
     it cannot be moved, renamed or deleted. Deleting the group is the only way to remove it,
     and a group always has one.
     The <strong>Status</strong> switch takes a rule out of the walk: a switched-off rule is
-    <strong>skipped</strong>, so the request continues to the next matching rule below it —
-    normally the catch-all. It is never a refusal, and the catch-all's own switch is disabled
+    <strong>skipped</strong>, so the request continues to the next matching rule below it, normally the catch-all. It is never a refusal, and the catch-all's own switch is disabled
     because a group without an active fallback would refuse everything it does not name.
   </p>
 </div>

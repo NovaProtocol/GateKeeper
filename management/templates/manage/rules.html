@@ -96,7 +96,7 @@ function openEditGroup(id, name, domain, isDefault){
   domainInput.value=domain;
   domainInput.disabled=isDefault;
   document.getElementById('edit-group-domain-help').textContent=isDefault
-    ? 'The default group is the catch-all — its domain cannot be changed.'
+    ? 'The default group is the catch-all, its domain cannot be changed.'
     : 'Use *.*/* for catch-all default, *.example.com for wildcard';
   document.getElementById('editGroupForm').action='/manage/groups/'+id+'/edit';
   $('#editGroupModal').modal('show');

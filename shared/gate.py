@@ -20,7 +20,7 @@ open proxy.
 
 **Skipping an inactive rule is fall-through, not deny.** A rule carrying
 ``active=False`` is invisible to resolution, so the walk continues down the same
-group and normally meets the group's ``/*`` catch-all — which is the operator's
+group and normally meets the group's ``/*`` catch-all, which is the operator's
 own standing policy for everything they have not named. It never turns a refusal
 into an allow and it never turns an allow into a refusal; it only removes one
 candidate from the list. The two fail-closed cases above are unchanged: a group
@@ -65,7 +65,7 @@ def _is_active(rule: Any) -> bool:
 
     ``is not False`` rather than a truthiness test, for two reasons that both
     matter. An unreadable or not-yet-upgraded rule list omits the field, and
-    reading that as inactive would silence the rule — on a stack whose API has
+    reading that as inactive would silence the rule, on a stack whose API has
     not shipped the column yet, that is every rule. And a bare ``Rule(...)`` built
     by a test fixture, or by the gateway's cache before this flag existed, carries
     no such attribute at all; it must keep governing.
@@ -82,8 +82,7 @@ def find_group_rule(
     the path. That is the signal the callers need: ``(None, None)`` cannot be
     told apart from "no group matched this host at all". A rule that matched the
     path but is inactive is skipped, so the walk continues down the group and the
-    result can equally mean "the only rules that matched were switched off" —
-    which the callers treat the same way as no match, i.e. fail closed.
+    result can equally mean "the only rules that matched were switched off", which the callers treat the same way as no match, i.e. fail closed.
     """
     for group in sorted(groups, key=lambda g: g.display_order):
         if not host_matches(group.domain, host):

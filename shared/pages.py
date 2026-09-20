@@ -6,7 +6,7 @@ glob on **both** halves, which is why it is not read through
 :func:`shared.security.host_matches` / :func:`shared.security.path_matches`:
 
 * those implement the *rules* vocabulary, where a path is exact unless it ends
-  in ``/*`` — a rule for ``/robots.txt`` deliberately does not cover
+  in ``/*``, a rule for ``/robots.txt`` deliberately does not cover
   ``/robots.txt.bak``, and a rule for ``/a/*`` deliberately does not cover
   ``/ab``. A page is a different object: it names a URL shape to swallow, so
   ``*`` crossing ``/`` and ``?`` standing for a character is the useful
@@ -83,8 +83,8 @@ def validate_content_type(content_type: str) -> str:
 def split_pattern(pattern: str) -> tuple[str, str]:
     """``(host_glob, path_glob)`` for a pattern, splitting at the first ``/``.
 
-    A pattern that cannot describe a URL — no separator, an empty host half, or
-    a path half that does not start with ``/`` — raises :class:`ValueError`. The
+    A pattern that cannot describe a URL, no separator, an empty host half, or
+    a path half that does not start with ``/``, raises :class:`ValueError`. The
     API turns that into a refusal and the backup validator into a problem line,
     so the two agree about what a pattern is.
     """

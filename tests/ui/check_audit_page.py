@@ -361,7 +361,7 @@ def main() -> int:
             """
             () => Array.from(document.querySelectorAll('table.codes-table tr'))
               .map(r => Array.from(r.cells).map(c => (c.textContent || '').trim()))
-              .filter(c => c.length === 4 && /^[A-Z]{2}$|^—$/.test(c[1]))
+              .filter(c => c.length === 4 && /^[A-Z]{2}$|^ - $/.test(c[1]))
               .map(c => ({name: c[0], count: Number(c[2])}))
             """
         )

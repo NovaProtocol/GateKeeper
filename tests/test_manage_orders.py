@@ -7,7 +7,7 @@ call is covered in `test_api_orders.py`.
 
 The rendering tests assert the two honesty properties the UI promises: real
 positions (1, 2, 3…) rather than the sparse `display_order`, and arrows disabled
-wherever the API would no-op or refuse — the ends of a list, and the default
+wherever the API would no-op or refuse, the ends of a list, and the default
 group (and its neighbour).
 """
 
@@ -441,7 +441,7 @@ def test_a_refused_switch_is_logged(manage_client, monkeypatch, refusing_api: _F
     """A switch that silently does nothing would look like a dead control.
 
     The API refuses switching the catch-all off, and the panel relays that
-    refusal into the container log rather than swallowing it — otherwise the
+    refusal into the container log rather than swallowing it, otherwise the
     control just appears broken.
     """
     logged: list[Any] = []

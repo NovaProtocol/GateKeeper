@@ -2,14 +2,14 @@
 
 Plan `gatekeeper-ui-and-wbs-api-bugfixes.md` §6 / §8.  Three defects were fixed:
 
-  * BUG 1 — inline handlers interpolated Jinja data into HTML attributes / JS
+  * BUG 1, inline handlers interpolated Jinja data into HTML attributes / JS
     strings, so a quote or apostrophe in a row value shattered the handler and
     the button went dead.  Fixed by carrying row data in `data-*` attributes and
     one delegated listener per page.
-  * BUG 2b — `routing.html` was one `</div>` short, so its two modals parsed
+  * BUG 2b, `routing.html` was one `</div>` short, so its two modals parsed
     *inside* `addProxyModal` and measured 0x0 behind a live backdrop.  The
     routing page is therefore a first-class target here, not an afterthought.
-  * BUG 2 — dialogs taller than the viewport were clipped, leaving a backdrop
+  * BUG 2, dialogs taller than the viewport were clipped, leaving a backdrop
     and a partial dialog.
 
 Two harness rules make the difference between a proof and a false pass:
@@ -316,7 +316,7 @@ MEASURE = """
 def _open_and_wait(page: Any, sel: str, modal_id: str, failures: list[str], where: str) -> bool:
     """Click the trigger, wait for the modal to settle into `.show`, measure it.
 
-    Returns False when the modal never became visible — the caller should report
+    Returns False when the modal never became visible, the caller should report
     that and skip the geometry assertions, because a modal that did not open is
     not a "clipped" modal.
     """
@@ -331,7 +331,7 @@ def _open_and_wait(page: Any, sel: str, modal_id: str, failures: list[str], wher
         # open" or "is clipped" when it is neither:
         #   1. `.show` is added after the backdrop transition,
         #   2. `.modal.fade .modal-dialog` starts at `transform: translate(0,-50px)`
-        #      and animates to `none` over 300ms — mid-flight the dialog reads
+        #      and animates to `none` over 300ms, mid-flight the dialog reads
         #      50px higher than it settles, which a naive `top >= 0` check calls
         #      "above the viewport",
         #   3. the dialog needs a real box (a nested/`display:none` dialog is 0x0
@@ -359,7 +359,7 @@ def main() -> int:
 
     failures: list[str] = []
     print("=" * 78)
-    print("RENDERED-DOM PROOF — manage modals open, fit, and carry their data")
+    print("RENDERED-DOM PROOF, manage modals open, fit, and carry their data")
     print("=" * 78)
 
     with sync_playwright() as p:
@@ -446,11 +446,11 @@ def main() -> int:
 
     print("\n" + "=" * 78)
     if failures:
-        print(f"FAILED — {len(failures)} problem(s):")
+        print(f"FAILED, {len(failures)} problem(s):")
         for f in failures:
             print(f"  - {f}")
         return 1
-    print("PASSED — every trigger opens a non-nested, on-screen modal with its hostile data intact")
+    print("PASSED, every trigger opens a non-nested, on-screen modal with its hostile data intact")
     return 0
 
 

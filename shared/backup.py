@@ -60,7 +60,7 @@ SECTIONS = ("routes", "groups", "rules", "codes", "settings")
 #:
 #: `pages` is here rather than in `SECTIONS` for a reason that is load-bearing.
 #: `validate()` refuses a file with a missing required section, so promoting
-#: `pages` would make every backup taken before this feature unusable — and
+#: `pages` would make every backup taken before this feature unusable, and
 #: bumping `VERSION` would refuse those files too. Either would destroy the
 #: owner's only rollback point at exactly the moment it is needed. Optional and
 #: absent is the only shape that keeps an old file restorable.
@@ -86,7 +86,7 @@ RULES_HAVE_IS_DEFAULT = hasattr(Rule, "is_default")
 #: cache and a database cannot disagree about what silence means.
 #:
 #: Keeping the field optional is what keeps old files restorable. A required
-#: ``active`` would refuse every backup taken before the column existed — which
+#: ``active`` would refuse every backup taken before the column existed, which
 #: would destroy the owner's only rollback point at exactly the moment a schema
 #: change makes it worth having. That is also why ``VERSION`` stays 1: this is a
 #: field inside the existing ``rules`` section, not a new section, so old and new
@@ -261,7 +261,7 @@ def _validate_rules(rows: list[dict[str, Any]], gids: set[int], problems: list[s
         if _int(row.get("display_order")) is None:
             problems.append(f"{where}: display_order must be an integer")
         if "active" in row and not isinstance(row.get("active"), bool):
-            # Absent means active, and that is accepted — it is what makes a file
+            # Absent means active, and that is accepted, it is what makes a file
             # written before the column restorable. Present-but-wrong is not.
             problems.append(f"{where}: active must be true or false")
     # A group with no catch-all refuses every path it does not name, and since
