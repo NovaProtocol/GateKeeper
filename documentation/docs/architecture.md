@@ -151,6 +151,36 @@ Browser → Caddy :7000 → Auth Gateway :8001 /api/authz/forward-auth
 
 Cache: in-memory `RuleGroup+Route+custom page` polled every `CACHE_TTL=5s` under `asyncio.Lock` via `GET http://api:8002/api/routes|groups|rules|pages` (`X-Internal-Api-Key` on `net-api` `internal:true`), only `api:8002` imports `shared/db.py`. Code verification is `POST /api/auth/verify-*` on `net-api`. Audit via `BackgroundTasks → POST http://api:8002/api/logs` (`X-Internal-Api-Key` `internal:true`) + rate-limit `POST /api/auth/check-rate-limit {ip}` for `?access_code=` tries/min; `POST /api/routes/{id}/test` and `POST /api/routes/test` both `socket.create_connection((upstream,port))` and need `api` on `gatekeeper` to reach `portfolio_main:8000` etc.
 
+## Caching
+
+The gate is the layer that decides what a shared cache may keep, because it is
+the layer that knows which visitor a response belongs to. The rule, the path
+classes, the safety net and the `action == "none"` exception are documented in
+[Caching](caching.md); the short version follows.
+
+`shared/middleware.py::CacheControlMiddleware` runs on every service and fills a
+`Cache-Control` only when the response does not already carry one, choosing
+between `no-store` in debug and the path class's lifespan from the
+`DEPLOYMENT_TYPE`-derived flag. Control-plane paths (`/api/`, `/manage`,
+`/login`, `/logout`, `/api/authz/`) are forced to `private, no-store` in both
+modes, before that rule is consulted.
+
+Keeping an upstream header is only safe because of
+`enforce_private_cache_control`, which `auth-gateway` calls on every response it
+produced and on every proxied response whose request it decided (any resolved
+action other than `none`). It replaces a value that is not already `private` or
+`no-store`, so a gated upstream cannot publish a shared-cacheable page through
+the gate. The ungated pass-through is left untouched, which is what lets a
+project's `action == "none"` assets stay `public` and edge-cacheable.
+
+`/documentation/*` is the one path that bypasses `auth-gateway`: the gateway's
+`Caddyfile` calls `forward_auth` and then proxies straight to
+`gatekeeper_documentation:8005` inside a `route` block, so the docs service's own
+`documentation/cache.py` is the authority for those responses. It carries the
+same precedence rule and the same lifespans, and the one deliberate difference is
+`_HTML_MAX_AGE`: `60` on the gateway, where HTML is a per-visitor verdict, and
+`300` on the docs service, where HTML is built once and changes on deploy.
+
 ## Security headers
 
 `shared/csp.py` is the only definition of `Content-Security-Policy`,
