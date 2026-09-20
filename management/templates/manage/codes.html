@@ -34,7 +34,7 @@
         <thead><tr><th>Code</th><th>Label</th><th>Status</th><th>Created</th><th>Last Accessed</th><th aria-label="Actions"></th></tr></thead>
         <tbody>
         {% for c in codes %}
-        <tr{% if not c.active %} class="inactive"{% endif %}>
+        <tr data-code-label="{{ c.label or '' }}" data-code-display="{{ c.display_name or c.label or '' }}" data-code-value="{{ c.code }}"{% if not c.active %} class="inactive"{% endif %}>
           <td><span class="code-value">{{ c.code }}</span></td>
           <td><span class="label-value{% if not c.label and not c.display_name %} empty{% endif %}">{{ c.display_name or c.label or '—' }}</span></td>
           <td><span class="tag {{ 'tag-active' if c.active else 'tag-inactive' }}">{{ 'Active' if c.active else 'Inactive' }}</span></td>
@@ -42,7 +42,7 @@
           <td class="date-value">{{ c.last_accessed or 'never' }}</td>
           <td class="actions-cell" style="text-align:right;padding-right:1rem">
             <div class="actions">
-            <button class="btn icon-btn" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary);font-size:.75rem" onclick="openEditCode({{ c.id }}, '{{ c.label or '' }}', '{{ c.display_name or c.label or '' }}', '{{ c.code }}')" title="Edit code" aria-label="Edit code"><i class="fa-solid fa-pen" aria-hidden="true"></i></button>
+            <button class="btn icon-btn" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary);font-size:.75rem" data-code-edit="{{ c.id }}" title="Edit code" aria-label="Edit code"><i class="fa-solid fa-pen" aria-hidden="true"></i></button>
             {# The switch means `active` and nothing else, so it is reversible and
                carries no confirm and no delete URL. Deleting is the separate trash
                control beside it, still governed by the page-level delete toggle. #}
@@ -168,6 +168,17 @@ function genDice(){
   for(let i=0;i<8;i++) v+=chars[Math.floor(Math.random()*chars.length)];
   document.getElementById('code-value').value=v;
 }
+/* The values travel in the row's own `data-*` attributes. Jinja escapes them, so
+   a label or a code containing an apostrophe no longer terminates the inline
+   handler's string literal and leave the button inert. */
+document.addEventListener('click', function(ev){
+  const btn=ev.target.closest('[data-code-edit]');
+  if(!btn) return;
+  const row=btn.closest('tr');
+  if(!row) return;
+  openEditCode(btn.getAttribute('data-code-edit'), row.dataset.codeLabel,
+    row.dataset.codeDisplay, row.dataset.codeValue);
+});
 function openEditCode(id, label, display, code){
   document.getElementById('edit-label').value=display||label||'';
   document.getElementById('edit-code').value=code||'';

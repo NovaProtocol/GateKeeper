@@ -21,7 +21,7 @@
         <thead><tr><th>Order</th><th>Path</th><th>Action</th><th>Rate</th><th>Status</th><th aria-label="Actions"></th></tr></thead>
         <tbody>
         {% for r in rules %}
-        <tr{% if r.active is sameas false %} class="inactive"{% endif %}>
+        <tr data-rule-path="{{ r.path }}" data-rule-action="{{ r.action }}" data-rule-default="{{ r.is_default }}"{% if r.active is sameas false %} class="inactive"{% endif %}>
           <td style="font-family:'JetBrains Mono',monospace">
             <div style="display:flex;align-items:center;gap:.35rem">
               <span title="display_order {{ r.display_order }}">{{ loop.index }}</span>
@@ -61,7 +61,7 @@
           </td>
           <td class="actions-cell">
             <div class="actions">
-            <button class="btn icon-btn" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary);font-size:.75rem" onclick="openEditRule({{ r.id }}, '{{ r.path }}', '{{ r.action }}', {{ 'true' if r.is_default else 'false' }})" title="Edit rule" aria-label="Edit rule"><i class="fa-solid fa-pen" aria-hidden="true"></i></button>
+            <button class="btn icon-btn" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary);font-size:.75rem" data-rule-edit="{{ r.id }}" title="Edit rule" aria-label="Edit rule"><i class="fa-solid fa-pen" aria-hidden="true"></i></button>
             {% if r.is_default %}
             <button class="btn btn-outline-danger icon-btn" style="font-size:.75rem" disabled aria-disabled="true" title="The catch-all cannot be deleted — delete the group instead" aria-label="The catch-all cannot be deleted"><i class="fa-solid fa-trash" aria-hidden="true"></i></button>
             {% else %}
@@ -122,6 +122,17 @@
 <script>
 document.getElementById('rule-action')?.addEventListener('change',function(){document.getElementById('custom-pwd-group').style.display=this.value==='custom_password'?'':'none';});
 document.getElementById('edit-rule-action')?.addEventListener('change',function(){document.getElementById('edit-custom-pwd-group').style.display=this.value==='custom_password'?'':'none';});
+/* The rule's values travel in the row's own `data-*` attributes, so a path
+   containing an apostrophe cannot break the handler the way an inline string
+   literal could. */
+document.addEventListener('click', function(ev){
+  const btn=ev.target.closest('[data-rule-edit]');
+  if(!btn) return;
+  const row=btn.closest('tr');
+  if(!row) return;
+  openEditRule(btn.getAttribute('data-rule-edit'), row.dataset.rulePath,
+    row.dataset.ruleAction, row.dataset.ruleDefault==='True');
+});
 function openEditRule(id, path, action, isDefault){
   var pathInput=document.getElementById('edit-rule-path');
   pathInput.value=path;

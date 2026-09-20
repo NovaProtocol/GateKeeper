@@ -161,7 +161,7 @@ def _auth_cookies() -> dict[str, str]:
 def _order_controls(html: str) -> list[dict[str, Any]]:
     """Pull (position, up-disabled, down-disabled) out of each rendered row."""
     rows: list[dict[str, Any]] = []
-    for row in re.findall(r"<tr>(.*?)</tr>", html, re.S):
+    for row in re.findall(r"<tr\b[^>]*>(.*?)</tr>", html, re.S):
         if 'title="Move up' not in row:
             continue
         position = re.search(r'<span title="display_order (\d+)">(\d+)</span>', row)

@@ -558,6 +558,25 @@
     color: var(--text-secondary);
   }
 
+  /* A dialog taller than the window was clipped by `.modal`'s own
+     `overflow: hidden`, which left the backdrop drawn and the dialog cut off
+     below the fold — the bottom of the form, submit button included, was
+     simply not reachable. The content box is capped instead and the body is
+     what scrolls, so the header and the footer stay where they are.
+
+     The form wrapper has to be a flex link like the rest: `.modal-content` is
+     `display: flex`, but the `<form>` that wraps the header, body and footer is
+     a plain block, so capping the content shrank the form's own box while the
+     form kept its natural height and overflowed the cap. Without that rule the
+     submit button lands off-screen at 1280x627 and below. It is also why the
+     dialog is top-aligned rather than transform-centred: a centred oversized
+     dialog is clipped at both ends. */
+  .modal .modal-content { max-height: calc(100vh - 3.5rem); overflow: hidden; }
+  .modal .modal-dialog-centered { align-items: flex-start; }
+  .modal .modal-content > form { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+  .modal .modal-body { overflow-y: auto; min-height: 0; }
+  .modal .modal-header, .modal .modal-footer { flex-shrink: 0; }
+
   @media (max-width: 1200px) {
     .dash-grid { grid-template-columns: minmax(0, 1fr); }
   }

@@ -32,7 +32,7 @@
         <thead><tr><th>Priority</th><th>Pattern</th><th>Governing rule</th><th>Content type</th><th>Status</th><th aria-label="Actions"></th></tr></thead>
         <tbody>
         {% for p in pages %}
-        <tr{% if not p.active %} class="inactive"{% endif %}>
+        <tr data-page-pattern="{{ p.pattern }}" data-page-body="{{ p.body }}" data-page-ctype="{{ p.content_type }}" data-page-sentence="{{ p.governance.sentence or '' }}" data-page-served="{{ p.governance.served }}"{% if not p.active %} class="inactive"{% endif %}>
           <td style="font-family:'JetBrains Mono',monospace">
             <div style="display:flex;align-items:center;gap:.35rem">
               <span title="display_order {{ p.display_order }}">{{ loop.index }}</span>
@@ -84,7 +84,7 @@
           </td>
           <td class="actions-cell">
             <div class="actions">
-            <button class="btn icon-btn" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary);font-size:.75rem" onclick="openEditPage({{ p.id }}, {{ p.pattern|tojson }}, {{ p.body|tojson }}, {{ p.content_type|tojson }}, {{ p.governance.sentence|tojson }}, {{ p.governance.served|tojson }})" title="Edit page" aria-label="Edit page"><i class="fa-solid fa-pen" aria-hidden="true"></i></button>
+            <button class="btn icon-btn" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary);font-size:.75rem" data-page-edit="{{ p.id }}" title="Edit page" aria-label="Edit page"><i class="fa-solid fa-pen" aria-hidden="true"></i></button>
             {% if p.sample_url %}<a href="{{ p.sample_url }}" target="_blank" rel="noopener" class="btn icon-btn" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary);font-size:.75rem" title="Open the sample URL" aria-label="Open the sample URL"><i class="fa-solid fa-arrow-up-right-from-square" aria-hidden="true"></i></a>{% endif %}
             <form method="post" action="/manage/pages/{{ p.id }}/delete" onsubmit="return confirm('Delete this page?')" style="display:inline">
               <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -184,6 +184,20 @@ function openEditPage(id, pattern, body, contentType, governSentence, served){
   document.getElementById('editPageForm').action='/manage/pages/'+id+'/edit';
   $('#editPageModal').modal('show');
 }
+/* The row's values travel in its own `data-*` attributes, not in an inline
+   handler. Jinja escapes the attribute value, so a pattern, a body or a
+   governance sentence containing a quote or a newline stays inside the
+   attribute; the inline form could not survive a quote at all, and the button
+   went dead without any error on the page. */
+document.addEventListener('click', function(ev){
+  const btn=ev.target.closest('[data-page-edit]');
+  if(!btn) return;
+  const row=btn.closest('tr');
+  if(!row) return;
+  openEditPage(btn.getAttribute('data-page-edit'), row.dataset.pagePattern,
+    row.dataset.pageBody, row.dataset.pageCtype, row.dataset.pageSentence,
+    row.dataset.pageServed==='True');
+});
 function _setPageResult(which,parts){
   const el=document.getElementById(which+'-test-result');
   if(!el) return;

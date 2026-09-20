@@ -71,6 +71,7 @@
       <p class="map-summary">{{ summary }}</p>
       <div class="map-legend">
         <span><i aria-hidden="true"></i> circle area scales with the count</span>
+        <span>click the map, then scroll to zoom</span>
         <span>{{ plotted|length }} plotted</span>
         {% if points|length > plotted|length %}<span>{{ points|length - plotted|length }} with no centroid</span>{% endif %}
       </div>
@@ -211,6 +212,14 @@
   if(!node || typeof L === 'undefined' || !data.length){ return; }
   try {
     var map = L.map(node, {worldCopyJump:false, scrollWheelZoom:false});
+    /* Wheel zoom is off until the map is clicked. The same wheel scrolls the
+       page it sits on, and this page runs long, so a map that always swallowed
+       it would trap the reader on the way past. Clicking the map takes the
+       wheel, clicking anywhere else hands it straight back; the +/- control,
+       double-click and drag work either way. */
+    map.on('focus', function(){ map.scrollWheelZoom.enable(); });
+    map.on('blur', function(){ map.scrollWheelZoom.disable(); });
+    map.on('click', function(){ map.getContainer().focus(); });
     L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 6,
       minZoom: 1,
