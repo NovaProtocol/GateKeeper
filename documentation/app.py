@@ -8,9 +8,13 @@ from pathlib import Path
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 
+from cache import CacheControlMiddleware
+
 SITE_DIR = Path(__file__).resolve().parent / "site"
 
 app = FastAPI(title="GateKeeper Docs")
+_DEBUG_DEPLOY = os.environ.get("DEPLOYMENT_TYPE", "").lower() in ("debug", "development")
+app.add_middleware(CacheControlMiddleware, is_debug=_DEBUG_DEPLOY)
 
 
 @app.get("/health")
