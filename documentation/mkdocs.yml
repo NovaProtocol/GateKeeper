@@ -65,6 +65,7 @@ nav:
   - Architecture: architecture.md
   - Auth Flow: auth-flow.md
   - Cookie Contract: cookie-contract.md
+  - Caching: caching.md
   - Management UI: manage-panel.md
   - Caddy Integration: caddy-integration.md
   - Docker: docker.md

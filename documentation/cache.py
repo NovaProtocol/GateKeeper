@@ -13,7 +13,9 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 # Production cache lifespans, in seconds. Tuning one is a one-line edit here
-# plus a redeploy; they are deliberately not env vars.
+# plus a redeploy; they are deliberately not env vars. `_HTML_MAX_AGE` is longer
+# than the gateway's 60 on purpose: these pages are built once and change on
+# deploy, while the gateway's HTML is a per-visitor verdict.
 _STATIC_MAX_AGE = 86400
 _HTML_MAX_AGE = 300
 _MISC_MAX_AGE = 3600
@@ -46,9 +48,21 @@ def is_debug_deployment() -> bool:
 
 
 class CacheControlMiddleware(BaseHTTPMiddleware):
-    """Set Cache-Control per deployment type: no-store in debug, lifespans otherwise.
+    """Set Cache-Control per deployment type, without overriding a page's own.
 
-    A response that already carries a Cache-Control header keeps it.
+    Order: a response that already carries a ``Cache-Control`` header keeps it,
+    and only when none is present is the value filled in, ``no-store`` in debug
+    and the path class's lifespan otherwise. A docs page that sets its own
+    policy knows what it is publishing; a deployment-type default is not a
+    reason to overrule it.
+
+    This service is the authority for ``/documentation/*``. The gateway's Caddy
+    handles that prefix by calling ``forward_auth`` and then proxying straight
+    here, so the gateway's ``CacheControlMiddleware`` never sees the response.
+    The two must therefore agree on the policy, and the lifespans are the same
+    for that reason. The one deliberate difference is ``_HTML_MAX_AGE``: gated
+    pages are per-visitor and short-lived, while these pages are built once and
+    change on deploy.
     """
 
     def __init__(self, app, is_debug: bool) -> None:
@@ -57,8 +71,9 @@ class CacheControlMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         response = await call_next(request)
-        if self.is_debug:
-            response.headers["Cache-Control"] = _NO_STORE
-        elif "Cache-Control" not in response.headers:
-            response.headers["Cache-Control"] = _cache_control_for(request.url.path)
+        if "Cache-Control" in response.headers:
+            return response
+        response.headers["Cache-Control"] = (
+            _NO_STORE if self.is_debug else _cache_control_for(request.url.path)
+        )
         return response

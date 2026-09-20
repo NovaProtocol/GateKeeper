@@ -117,9 +117,18 @@ def client() -> Iterator[TestClient]:
 
 @pytest.fixture(scope="module")
 def gateway_client() -> Iterator[TestClient]:
-    """TestClient for the auth gateway (the forward-auth contract)."""
+    """TestClient for the auth gateway (the forward-auth contract).
+
+    Closing the app runs the gateway's lifespan, which closes the
+    process-global ``httpx.AsyncClient`` the proxy dials with. The module leaves
+    that global pointing at the closed client, so every later module that
+    proxies through the gateway got ``502 Cannot send a request, as the client
+    has been closed``. Clearing the global after the close is what keeps a
+    module-scoped teardown from breaking the next module that proxies.
+    """
     with TestClient(gateway_app) as c:
         yield c
+    sys.modules["auth_gateway.app"]._httpx_client = None
 
 
 @pytest.fixture(scope="module")

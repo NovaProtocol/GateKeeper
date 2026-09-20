@@ -20,7 +20,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from shared.client_ip import get_client_ip
 from shared.config import get_config
-from shared.middleware import CacheControlMiddleware
+from shared.middleware import CacheControlMiddleware, enforce_private_cache_control
 from shared.csp import apply_security_headers
 from shared.gate import DEFAULT_UNMATCHED_ACTION, find_group_rule, resolve_rule_action
 from shared.geo import get_country
@@ -165,11 +165,30 @@ def _error_response(  # type: ignore[no-untyped-def]
             request_id=request_id,
             apex=apex,
         )
-        return _HR(content=html, status_code=status, headers={"Content-Type": "text/html; charset=utf-8"})
-    accept = (request.headers.get("accept") or "").lower()
-    if "application/json" in accept:
-        return _JR(status_code=status, content={"detail": detail or message})
-    return Response(status_code=status, content=detail or message)
+        resp: Response = _HR(content=html, status_code=status, headers={"Content-Type": "text/html; charset=utf-8"})
+    else:
+        accept = (request.headers.get("accept") or "").lower()
+        if "application/json" in accept:
+            resp = _JR(status_code=status, content={"detail": detail or message})
+        else:
+            resp = Response(status_code=status, content=detail or message)
+    # Every one of these bodies is the gate's own verdict about one request, so
+    # none of them may leave here marked as cacheable by a shared cache.
+    enforce_private_cache_control(resp)
+    return resp
+
+
+def _private_response(resp: Response) -> Response:
+    """Mark a gate-produced response as never shared-cacheable.
+
+    The bodies the gate writes itself are verdicts about a single request, so a
+    ``public`` or bare ``max-age`` value on one of them would let a shared cache
+    replay it to the next visitor. The upstream never supplied these headers and
+    the gate is the only thing that knows why they were written, so keeping them
+    out of a shared cache is the gate's job.
+    """
+    enforce_private_cache_control(resp)
+    return resp
 
 
 def _apex_from_host(host: str) -> str:
@@ -469,16 +488,22 @@ async def _maintenance_response(
     message = await _get_setting(MAINTENANCE_MESSAGE, "")
     if wants_html(request):
         html = render_maintenance_html(message=message, host=host, apex=apex)
-        return HTMLResponse(
+        resp: Response = HTMLResponse(
             content=html,
             status_code=503,
             headers={"Content-Type": "text/html; charset=utf-8", "Retry-After": "300"},
         )
-    return JSONResponse(
+        # A 503 that a shared cache may store would keep serving the outage page
+        # after the site is back.
+        enforce_private_cache_control(resp)
+        return resp
+    resp = JSONResponse(
         status_code=503,
         content={"detail": "maintenance mode"},
         headers={"Retry-After": "300"},
     )
+    enforce_private_cache_control(resp)
+    return resp
 
 
 #: The paths on a manage host that are how the operator gets back into the
@@ -1026,7 +1051,7 @@ def create_app() -> FastAPI:
                 )
             if action == "none":
                 await _log("none_gate", status_code=200)
-                return Response(status_code=200)
+                return _private_response(Response(status_code=200))
             # access_code: fall through to the cookie / ?access_code= checks below.
 
         if rule and rule.action == "deny":
@@ -1044,33 +1069,33 @@ def create_app() -> FastAPI:
             )
         if rule and rule.action == "none":
             await _log("none_gate")
-            return Response(status_code=200)
+            return _private_response(Response(status_code=200))
 
         if rule and rule.action == "custom_password":
             if _has_valid_custom_cookie(request, rule):
                 await _log("custom_password_cookie")
-                return Response(status_code=200)
+                return _private_response(Response(status_code=200))
             if _check_custom_password_param(request, rule):
                 resp = Response(status_code=200)
                 _set_custom_cookie(resp, rule.id, apex, await _setting_int(SESSION_LIFETIME_HOURS))
                 await _log("custom_password_login")
-                return resp
+                return _private_response(resp)
             cpass = request.query_params.get("custom_password") or request.headers.get("X-Custom-Password")
             if cpass and rule.custom_password_hash and rule.custom_password_salt and verify_custom_password(cpass, rule.custom_password_hash, rule.custom_password_salt):
                 resp = Response(status_code=200)
                 _set_custom_cookie(resp, rule.id, apex, await _setting_int(SESSION_LIFETIME_HOURS))
                 await _log("custom_password_login")
-                return resp
+                return _private_response(resp)
             await _log("custom_password_required")
             target = quote(f"https://{host}{uri}", safe="")
-            return RedirectResponse(url=f"https://gatekeeper.{apex}/login?redirect={target}", status_code=302)
+            return _private_response(RedirectResponse(url=f"https://gatekeeper.{apex}/login?redirect={target}", status_code=302))
 
         token = request.cookies.get("gatekeeper_token")
         if token:
             cres = await _code_from_jwt(token)
             if cres:
                 await _log("auth_success", code_id=cres.id)
-                return Response(status_code=200)
+                return _private_response(Response(status_code=200))
 
         access_code, _ac_path, _ac_qs = _get_access_code_param(request)
         if access_code:
@@ -1078,7 +1103,7 @@ def create_app() -> FastAPI:
             limited, cnt, lim = await _check_access_code_rate_limited(ip)
             if limited:
                 await _log("access_code_rate_limited", status_code=429, attempted_code=access_code)
-                return JSONResponse(status_code=429, content={"detail": f"rate limited {cnt}/{lim} per minute"})
+                return _private_response(JSONResponse(status_code=429, content={"detail": f"rate limited {cnt}/{lim} per minute"}))
             cres = await _verify_code_value(access_code)
             if cres:
                 clean = _strip_access_code(uri)
@@ -1088,12 +1113,12 @@ def create_app() -> FastAPI:
                 resp = RedirectResponse(url=loc, status_code=302)
                 _set_auth_cookie(resp, cres, apex, await _setting_int(SESSION_LIFETIME_HOURS))
                 await _log("access_code_login", code_id=cres.id, status_code=302, attempted_code=access_code)
-                return resp
+                return _private_response(resp)
             await _log("access_code_fail", status_code=401, attempted_code=access_code)
 
         await _log("no_cookie_redirect", status_code=302)
         target = quote(f"https://{host}{uri}", safe="")
-        return RedirectResponse(url=f"https://gatekeeper.{apex}/login?redirect={target}", status_code=302)
+        return _private_response(RedirectResponse(url=f"https://gatekeeper.{apex}/login?redirect={target}", status_code=302))
 
     hop_by_hop = {
         "connection",
@@ -1182,7 +1207,10 @@ def create_app() -> FastAPI:
                 # The stored bytes, whole, with the stored content type. Nothing
                 # escaped, sanitised or sniffed, and no header added beyond what
                 # the response type requires.
-                return Response(content=page.body.encode("utf-8"), media_type=page.content_type)
+                page_response = Response(
+                    content=page.body.encode("utf-8"), media_type=page.content_type
+                )
+                return _private_response(page_response)
         elif action == "custom_password" and rule is not None:
             ok = False
             need_custom_cookie = False
@@ -1204,8 +1232,8 @@ def create_app() -> FastAPI:
                 await _log("custom_password_required")
                 target = quote(f"https://{host}{full_uri}", safe="")
                 if not _safe_redirect_target(f"https://gatekeeper.{apex}/", apex):
-                    return RedirectResponse(url=f"https://gatekeeper.{apex}/login?redirect={target}", status_code=302)
-                return RedirectResponse(url=f"https://gatekeeper.{apex}/login?redirect={target}", status_code=302)
+                    return _private_response(RedirectResponse(url=f"https://gatekeeper.{apex}/login?redirect={target}", status_code=302))
+                return _private_response(RedirectResponse(url=f"https://gatekeeper.{apex}/login?redirect={target}", status_code=302))
         else:
             # access_code. Reached by a matching rule, and by the fallback when
             # nothing matched but the action is not deny/none.
@@ -1223,7 +1251,7 @@ def create_app() -> FastAPI:
                     limited, cnt, lim = await _check_access_code_rate_limited(ip)
                     if limited:
                         await _log("access_code_rate_limited", status_code=429, attempted_code=ac)
-                        return JSONResponse(status_code=429, content={"detail": f"rate limited {cnt}/{lim} per minute"})
+                        return _private_response(JSONResponse(status_code=429, content={"detail": f"rate limited {cnt}/{lim} per minute"}))
                     cres = await _verify_code_value(ac)
                     if cres:
                         clean = _strip_access_code(full_uri)
@@ -1233,14 +1261,14 @@ def create_app() -> FastAPI:
                         resp = RedirectResponse(url=loc, status_code=302)
                         _set_auth_cookie(resp, cres, apex, await _setting_int(SESSION_LIFETIME_HOURS))
                         await _log("access_code_login", code_id=cres.id, status_code=302, attempted_code=ac)
-                        return resp
+                        return _private_response(resp)
                     await _log("access_code_fail", status_code=401, attempted_code=ac)
             if not authed:
                 # Never proxy unauthenticated: nothing reached a rule that
                 # allows the request, so send the visitor to the login page.
                 await _log("no_cookie_redirect", status_code=302)
                 target = quote(f"https://{host}{full_uri}", safe="")
-                return RedirectResponse(url=f"https://gatekeeper.{apex}/login?redirect={target}", status_code=302)
+                return _private_response(RedirectResponse(url=f"https://gatekeeper.{apex}/login?redirect={target}", status_code=302))
             await _log("auth_success", code_id=code_id, status_code=200)
 
         route = _find_route(host, raw_path, routes)
@@ -1364,10 +1392,18 @@ def create_app() -> FastAPI:
             resp = Response(content=content, status_code=rp.status_code, headers=resp_headers)
             if need_custom_cookie and custom_cookie_rule:
                 _set_custom_cookie(resp, custom_cookie_rule.id, apex, await _setting_int(SESSION_LIFETIME_HOURS))
+            if action != "none":
+                # The gate decided this request (access code, custom password),
+                # so an upstream ``public`` must not reach a shared cache: the
+                # next visitor has proved nothing and would be served these
+                # bytes from the URL alone.
+                enforce_private_cache_control(resp)
             return resp
         resp2 = StreamingResponse(_stream(), status_code=rp.status_code, headers=resp_headers, background=BackgroundTaskWrapper(rp))
         if need_custom_cookie and custom_cookie_rule:
             _set_custom_cookie(resp2, custom_cookie_rule.id, apex, await _setting_int(SESSION_LIFETIME_HOURS))
+        if action != "none":
+            enforce_private_cache_control(resp2)
         return resp2
 
     class BackgroundTaskWrapper:  # type: ignore[no-redef]
