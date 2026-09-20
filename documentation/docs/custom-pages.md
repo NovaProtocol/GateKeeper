@@ -174,9 +174,9 @@ and does not warn.
 
 `/manage/pages` lists every row with its priority, pattern, governing rule,
 content type and status. The controls are the ones the rest of the panel uses:
-▲/▼ reorder, a `Test before saving` button in each modal, an open-in-new-tab
-anchor to the sample URL, and a toggle that deactivates the page without deleting
-it. Deactivating is immediate and reversible; the gate skips a page whose
+▲/▼ reorder, an edit button in each row, a `Test before saving` button in each
+modal, an open-in-new-tab anchor to the sample URL, and a toggle that deactivates
+the page without deleting it. Deactivating is immediate and reversible; the gate skips a page whose
 `active` is `false` before it even reads the pattern.
 
 The endpoints, with `X-Internal-Api-Key` on every write:
