@@ -22,6 +22,7 @@ from shared.backup import SECTIONS, apply_backup, build_backup, config_warnings
 from shared.backup import validate as validate_backup
 from shared.backup import verify as verify_backup
 from shared.config import get_config
+from shared.middleware import CacheControlMiddleware
 from shared.db import Base, get_db, get_engine, get_sessionmaker
 from shared.gate import _is_active as rule_is_active
 from shared.geo import (
@@ -559,6 +560,7 @@ async def prune_audit_logs(db: Any, days: int | None = None) -> int:
 def create_app() -> FastAPI:
     app = FastAPI(lifespan=lifespan)
     app.add_middleware(RequestIDMiddleware)  # type: ignore[arg-type]
+    app.add_middleware(CacheControlMiddleware, is_debug=get_config().is_debug)
 
     @app.get("/health")
     async def health() -> dict[str, str]:

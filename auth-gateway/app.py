@@ -20,6 +20,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from shared.client_ip import get_client_ip
 from shared.config import get_config
+from shared.middleware import CacheControlMiddleware
 from shared.csp import apply_security_headers
 from shared.gate import DEFAULT_UNMATCHED_ACTION, find_group_rule, resolve_rule_action
 from shared.geo import get_country
@@ -834,6 +835,7 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
 def create_app() -> FastAPI:
     app = FastAPI(lifespan=lifespan)
     app.add_middleware(RequestIDMiddleware)  # type: ignore[arg-type]
+    app.add_middleware(CacheControlMiddleware, is_debug=get_config().is_debug)
     app.add_middleware(ProxyFixMiddleware)  # type: ignore[arg-type]
     app.add_middleware(CSPMiddleware)  # type: ignore[arg-type]
 
