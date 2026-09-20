@@ -10,7 +10,7 @@
         <thead><tr><th>Order</th><th>Name</th><th>Domain</th><th>Rules</th><th aria-label="Actions"></th></tr></thead>
         <tbody>
         {% for g in groups %}
-        <tr>
+        <tr data-group-name="{{ g.name }}" data-group-domain="{{ g.domain }}" data-group-default="{{ g.is_default }}">
           <td style="font-family:'JetBrains Mono',monospace">
             <div style="display:flex;align-items:center;gap:.35rem">
               <span title="display_order {{ g.display_order }}">{{ loop.index }}</span>
@@ -36,7 +36,7 @@
           <td class="actions-cell">
             <div class="actions">
             <a href="/manage/rules/{{ g.id }}" class="btn icon-btn" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary)" title="View rules" aria-label="View rules"><i class="fa-solid fa-list" aria-hidden="true"></i></a>
-            <button class="btn icon-btn" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary)" onclick="openEditGroup({{ g.id }}, '{{ g.name }}', '{{ g.domain }}', {{ 'true' if g.is_default else 'false' }})" title="Edit group" aria-label="Edit group"><i class="fa-solid fa-pen" aria-hidden="true"></i></button>
+            <button class="btn icon-btn" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary)" data-group-edit="{{ g.id }}" title="Edit group" aria-label="Edit group"><i class="fa-solid fa-pen" aria-hidden="true"></i></button>
             {% if not g.is_default %}
             <form method="post" action="/manage/groups/{{ g.id }}/delete" onsubmit="return confirm('Delete group?')" style="display:inline"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn btn-outline-danger icon-btn" title="Delete group" aria-label="Delete group"><i class="fa-solid fa-trash" aria-hidden="true"></i></button></form>
             {% else %}
@@ -79,6 +79,17 @@
   </form>
 </div></div></div>
 <script>
+/* The group's values travel in the row's own `data-*` attributes, so a name or a
+   domain containing an apostrophe cannot break the handler the way an inline
+   string literal could. */
+document.addEventListener('click', function(ev){
+  const btn=ev.target.closest('[data-group-edit]');
+  if(!btn) return;
+  const row=btn.closest('tr');
+  if(!row) return;
+  openEditGroup(btn.getAttribute('data-group-edit'), row.dataset.groupName,
+    row.dataset.groupDomain, row.dataset.groupDefault==='True');
+});
 function openEditGroup(id, name, domain, isDefault){
   document.getElementById('edit-group-name').value=name;
   var domainInput=document.getElementById('edit-group-domain');

@@ -88,7 +88,7 @@ The action cell of every row is a real table cell — `<td class="actions-cell">
 
 `.card` keeps `overflow: hidden` for its rounded corners, so every table sits inside a `.table-scroll` wrapper that scrolls it: `tabindex="0"`, `role="region"` and an `aria-label`, because an unfocusable scroll box is itself an accessibility defect. Without it the clipped columns are not merely off-screen but unreachable — the document does not scroll at all.
 
-`base.html` loads `manage.css` with `?v=4`; bump that when the stylesheet changes so a cached copy cannot make a correct deploy look broken.
+`base.html` loads `manage.css` with `?v=5`; bump that when the stylesheet changes so a cached copy cannot make a correct deploy look broken.
 
 Form controls use one `.input` class. At `971500b`, `logs.html` carried 5 inputs with the control styles written inline and `routing.html` 20 more `<input>`/`<select>` elements the same way, every one of them spelling out the same `background`/`border`/`border-radius`/`padding`/`color` by hand, so a padding tweak meant 25 edits and a miss was invisible. `.input` holds the shared declarations and the modifiers are written compound (`.input.input-mono`, `.input.input-dense`, `.input.input-cap-left` / `-right` for the two halves of a `host:port` pair) so they outrank both `.input` and `.form-group input`, which is what makes a modifier take effect on a control inside a form group. Layout stays inline where it describes the row rather than the control. The font is deliberately not set on `.input`: the routing controls already inherit it from `.form-group` and its `<select>`s relied on that, so setting it would have silently resized them.
 

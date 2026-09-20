@@ -197,7 +197,17 @@ def test_rules_page_offers_the_group_edit_control(manage_client, fake_api: _Fake
     r = manage_client.get("/manage/rules", cookies={"manage_session": SESSION})
     assert r.status_code == 200
 
-    assert "openEditGroup(10, 'alpha', 'alpha.test', false)" in r.text
-    assert "openEditGroup(12, '*.*/*', '*.*/*', true)" in r.text
+    # The row carries the values and the button only names itself, so a name or a
+    # domain containing a quote cannot break the handler the way an inline
+    # string literal did.
+    assert 'data-group-edit="10"' in r.text
+    assert 'data-group-name="alpha"' in r.text
+    assert 'data-group-domain="alpha.test"' in r.text
+    assert 'data-group-edit="12"' in r.text
+    assert 'data-group-name="*.*/*"' in r.text
+    assert 'data-group-domain="*.*/*"' in r.text
+    assert 'data-group-default="True"' in r.text
+    # The inline form is what broke on a quote, so its absence is the point.
+    assert "onclick=\"openEditGroup(" not in r.text
     assert 'id="editGroupForm"' in r.text
     assert "/manage/groups/'+id+'/edit" in r.text

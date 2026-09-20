@@ -378,10 +378,10 @@ def test_an_inactive_rule_row_is_marked(manage_client, monkeypatch) -> None:
         {**DETAIL_PAGE, "/api/groups/10/rules": rules},
     )
 
-    assert '<tr class="inactive">' in html
+    assert re.search(r'<tr[^>]*class="inactive"', html)
     assert 'aria-label="Activate this rule"' in html
     # The catch-all in the same table is still on, so the class is per row.
-    assert html.count('<tr class="inactive">') == 1
+    assert len(re.findall(r'<tr[^>]*class="inactive"', html)) == 1
 
 
 def test_default_group_and_catch_all_controls_are_disabled_not_hidden(
@@ -427,4 +427,4 @@ def test_single_add_buttons_are_icon_only(manage_client, monkeypatch, page, payl
 def test_stylesheet_is_cache_busted(manage_client, monkeypatch) -> None:
     """A stale cached stylesheet would make a correct deploy look broken."""
     html = _get(manage_client, "/manage/rules", monkeypatch, RULES_PAGE)
-    assert re.search(r'href="[^"]*manage\.css\?v=4"', html)
+    assert re.search(r'href="[^"]*manage\.css\?v=5"', html)
