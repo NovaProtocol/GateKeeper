@@ -14,3 +14,8 @@ __pycache__/
 /docs/
 documentation/site/
 *.code-workspace
+
+# Runtime state (local SQLite database, logs) written by a local run. The image
+# must not carry a copy of it, and the deployed stacks mount their own volume.
+data/
+!data/resume.json
