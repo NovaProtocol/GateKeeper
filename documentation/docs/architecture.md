@@ -173,13 +173,16 @@ action other than `none`). It replaces a value that is not already `private` or
 the gate. The ungated pass-through is left untouched, which is what lets a
 project's `action == "none"` assets stay `public` and edge-cacheable.
 
-`/documentation/*` is the one path that bypasses `auth-gateway`: the gateway's
-`Caddyfile` calls `forward_auth` and then proxies straight to
+`/documentation/*` on the gateway's own hosts is the one path that bypasses
+`auth-gateway`: the gateway's `Caddyfile` matches that prefix for `gatekeeper.<apex>`,
+the apex and the in-network aliases, calls `forward_auth` and then proxies straight to
 `gatekeeper_documentation:8005` inside a `route` block, so the docs service's own
 `documentation/cache.py` is the authority for those responses. It carries the
 same precedence rule and the same lifespans, and the one deliberate difference is
 `_HTML_MAX_AGE`: `60` on the gateway, where HTML is a per-visitor verdict, and
-`300` on the docs service, where HTML is built once and changes on deploy.
+`300` on the docs service, where HTML is built once and changes on deploy. On every
+other host the prefix is not the gateway's to serve, and the request falls through to
+the catch-all so the owning project handles its own docs.
 
 ## Security headers
 
