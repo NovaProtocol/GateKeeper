@@ -43,6 +43,7 @@ from tests.test_gateway_failclosed import (
     make_group,
     make_route,
 )
+from tests.test_gateway_pages import BODY, make_page
 
 UPSTREAM_CACHE = "public, max-age=300"
 
@@ -460,6 +461,29 @@ def test_health_is_published_in_production() -> None:
         response = client.get("/health")
 
     assert response.headers["Cache-Control"] == "public, max-age=3600"
+
+
+def test_a_custom_page_is_private_no_store(gateway_client: Any, publishing_upstream: Any) -> None:
+    """The stored bytes the gate serves under `action == "none"`.
+
+    This branch returns before the proxy, so the upstream header is never
+    involved and the gate is the only thing that can decide the value. A page
+    held by a shared cache would be served to the next visitor from the URL
+    alone, so even though the governing rule says `none`, the response is the
+    gate's own and is kept private.
+    """
+    page = make_page()
+    install_cache(
+        [make_group(1, "github", HOST, [("/*", "none")])],
+        [make_route(HOST, *publishing_upstream)],
+        [page],
+    )
+
+    response = _get(gateway_client, HOST, "/robots.txt")
+
+    assert response.status_code == 200, response.text
+    assert response.text == BODY
+    assert response.headers["Cache-Control"] == "private, no-store"
 
 
 def test_the_docs_copy_fills_a_gap_but_keeps_a_page_own_header() -> None:
