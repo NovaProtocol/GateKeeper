@@ -109,7 +109,7 @@ def enforce_private_cache_control(response: Response) -> None:
 
 
 class CacheControlMiddleware(BaseHTTPMiddleware):
-    """Set Cache-Control per deployment type, without overriding a route's own.
+    """Set Cache-Control per deployment type.
 
     Order, and it matters:
 
@@ -117,13 +117,18 @@ class CacheControlMiddleware(BaseHTTPMiddleware):
        ``/api/authz/``) always get ``private, no-store``, in both modes and
        whatever the upstream sent. A cacheable verdict is the one way this
        middleware could break the gate it sits in front of.
-    2. A response that already carries a ``Cache-Control`` header keeps it. The
-       upstream knows its own content and its own decision to publish; a
-       deployment-type default is not a reason to overrule it.
-    3. Only when none is present is the value filled in: ``no-store`` in debug,
-       the path class's lifespan otherwise.
+    2. Debug caches nothing. With ``is_debug`` set, anything shared-cacheable is
+       replaced with ``no-store``, so a deliberately ``public`` value never
+       survives into a development deployment. A value that already forbids
+       storage is kept verbatim, so the gate's own verdict passes through
+       unchanged.
+    3. In production, a response that already carries a ``Cache-Control`` header
+       keeps it. The upstream knows its own content and its own decision to
+       publish; a path-class default is not a reason to overrule it.
+    4. In production, only a response with no header is given the path class's
+       lifespan.
 
-    Rule 2 is safe only because the gate demotes a shared-cacheable header on
+    Rule 3 is safe only because the gate demotes a shared-cacheable header on
     every request it decided; see :func:`enforce_private_cache_control`.
     """
 
@@ -137,7 +142,18 @@ class CacheControlMiddleware(BaseHTTPMiddleware):
         if path.startswith(_NEVER_CACHE_PREFIXES):
             response.headers["Cache-Control"] = _PRIVATE_NO_STORE
             return response
+        if self.is_debug:
+            # `DEPLOYMENT_TYPE=debug` disables caching outright: nothing this
+            # service hands out may be stored, whatever the upstream asked for.
+            # Every lifespan below is a production behaviour. The control-plane
+            # branch above already returned, and a value that itself forbids
+            # storage is kept verbatim; anything else, including a deliberately
+            # `public` one, is replaced.
+            value = response.headers.get("Cache-Control")
+            if not value or not any(d in value for d in _VISITOR_SCOPED):
+                response.headers["Cache-Control"] = _NO_STORE
+            return response
         if "Cache-Control" in response.headers:
             return response
-        response.headers["Cache-Control"] = _NO_STORE if self.is_debug else _cache_control_for(path)
+        response.headers["Cache-Control"] = _cache_control_for(path)
         return response

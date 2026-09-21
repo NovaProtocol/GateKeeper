@@ -1,19 +1,25 @@
-"""Cache-Control precedence, and the safety net that makes it safe.
+"""Cache-Control precedence, gated by deployment type.
 
-The middleware in ``shared.middleware`` promises that a response which sets its
-own ``Cache-Control`` keeps it. It used to break that promise whenever the
-deployment ran in debug, and the gateway sat in front of every project, so a
-deliberately cacheable asset was pinned to ``no-store`` deployment-wide.
+Caching is a **production** behaviour. `DEPLOYMENT_TYPE=debug` means nothing
+this stack hands out may be stored, whatever the upstream asked for, so a
+deliberately `public` value is replaced with `no-store` there. A value that
+already forbids storage (`private`, `no-store`) is kept verbatim, so the gate's
+own verdicts survive unchanged.
 
-Keeping an upstream header is only correct because the gate keeps a
-shared-cacheable value off the paths it decided. These tests cover both halves:
+In production the precedence rule applies: a response that sets its own
+`Cache-Control` keeps it, and only a response carrying none is given the path
+class's lifespan. That is what lets a deliberately published asset stay
+cacheable. It is only safe because the gate keeps a shared-cacheable value off
+the paths it decided.
 
-* the middleware's precedence, in debug and in production, including the
-  control-plane paths that are always ``private, no-store``;
+These tests cover:
+
+* the middleware's precedence in both modes, including the control-plane paths
+  that are always ``private, no-store``;
 * :func:`enforce_private_cache_control`, which is what the gateway calls on a
   response it produced or on one whose request it decided;
-* through the real gateway app, that an ungated pass-through keeps a ``public``
-  header (the NovaProtocol badge case) while a gated one loses it.
+* through the real gateway app, that a gated path loses an upstream ``public``
+  header while an ungated one keeps it in production.
 """
 
 from __future__ import annotations
@@ -69,12 +75,34 @@ def build_app(
 
 
 @pytest.mark.parametrize("is_debug", [True, False])
-def test_a_route_that_sets_its_own_policy_keeps_it(is_debug: bool) -> None:
-    """The precedence fix, and the reason this whole change exists."""
+def test_a_route_that_sets_its_own_policy_keeps_it_only_in_production(is_debug: bool) -> None:
+    """Caching exists in production only.
+
+    In production the upstream's own header wins, which is the precedence fix.
+    In debug nothing may be stored, so even a deliberately `public` value is
+    replaced: `no-store` is the answer there.
+    """
     with TestClient(build_app(is_debug, {"Cache-Control": UPSTREAM_CACHE})) as client:
         response = client.get("/thing")
 
-    assert response.headers["Cache-Control"] == UPSTREAM_CACHE
+    expected = "no-store" if is_debug else UPSTREAM_CACHE
+    assert response.headers["Cache-Control"] == expected
+
+
+def test_debug_replaces_a_shared_cacheable_value() -> None:
+    """The point of the debug rule: nothing is cacheable while developing."""
+    with TestClient(build_app(True, {"Cache-Control": "public, max-age=86400"})) as client:
+        response = client.get("/thing")
+
+    assert response.headers["Cache-Control"] == "no-store"
+
+
+def test_debug_keeps_a_value_that_already_forbids_storage() -> None:
+    """`private, no-store` is already uncacheable, so it is left verbatim."""
+    with TestClient(build_app(True, {"Cache-Control": "private, no-store"})) as client:
+        response = client.get("/thing")
+
+    assert response.headers["Cache-Control"] == "private, no-store"
 
 
 @pytest.mark.parametrize("is_debug", [True, False])
@@ -261,13 +289,15 @@ def _get(client: Any, host: str, path: str) -> Any:
     )
 
 
-def test_an_ungated_path_keeps_the_upstream_public_header(
+def test_an_ungated_path_is_no_store_in_debug(
     gateway_client: Any, publishing_upstream: Any
 ) -> None:
-    """The NovaProtocol badge case: `action == "none"` must not demote.
+    """In debug nothing is cacheable, even a path the owner left ungated.
 
-    A rule the owner configured to gate nothing means the bytes are meant to be
-    published. Tightening this would break every embedded badge.
+    The rules put `/public/*` and `/*` as `none`, so the gate passes the request
+    through untouched. Debug still replaces the upstream `public` with
+    `no-store`, because caching is a production behaviour only. The `ETag` is a
+    validator rather than a cache directive, so it survives either way.
     """
     install_cache(
         [make_group(1, "github", HOST, [("/public/*", "none"), ("/*", "none")])],
@@ -277,7 +307,7 @@ def test_an_ungated_path_keeps_the_upstream_public_header(
     response = _get(gateway_client, HOST, "/public/name.svg")
 
     assert response.status_code == 200
-    assert response.headers["Cache-Control"] == UPSTREAM_CACHE
+    assert response.headers["Cache-Control"] == "no-store"
     assert response.headers["ETag"] == '"deadbeef"'
 
 
@@ -334,10 +364,10 @@ def test_a_gated_path_loses_the_header_on_the_streaming_branch_too(
     assert response.headers["Cache-Control"] == "private, no-store"
 
 
-def test_the_ungated_path_keeps_the_header_on_the_streaming_branch_too(
+def test_the_ungated_path_is_no_store_in_debug_on_the_streaming_branch_too(
     gateway_client: Any, large_publishing_upstream: Any
 ) -> None:
-    """The other half of the same branch: `none` must still not demote."""
+    """The other half of the same branch: debug is uncacheable on both paths."""
     install_cache(
         [make_group(1, "github", HOST, [("/public/*", "none"), ("/*", "none")])],
         [make_route(HOST, *large_publishing_upstream)],
@@ -346,7 +376,10 @@ def test_the_ungated_path_keeps_the_header_on_the_streaming_branch_too(
     response = _get(gateway_client, HOST, "/public/big.svg")
 
     assert response.status_code == 200
-    assert response.headers["Cache-Control"] == UPSTREAM_CACHE
+    assert len(response.content) > 2 * 1024 * 1024, (
+        "this took the buffered branch, so it proves nothing"
+    )
+    assert response.headers["Cache-Control"] == "no-store"
 
 
 def test_unauthenticated_redirect_is_never_public(
@@ -486,26 +519,37 @@ def test_a_custom_page_is_private_no_store(gateway_client: Any, publishing_upstr
     assert response.headers["Cache-Control"] == "private, no-store"
 
 
-def test_the_docs_copy_fills_a_gap_but_keeps_a_page_own_header() -> None:
-    """The documentation service is the authority for `/documentation/*`."""
+def test_the_docs_copy_follows_the_deployment_type() -> None:
+    """The documentation service is the authority for `/documentation/*`.
+
+    Production keeps a page's own header and fills a gap with the path class's
+    lifespan. Debug replaces anything shared-cacheable with `no-store`.
+    """
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "documentation"))
     try:
         import cache as docs_cache
 
-        app = FastAPI()
+        def build(is_debug: bool) -> FastAPI:
+            app = FastAPI()
 
-        @app.get("/")
-        async def _index() -> PlainTextResponse:
-            return PlainTextResponse("docs", headers={"Cache-Control": UPSTREAM_CACHE})
+            @app.get("/")
+            async def _index() -> PlainTextResponse:
+                return PlainTextResponse("docs", headers={"Cache-Control": UPSTREAM_CACHE})
 
-        @app.get("/plain")
-        async def _plain() -> PlainTextResponse:
-            return PlainTextResponse("docs")
+            @app.get("/plain")
+            async def _plain() -> PlainTextResponse:
+                return PlainTextResponse("docs")
 
-        app.add_middleware(docs_cache.CacheControlMiddleware, is_debug=True)  # type: ignore[arg-type]
+            app.add_middleware(docs_cache.CacheControlMiddleware, is_debug=is_debug)  # type: ignore[arg-type]
+            return app
 
-        with TestClient(app) as client:
+        with TestClient(build(False)) as client:
             assert client.get("/").headers["Cache-Control"] == UPSTREAM_CACHE
+            expected = docs_cache._cache_control_for("/")
+            assert client.get("/plain").headers["Cache-Control"] == expected
+
+        with TestClient(build(True)) as client:
+            assert client.get("/").headers["Cache-Control"] == "no-store"
             assert client.get("/plain").headers["Cache-Control"] == "no-store"
     finally:
         sys.path.pop(0)

@@ -30,10 +30,9 @@ the upstream stamped on it.
 | Docs service | `documentation/cache.py` | the same policy for the pages on this site, minus the gate rules, because this site is never the gate |
 | Management UI | `management/app.py` | uses `shared/middleware.py` like every other service |
 
-`CacheControlMiddleware` runs on every service on this stack and fills a
-`Cache-Control` only when the response does not already carry one. The
-`is_debug` flag from `DEPLOYMENT_TYPE` chooses the value it fills with, not
-whether it overwrites.
+`CacheControlMiddleware` runs on every service on this stack. Caching is a
+**production** behaviour: the `is_debug` flag from `DEPLOYMENT_TYPE` decides
+whether anything is cached at all, not merely which lifespan is filled in.
 
 ## Precedence, in order
 
@@ -44,15 +43,22 @@ whole mechanism:
    and `/api/authz/` get `private, no-store` in both modes, whatever the
    upstream sent. A cached verdict is the one mistake that would break the gate
    itself, so this branch is checked first and it does not consult the flag.
-2. **An existing header is kept.** If the response already carries
+2. **Debug caches nothing.** With `DEPLOYMENT_TYPE=debug` the response is
+   replaced with `no-store`, whatever the upstream asked for, so a deliberately
+   `public` value does not survive into a development deployment. A value that
+   already forbids storage (`private`, `no-store`) is kept verbatim rather than
+   rewritten, so the gate's own verdicts come through unchanged.
+3. **Production keeps an existing header.** If the response already carries
    `Cache-Control`, it is left exactly as it is. The upstream knows its own
-   content and its own decision to publish; a deployment-type default is not a
-   reason to overrule it.
-3. **A gap is filled.** Only when nothing is present does the middleware write a
-   value: `no-store` in debug, the path class's lifespan otherwise.
+   content and its own decision to publish.
+4. **Production fills a gap.** Only when nothing is present does the middleware
+   write the path class's lifespan.
 
-Step 2 is safe only because of the safety net below. On its own, "keep whatever
+Step 3 is safe only because of the safety net below. On its own, "keep whatever
 the upstream sent" would let a gated upstream publish a `public` page.
+
+The path classes below are therefore production values. In debug every one of
+them is overridden to `no-store`.
 
 ## Path classes
 
