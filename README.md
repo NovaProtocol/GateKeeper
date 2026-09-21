@@ -61,3 +61,8 @@ Full documentation is served by the stack at `/documentation/`, and the sources 
 
 It covers the rule model and how a request is resolved, the session and cookie contract, the audit
 and retention behaviour, and the management panel page by page.
+
+
+## License
+
+BSD 3-Clause. See [LICENSE](LICENSE).
