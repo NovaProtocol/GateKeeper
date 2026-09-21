@@ -124,6 +124,51 @@ The docs service is the authority for that prefix. Its `documentation/cache.py`
 carries the same precedence rule and the same static and health lifespans, so the
 two agree on what a page may carry, and only the docs service applies them.
 
+## Origin policy and edge lifetime
+
+Everything above is decided at the origin. A shared cache stands between this
+stack and a browser, and it is free to substitute its own lifetime for any
+response it is allowed to store. The two layers therefore own different things:
+
+- the **origin owns the validator and the policy**, meaning the middleware's
+  choice of value and the `ETag` that says whether a stored copy is still good;
+- the **edge owns the client-facing lifetime**, meaning the `max-age` a browser
+  is actually given, which is the edge's number and not necessarily the one this
+  stack emitted.
+
+Measured on the running stack, from inside `gatekeeper_caddy` on `:7000`:
+
+| Request | Origin `Cache-Control` | Origin `ETag` | At the edge |
+|---------|------------------------|---------------|-------------|
+| `github.projectnova.download/public/name.svg` (gate resolved `none`) | `public, max-age=300` | the app's strong validator, passed through unchanged | re-emitted as `public, max-age=14400`, `cf-cache-status: HIT` with `age` counting up from zero |
+| `gatekeeper.projectnova.download/documentation/caching/` | `private, max-age=300` | the docs service's own | unchanged, `cf-cache-status: DYNAMIC` |
+| `gatekeeper.projectnova.download/` | `no-store` | none | unchanged, `cf-cache-status: DYNAMIC` |
+
+The rows say the same thing twice. A response this stack marks `private` or
+`no-store` is never stored, so the edge has nothing to re-emit and the value a
+client sees is exactly the one the middleware chose. A response this stack marks
+`public` **is** stored, and from then on the edge answers for it: it hands the
+client its own `max-age`, and it does so without consulting this stack at all
+while its copy is fresh. The origin's validator survives that hop untouched,
+which is what lets the edge revalidate instead of serving a stale copy forever.
+
+Two consequences worth stating plainly, because both mislead a reader who
+assumes a header travels unchanged:
+
+- **Editing a constant here does not retune an asset clients already have.** For
+  anything shared-cacheable, the client-visible lifetime is set at the edge. The
+  constants on this page govern what this stack is *willing* to have stored, and
+  what a client is told when nothing stores the response.
+- **The `ETag` is what bounds staleness in practice.** When the edge's copy
+  expires it forwards `If-None-Match`; a `304` means the stored copy is reused,
+  a `200` with a new `ETag` means it is replaced. The edge's window bounds how
+  long a stale copy may be *reused*, not how long a change takes to appear once
+  something asks.
+
+`max-age` is a permission, not a promise. The client-facing number is whichever
+cache stored the response, so a value on this page is the origin half of the
+answer and never the whole of it.
+
 ## Verifying a change
 
 Read the header on the running stack rather than trusting the middleware:
