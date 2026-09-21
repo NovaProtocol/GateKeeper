@@ -7,7 +7,16 @@
 		respond `{"status":"ok"}` 200
 	}
 
-	handle /documentation/* {
+	# GateKeeper's own docs only. A bare `handle /documentation/*` matches the
+	# path on every host, so it intercepted the prefix for each project and served
+	# this service's docs instead of the project's own. The project caddies each
+	# have their own `/documentation/*` handler; this must stay out of their way
+	# and let the catch-all proxy the request through the gate to them.
+	@gatekeeper_docs {
+		host gatekeeper.projectnova.download projectnova.download gatekeeper localhost
+		path /documentation/*
+	}
+	handle @gatekeeper_docs {
 		# route keeps literal order: a bare `uri strip_prefix` sibling would be
 		# sorted ahead of forward_auth and blind the gate to the prefix
 		route {

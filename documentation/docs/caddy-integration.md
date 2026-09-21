@@ -7,13 +7,18 @@
 ```caddy
 :7000 {
  handle /health { respond `{"status":"ok"}` 200 }
- handle /documentation/* {
- route {
- forward_auth gatekeeper_auth:8001 {
+
+ @gatekeeper_docs {
+  host gatekeeper.projectnova.download projectnova.download gatekeeper localhost
+  path /documentation/*
+ }
+ handle @gatekeeper_docs {
+  route {
+   forward_auth gatekeeper_auth:8001 {
                 uri /api/authz/forward-auth
             }
- uri strip_prefix /documentation
- reverse_proxy gatekeeper_documentation:8005
+   uri strip_prefix /documentation
+   reverse_proxy gatekeeper_documentation:8005
         }
     }
  handle { reverse_proxy gatekeeper_auth:8001 }
@@ -22,9 +27,17 @@
 
 Live `GateKeeper/caddy/Caddyfile` is exactly that, 3 handles only (no `phpmyadmin`). `gatekeeper_auth:8001` looks up `Route` (longest `path` for `host`), then `RuleGroup`/`Rule` dispatch (cache `CACHE_TTL=5s` via `api:8002` on `net-api`), then proxies or redirects. Gated apps join the GateKeeper-owned `gatekeeper` network (join = permission to receive traffic) and need no `cloudflared-tunnel` of their own. All DB work (`shared/db.py`) is `api:8002` only (`net-data`).
 
+### Why the docs handler is host-scoped
+
+Each project caddy serves its **own** docs at `/documentation/*`. The gateway is a wildcard ingress for every host, so its docs handler must not claim that prefix on a host it does not own.
+
+Written as a bare `handle /documentation/*` the matcher applies to every hostname and runs before the catch-all, so it won the prefix everywhere and answered with **GateKeeper's** docs. `github.projectnova.download/documentation/` returned `GateKeeper · Documentation`, not `NovaProtocol · Documentation`, and the project's own docs became unreachable. The `@gatekeeper_docs` matcher confines the handler to GateKeeper's own hosts (`gatekeeper.<apex>`, the apex, and the in-network `gatekeeper` / `localhost` aliases), and every other host falls through to the catch-all, which proxies through the gate to the project caddy that owns the prefix.
+
+`tests/test_caddy_routing.py` pins this: a bare `handle /documentation/*`, or a matcher missing any of the four hosts, fails the suite.
+
 ### Why `handle` + `route`, not `handle_path`
 
-`handle_path` prepends a `strip_prefix` rewrite to the front of its subroute, so it runs **before** `forward_auth` and the gate only ever sees the prefix-stripped path, a `/documentation/*` rule could never match, and the stripped paths (`/`, `/assets/*`) are indistinguishable from management UI traffic on the same host. `handle` preserves the prefix for the auth check; the `route` block then strips it only on the way upstream, so the docs app keeps receiving the prefix-less path it serves.
+`handle_path` prepends a `strip_prefix` rewrite to the front of its subroute, so it runs **before** `forward_auth` and the gate only ever sees the prefix-stripped path, a `/documentation/*` rule could never match, and the stripped paths (`/`, `/assets/*`) are indistinguishable from management UI traffic on the same host. `handle` preserves the prefix for the auth check; the `route` block then strips it only on the way upstream, so the docs app keeps receiving the prefix-less path it serves. Namespace the matcher (`handle @name`) rather than matching the path directly, see above.
 
 The `route` block is load-bearing, not decoration: written as bare siblings, Caddy sorts `uri` **before** `forward_auth` in its default directive order and the strip would happen first again. `route` keeps the directives in literal written order.
 
