@@ -23,6 +23,10 @@ _MISC_MAX_AGE = 3600
 # Debug value: forbids any cache from storing the response at all.
 _NO_STORE = "no-store"
 
+# Directives that already forbid a shared cache from storing the response.
+# Debug keeps such a value rather than rewriting it.
+_VISITOR_SCOPED = ("private", "no-store")
+
 _STATIC_PREFIX = "/static/"
 _API_PREFIXES = ("/api/",)
 _MISC_PATHS = frozenset({"/health", "/api/health"})
@@ -48,21 +52,22 @@ def is_debug_deployment() -> bool:
 
 
 class CacheControlMiddleware(BaseHTTPMiddleware):
-    """Set Cache-Control per deployment type, without overriding a page's own.
+    """Set Cache-Control per deployment type.
 
-    Order: a response that already carries a ``Cache-Control`` header keeps it,
-    and only when none is present is the value filled in, ``no-store`` in debug
-    and the path class's lifespan otherwise. A docs page that sets its own
-    policy knows what it is publishing; a deployment-type default is not a
-    reason to overrule it.
+    Caching is a production behaviour. With ``is_debug`` set, anything
+    shared-cacheable is replaced with ``no-store``, so a deliberately ``public``
+    value never survives into a development deployment; a value that already
+    forbids storage is kept verbatim. In production a response that already
+    carries a ``Cache-Control`` header keeps it, and only a response with none is
+    given the path class's lifespan.
 
-    This service is the authority for ``/documentation/*``. The gateway's Caddy
-    handles that prefix by calling ``forward_auth`` and then proxying straight
-    here, so the gateway's ``CacheControlMiddleware`` never sees the response.
-    The two must therefore agree on the policy, and the lifespans are the same
-    for that reason. The one deliberate difference is ``_HTML_MAX_AGE``: gated
-    pages are per-visitor and short-lived, while these pages are built once and
-    change on deploy.
+    This service owns ``/documentation/*`` on the gateway's own hosts. The
+    gateway's Caddy handles that prefix there by calling ``forward_auth`` and
+    then proxying straight here, so the gateway's ``CacheControlMiddleware``
+    never sees the response. The two must therefore agree on the policy, and the
+    lifespans are the same for that reason. The one deliberate difference is
+    ``_HTML_MAX_AGE``: gated pages are per-visitor and short-lived, while these
+    pages are built once and change on deploy.
     """
 
     def __init__(self, app, is_debug: bool) -> None:
@@ -71,9 +76,16 @@ class CacheControlMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         response = await call_next(request)
+        if self.is_debug:
+            # `DEPLOYMENT_TYPE=debug` disables caching outright: nothing this
+            # service hands out may be stored, whatever the upstream asked for.
+            # Every lifespan below is a production behaviour. A value that
+            # already forbids storage is kept verbatim.
+            value = response.headers.get("Cache-Control")
+            if not value or not any(d in value for d in _VISITOR_SCOPED):
+                response.headers["Cache-Control"] = _NO_STORE
+            return response
         if "Cache-Control" in response.headers:
             return response
-        response.headers["Cache-Control"] = (
-            _NO_STORE if self.is_debug else _cache_control_for(request.url.path)
-        )
+        response.headers["Cache-Control"] = _cache_control_for(request.url.path)
         return response
