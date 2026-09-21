@@ -115,14 +115,21 @@ is public. The gate is not making a decision there, it is passing one along.
 
 ## `/documentation/*` and who is authoritative
 
-The gateway's `Caddyfile` handles `/documentation/*` by calling `forward_auth`
-and then proxying straight to `gatekeeper_documentation:8005` inside a `route`
-block. The proxied response therefore never passes through `auth-gateway`'s
+The gateway's `Caddyfile` handles `/documentation/*` for **its own hosts only**
+(`gatekeeper.<apex>`, the apex, and the in-network aliases) by calling `forward_auth`
+and then proxying straight to `gatekeeper_documentation:8005` inside a `route` block.
+The proxied response therefore never passes through `auth-gateway`'s
 `_proxy_to_upstream`, and `auth-gateway`'s middleware never sees it.
 
-The docs service is the authority for that prefix. Its `documentation/cache.py`
-carries the same precedence rule and the same static and health lifespans, so the
-two agree on what a page may carry, and only the docs service applies them.
+On every other host the prefix belongs to that project. The gateway's matcher does
+not apply, so the request falls through to the catch-all and is proxied through the
+gate to the project caddy, which serves its own docs. See
+[Caddy Integration](caddy-integration.md) for why a bare `handle` was wrong here.
+
+The docs service is the authority for the prefix wherever it owns it. Its
+`documentation/cache.py` carries the same precedence rule and the same static and
+health lifespans, so the two agree on what a page may carry, and only the docs
+service applies them.
 
 ## Origin policy and edge lifetime
 
