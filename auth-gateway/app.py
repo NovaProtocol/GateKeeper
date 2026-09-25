@@ -1156,8 +1156,17 @@ def create_app() -> FastAPI:
         code_id: int | None = None
         need_custom_cookie = False
         custom_cookie_rule: Rule | None = None
+        # Whether this request has already been audited. Most outcomes audit
+        # before returning, but a request that reaches the application audits
+        # after the response comes back — so without knowing this, the paths that
+        # audit on the way past (a valid cookie, a successful code) would get a
+        # second row for the same request when the proxy row is added. One
+        # request writes exactly one row.
+        audited = False
 
         async def _log(action: str, code_id: int | None = None, status_code: int | None = None, attempted_code: str | None = None) -> None:
+            nonlocal audited
+            audited = True
             lat = int((time.monotonic() - t0) * 1000)
             _queue_audit(
                 background_tasks,
@@ -1381,6 +1390,15 @@ def create_app() -> FastAPI:
         resp_headers = {k: v for k, v in rp.headers.items() if k.lower() not in hop_by_hop}
         if "content-encoding" in resp_headers:
             resp_headers.pop("content-encoding", None)
+
+        # The request reached the application, so it gets a row like every other
+        # outcome — and only if nothing above already wrote one. Without this the
+        # *successful* case was the one case the gate did not record: refusals,
+        # redirects, custom pages and "route not found" all audit before
+        # returning, and a proxied 200 audited nothing. That is how a host served
+        # entirely through here appeared in the log only for its failures.
+        if not audited:
+            await _log("proxy", status_code=rp.status_code)
 
         async def _stream():  # type: ignore[no-untyped-def]
             async for chunk in rp.aiter_bytes():
