@@ -521,3 +521,98 @@ def test_an_unreadable_page_list_serves_nothing(gateway_client: Any, upstream: A
     response = get(gateway_client, HOST, "/robots.txt")
 
     assert response.content != BODY.encode("utf-8")
+
+
+# --------------------------------------------------------------------------- #
+# The proxied case is audited too
+# --------------------------------------------------------------------------- #
+
+
+def test_a_proxied_request_writes_an_audit_row(
+    gateway_client: Any, upstream: Any, monkeypatch: Any
+) -> None:
+    """The request that *succeeds* is still a request, and still gets a row.
+
+    Every other outcome audits before it returns — a refusal, a redirect, a
+    custom page, "route not found" — so the one path that returned the
+    application's own response was the one path that recorded nothing. A host
+    served entirely through the gate therefore appeared in the audit trail only
+    for the requests that failed, which is the opposite of a trail.
+    """
+    module = gateway_module()
+    rows: list[dict[str, Any]] = []
+
+    async def _capture(**kw: Any) -> None:
+        rows.append(kw)
+
+    monkeypatch.setattr(module, "_audit_log_async", _capture)
+    install_cache(
+        [make_group(1, "portfolio", HOST, [("/*", "none")])],
+        [make_route(HOST, *upstream)],
+        [],
+    )
+
+    response = get(gateway_client, HOST, "/")
+
+    assert response.status_code == 200
+    assert response.content == b"upstream-ok"
+    proxied = [r for r in rows if r.get("action") == "proxy"]
+    assert len(proxied) == 1, rows
+    assert proxied[0]["status_code"] == 200
+    assert proxied[0]["host"] == HOST
+    assert proxied[0]["path"] == "/"
+    # The policy that allowed it, so a `none` rule reads differently from the
+    # unmatched fallback.
+    assert proxied[0]["matched_action"] == "none"
+
+
+def test_a_proxied_request_is_audited_exactly_once(
+    gateway_client: Any, upstream: Any, monkeypatch: Any
+) -> None:
+    """One request, one row — including the paths that audit on the way past.
+
+    A validated cookie writes its own row before the request is proxied. Adding
+    the proxy row without knowing that would give the same request two rows, and
+    a trail that counts one visit twice is worse than one that misses it.
+    """
+    module = gateway_module()
+    rows: list[dict[str, Any]] = []
+
+    async def _capture(**kw: Any) -> None:
+        rows.append(kw)
+
+    monkeypatch.setattr(module, "_audit_log_async", _capture)
+    install_cache(
+        [make_group(1, "portfolio", HOST, [("/*", "access_code")])],
+        [make_route(HOST, *upstream)],
+        [],
+    )
+
+    # The gate refuses a cookie-less request to an access_code rule, so it
+    # redirects rather than proxying — that path already audits once, and the
+    # proxy row must not be added on top of it.
+    get(gateway_client, HOST, "/")
+    assert len(rows) == 1, rows
+
+
+def test_a_proxied_request_the_upstream_rejects_still_records_its_status(
+    gateway_client: Any, upstream: Any, monkeypatch: Any
+) -> None:
+    """The row carries the application's status, not an assumed 200."""
+    module = gateway_module()
+    rows: list[dict[str, Any]] = []
+
+    async def _capture(**kw: Any) -> None:
+        rows.append(kw)
+
+    monkeypatch.setattr(module, "_audit_log_async", _capture)
+    install_cache(
+        [make_group(1, "portfolio", HOST, [("/*", "none")])],
+        [make_route(HOST, *upstream)],
+        [],
+    )
+
+    get(gateway_client, HOST, "/anything")
+
+    proxied = [r for r in rows if r.get("action") == "proxy"]
+    assert proxied and proxied[0]["status_code"] == 200
