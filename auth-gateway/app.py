@@ -1335,7 +1335,24 @@ def create_app() -> FastAPI:
 
         client = _get_httpx()
         try:
-            rp = await client.request(request.method, upstream_url, headers=headers, content=body, follow_redirects=False)
+            # `send(..., stream=True)`, not `request(...)`.
+            #
+            # `client.request()` reads the entire response body before it returns.
+            # For a normal page that is fine. For a **stream** — a
+            # `text/event-stream` that stays open and pushes a frame per tick — the
+            # body never ends, so the call never returns, and the gateway holds the
+            # request open until its 30s timeout while the browser waits for a first
+            # byte that is already sitting in the socket. The dashboard's live
+            # telemetry is exactly that, so every page behind the gate loaded its
+            # shell and then sat on "waiting…" forever while the origin served the
+            # same stream in 5ms.
+            #
+            # Streaming the send means the response object comes back as soon as the
+            # headers arrive, and `aiter_bytes` below drains it incrementally.
+            upstream_request = client.build_request(
+                request.method, upstream_url, headers=headers, content=body
+            )
+            rp = await client.send(upstream_request, stream=True, follow_redirects=False)
         except httpx.ConnectError as e:
             # The upstream container is not answering. A browser gets the themed
             # page every other gateway error uses; an API caller still gets JSON.
@@ -1400,12 +1417,17 @@ def create_app() -> FastAPI:
         if not audited:
             await _log("proxy", status_code=rp.status_code)
 
-        async def _stream():  # type: ignore[no-untyped-def]
-            async for chunk in rp.aiter_bytes():
-                yield chunk
+        # Buffered when the upstream declared a small finite body, streamed
+        # otherwise. A response with no `content-length` is either a stream or a
+        # chunked body of unknown size; both are handled by the streaming branch,
+        # which is the safe default now that the response is never pre-read.
+        declared = rp.headers.get("content-length")
+        small_known_body = declared is not None and int(declared or 0) < 1024 * 1024 * 2
 
-        if rp.headers.get("content-length") and int(rp.headers.get("content-length", "0")) < 1024 * 1024 * 2:
-            content = rp.content
+        if small_known_body:
+            # `stream=True` means the body has not been read yet, so it is read
+            # here — before the response object is closed.
+            content = await rp.aread()
             await rp.aclose()
             resp = Response(content=content, status_code=rp.status_code, headers=resp_headers)
             if need_custom_cookie and custom_cookie_rule:
@@ -1417,6 +1439,11 @@ def create_app() -> FastAPI:
                 # bytes from the URL alone.
                 enforce_private_cache_control(resp)
             return resp
+
+        async def _stream():  # type: ignore[no-untyped-def]
+            async for chunk in rp.aiter_bytes():
+                yield chunk
+
         resp2 = StreamingResponse(_stream(), status_code=rp.status_code, headers=resp_headers, background=BackgroundTaskWrapper(rp))
         if need_custom_cookie and custom_cookie_rule:
             _set_custom_cookie(resp2, custom_cookie_rule.id, apex, await _setting_int(SESSION_LIFETIME_HOURS))

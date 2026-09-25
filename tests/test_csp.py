@@ -135,6 +135,32 @@ class _RoutedClient:
     async def post(self, url: str, **kwargs: Any) -> Any:
         return await self.request("POST", url, **kwargs)
 
+    # The gateway proxies with `build_request` + `send(stream=True)` so that a
+    # response whose body never ends — a text/event-stream — is not read to
+    # completion before it is handed on. `httpx.AsyncClient` implements both, so
+    # this stub has to as well or the proxy path cannot be driven from a test.
+    def build_request(self, method: str, url: str, **kwargs: Any) -> Any:
+        self.hits.append(url)
+        if API_HOST in url:
+            return _StubRequest(url)
+        return self._upstream.build_request(method, url, **kwargs)
+
+    async def send(self, request: Any, **kwargs: Any) -> Any:
+        if isinstance(request, _StubRequest):
+            return _StubResponse(200, {})
+        # `follow_redirects` is not accepted by `send` in every httpx version;
+        # the gateway does not rely on it there.
+        kwargs.pop("follow_redirects", None)
+        return await self._upstream.send(request, **kwargs)
+
+
+class _StubRequest:
+    """The barest thing `send` needs: enough to recognise and answer a stub."""
+
+    def __init__(self, url: str) -> None:
+        self.url = url
+        self.method = "GET"
+
 
 @pytest.fixture(scope="module")
 def manage_upstream() -> Any:
@@ -376,3 +402,101 @@ def test_the_proxy_does_not_drop_the_other_security_headers(
 
     assert response.headers["x-content-type-options"] == "nosniff"
     assert response.headers["referrer-policy"] == "strict-origin-when-cross-origin"
+
+
+# --------------------------------------------------------------------------- #
+# A response whose body never ends must not be buffered
+# --------------------------------------------------------------------------- #
+
+
+def test_the_proxy_streams_a_response_with_no_declared_length(
+    gateway_client: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The gateway must not read a stream to completion before answering.
+
+    `httpx.AsyncClient.request()` reads the whole body before it returns. For a
+    normal page that is fine; for a `text/event-stream` that stays open and
+    pushes a frame per tick, the body never ends, so the call never returns and
+    the browser waits for a first byte that is already sitting in the socket.
+
+    That is not hypothetical: the dashboard behind this gateway serves its live
+    telemetry exactly that way, so every page behind the gate loaded its shell and
+    then sat on "waiting…" forever while the origin answered in 5ms. This pins the
+    proxy to the streaming API so it cannot quietly regress.
+    """
+    module = gateway_module()
+    seen: list[str] = []
+
+    class _StreamingUpstream(httpx.AsyncClient):
+        async def send(self, request: Any, **kwargs: Any) -> Any:
+            seen.append("send")
+
+            # A response with **no `content-length`** and a body delivered in
+            # pieces, which is what a stream looks like from the proxy's side. The
+            # body is finite so the test terminates; the point is that the header
+            # is absent, which is what sends the proxy down the streaming branch.
+            class _Chunked(httpx.AsyncByteStream):
+                def __init__(self) -> None:
+                    self._chunks = [b"data: tick\n\n", b"data: tick\n\n", b""]
+
+                async def __aiter__(self):  # type: ignore[override]
+                    for chunk in self._chunks:
+                        yield chunk
+
+                async def aclose(self) -> None:
+                    return None
+
+            return httpx.Response(
+                200,
+                headers={"content-type": "text/event-stream"},
+                stream=_Chunked(),
+            )
+
+        async def request(self, *a: Any, **k: Any) -> Any:  # pragma: no cover
+            seen.append("request")
+            raise AssertionError(
+                "the proxy used request(), which buffers a body before returning"
+            )
+
+    upstream = _StreamingUpstream(transport=httpx.ASGITransport(app=management_app.app))
+
+    class _Client:
+        """Only the streaming API, so a buffered call cannot succeed."""
+
+        def __init__(self, inner: Any) -> None:
+            self._inner = inner
+
+        def build_request(self, method: str, url: str, **kwargs: Any) -> Any:
+            if API_HOST in url:
+                return _StubRequest(url)
+            return self._inner.build_request(method, url, **kwargs)
+
+        async def send(self, request: Any, **kwargs: Any) -> Any:
+            if isinstance(request, _StubRequest):
+                return _StubResponse(200, {})
+            kwargs.pop("follow_redirects", None)
+            return await self._inner.send(request, **kwargs)
+
+    monkeypatch.setattr(module, "_get_httpx", lambda: _Client(upstream))
+
+    # Install a route to the management host; the fixture does the rest.
+    from shared.models import Route, Rule, RuleGroup
+
+    group = RuleGroup(name="gk", domain=MANAGE_HOST, display_order=0)
+    group.id = 91
+    rule = Rule(group_id=91, path="/*", action="none", display_order=0)
+    rule.id = 910
+    group.rules.append(rule)
+    route = Route(host=MANAGE_HOST, path="/", route_type="proxy",
+                  upstream="gatekeeper_management", port=8003)
+    route.id = 91
+    module._CacheGroups = [group]
+    module._CacheRules = None
+    module._CacheRoutes = [route]
+    module._CachePages = []
+    module._CacheTs = __import__("time").time()
+
+    response = through_gateway(gateway_client, "/manage/audit")
+
+    assert response.status_code == 200
+    assert "send" in seen, "the proxy did not use the streaming API"
