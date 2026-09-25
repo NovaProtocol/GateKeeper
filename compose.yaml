@@ -27,6 +27,26 @@ services:
     restart: unless-stopped
     expose:
       - "8001"
+    # Docker inherits the host's search domains, and the host's resolver is
+    # systemd-resolved with Tailscale MagicDNS in front of it. That combination
+    # leaves `ndots:0` (inherited from the host's resolv.conf), which makes glibc
+    # treat a bare name as **absolute and try it first**.
+    #
+    # `main-server` is not a public name. The absolute query `main-server.` goes
+    # out, sits until the resolver's timeout, and comes back NXDOMAIN — then glibc
+    # tries the search domain and answers instantly. Measured: 3.9-4.0s per
+    # lookup, every time, on every route proxied to another machine.
+    #
+    # `ndots:1` puts the search domain first, so the name that actually exists is
+    # the name that is asked for. Verified on this host: 4.0s -> 0.000s, with
+    # Docker-internal names still resolving immediately (they are answered by
+    # Docker's own resolver before the search list is consulted).
+    #
+    # It only shows on a *new* connection: httpx pools sockets, so only the first
+    # request after the pool empties carries the lookup. That is why the symptom
+    # was one slow page load and then a fast one.
+    dns_opt:
+      - ndots:1
     environment:
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
       MANAGE_PASSWORD: ${MANAGE_PASSWORD:?MANAGE_PASSWORD is required}

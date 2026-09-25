@@ -96,9 +96,32 @@ _httpx_client: httpx.AsyncClient | None = None
 
 
 def _get_httpx() -> httpx.AsyncClient:
+    """The outbound client, shared for the process.
+
+    `keepalive_expiry` is raised from httpx's 5-second default, and that matters
+    for the same reason the proxy's DNS settings do: the whole per-request cost of
+    reaching another machine is the **connection setup**, not the request. A
+    socket that is still in the pool skips name resolution and TCP entirely
+    (measured: 0.002s against 3.85s cold), so letting the pool empty after five
+    seconds of quiet means a visitor who pauses to read a page pays the setup
+    again on their next click.
+
+    Five minutes covers that pause without holding a connection open for a host
+    that has gone away: `pool_pre_ping`-style validation is not available here, but
+    a dead pooled socket is retried by httpx on connect, and the failure mode is a
+    single slow request rather than an error.
+    """
     global _httpx_client
     if _httpx_client is None:
-        _httpx_client = httpx.AsyncClient(follow_redirects=False, timeout=httpx.Timeout(30.0))
+        _httpx_client = httpx.AsyncClient(
+            follow_redirects=False,
+            timeout=httpx.Timeout(30.0),
+            limits=httpx.Limits(
+                max_connections=64,
+                max_keepalive_connections=32,
+                keepalive_expiry=300.0,
+            ),
+        )
     return _httpx_client
 
 
