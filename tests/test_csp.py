@@ -270,7 +270,10 @@ def test_the_policy_still_carries_every_host_the_two_services_load() -> None:
         assert host in parsed["script-src"], host
     for host in ("https://fonts.googleapis.com", "https://cdnjs.cloudflare.com"):
         assert host in parsed["style-src"], host
-    assert parsed["font-src"] == "'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com"
+    assert parsed["font-src"] == (
+        "'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com "
+        "https://cdn.projectnova.download"
+    )
     assert parsed["frame-src"] == (
         "'self' https://*.projectnova.download https://portfolio.projectnova.download"
     )

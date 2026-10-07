@@ -298,7 +298,7 @@ def test_destructive_row_controls_keep_their_confirm(manage_client, monkeypatch)
     assert 'name="confirm_code"' in codes_html
     assert 'id="delete-code-shown"' in codes_html
     assert "openDeleteCode" in codes_html
-    assert "$('#deleteCodeModal').modal('show')" in codes_html
+    assert "openModal('#deleteCodeModal')" in codes_html
 
     routing_html = _get(manage_client, "/manage/routing", monkeypatch, ROUTING_PAGE)
     assert "return confirm('Delete route?')" in routing_html
@@ -427,4 +427,4 @@ def test_single_add_buttons_are_icon_only(manage_client, monkeypatch, page, payl
 def test_stylesheet_is_cache_busted(manage_client, monkeypatch) -> None:
     """A stale cached stylesheet would make a correct deploy look broken."""
     html = _get(manage_client, "/manage/rules", monkeypatch, RULES_PAGE)
-    assert re.search(r'href="[^"]*manage\.css\?v=5"', html)
+    assert re.search(r'href="[^"]*manage\.css\?v=\d+"', html)

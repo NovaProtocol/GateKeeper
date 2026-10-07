@@ -14,7 +14,7 @@
 {% block content %}
 <div class="container">
   <div class="card">
-    <div class="card-header" style="display:flex;justify-content:space-between;align-items:center"><h2>{% if group %}{{ group.name }} · {{ group.domain }}{% else %}Rules #{{ gid }}{% endif %}</h2><div style="display:flex;gap:.5rem"><button class="btn btn-accent icon-btn" data-bs-toggle="modal" data-bs-target="#addRuleModal" title="Add Rule" aria-label="Add Rule"><i class="fa-solid fa-plus" aria-hidden="true"></i></button><a href="/manage/rules" class="btn icon-btn" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary)" title="Back to rule groups" aria-label="Back to rule groups"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i></a></div></div>
+    <div class="card-header" style="display:flex;justify-content:space-between;align-items:center"><h2>{% if group %}{{ group.name }} · {{ group.domain }}{% else %}Rules #{{ gid }}{% endif %}</h2><div style="display:flex;gap:.5rem"><button class="btn btn-accent icon-btn" data-modal-open="#addRuleModal" title="Add Rule" aria-label="Add Rule"><i class="fa-solid fa-plus" aria-hidden="true"></i></button><a href="/manage/rules" class="btn icon-btn" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary)" title="Back to rule groups" aria-label="Back to rule groups"><i class="fa-solid fa-arrow-left" aria-hidden="true"></i></a></div></div>
     <div class="card-body" style="padding:0">
       <div class="table-scroll" tabindex="0" role="region" aria-label="Rules in this group">
       <table class="codes-table">
@@ -93,29 +93,29 @@
   </p>
 </div>
 
-<div class="modal fade" id="addRuleModal" tabindex="-1"><div class="modal-dialog"><div class="modal-content" style="background:var(--bg-card);border:1px solid var(--border);color:var(--text-primary)">
-  <div class="modal-header" style="border-color:var(--border)"><h5 class="modal-title" style="font-weight:700">Add Rule to {{ group.name if group else gid }}</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" style="color:var(--text-primary)"></button></div>
+<div class="ui-modal" id="addRuleModal" tabindex="-1"><div class="ui-modal__dialog"><div class="ui-modal__content" style="background:var(--bg-card);border:1px solid var(--border);color:var(--text-primary)">
+  <div class="ui-modal__header" style="border-color:var(--border)"><h5 class="ui-modal__title" style="font-weight:700">Add Rule to {{ group.name if group else gid }}</h5><button type="button" class="ui-modal__close" data-modal-close style="color:var(--text-primary)"></button></div>
   <form method="post" action="/manage/groups/{{ gid }}/rules">
-    <div class="modal-body">
+    <div class="ui-modal__body">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <div class="form-group"><label>Path</label><input name="path" id="rule-path" placeholder="/ or /api/* or /projects/*" required class="input" style="width:100%"><small style="color:var(--text-secondary)"><code>/*</code> is reserved: every group already has a catch-all carrying it.</small></div>
       <div class="form-group"><label>Action</label><select name="action" id="rule-action" class="input" style="width:100%"><option value="access_code">access_code</option><option value="none">none (public)</option><option value="deny">deny (403)</option><option value="custom_password">custom_password</option></select></div>
       <div class="form-group" id="custom-pwd-group" style="display:none"><label>Custom Password</label><input name="custom_password" placeholder="password" class="input" style="width:100%"></div>
     </div>
-    <div class="modal-footer" style="border-color:var(--border)"><span id="add-test-result" class="test-result" role="status" aria-live="polite"></span><button type="button" class="btn icon-btn" onclick="testRuleDraft('add')" title="Test before saving" aria-label="Test before saving"><i class="fa-solid fa-plug" aria-hidden="true"></i></button><button type="button" class="btn icon-btn" data-bs-dismiss="modal" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary)" title="Cancel" aria-label="Cancel"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button><button type="submit" class="btn btn-accent icon-btn" title="Add Rule" aria-label="Add Rule"><i class="fa-solid fa-plus" aria-hidden="true"></i></button></div>
+    <div class="ui-modal__footer" style="border-color:var(--border)"><span id="add-test-result" class="test-result" role="status" aria-live="polite"></span><button type="button" class="btn icon-btn" onclick="testRuleDraft('add')" title="Test before saving" aria-label="Test before saving"><i class="fa-solid fa-plug" aria-hidden="true"></i></button><button type="button" class="btn icon-btn" data-modal-close style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary)" title="Cancel" aria-label="Cancel"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button><button type="submit" class="btn btn-accent icon-btn" title="Add Rule" aria-label="Add Rule"><i class="fa-solid fa-plus" aria-hidden="true"></i></button></div>
   </form>
 </div></div></div>
 
-<div class="modal fade" id="editRuleModal" tabindex="-1"><div class="modal-dialog"><div class="modal-content" style="background:var(--bg-card);border:1px solid var(--border);color:var(--text-primary)">
-  <div class="modal-header" style="border-color:var(--border)"><h5 class="modal-title" style="font-weight:700">Edit Rule</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" style="color:var(--text-primary)"></button></div>
+<div class="ui-modal" id="editRuleModal" tabindex="-1"><div class="ui-modal__dialog"><div class="ui-modal__content" style="background:var(--bg-card);border:1px solid var(--border);color:var(--text-primary)">
+  <div class="ui-modal__header" style="border-color:var(--border)"><h5 class="ui-modal__title" style="font-weight:700">Edit Rule</h5><button type="button" class="ui-modal__close" data-modal-close style="color:var(--text-primary)"></button></div>
   <form method="post" id="editRuleForm">
-    <div class="modal-body">
+    <div class="ui-modal__body">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <div class="form-group"><label>Path</label><input name="path" id="edit-rule-path" required class="input" style="width:100%"><small id="edit-rule-path-help" style="color:var(--text-secondary)"></small></div>
       <div class="form-group"><label>Action</label><select name="action" id="edit-rule-action" class="input" style="width:100%"><option value="access_code">access_code</option><option value="none">none (public)</option><option value="deny">deny (403)</option><option value="custom_password">custom_password</option></select></div>
       <div class="form-group" id="edit-custom-pwd-group" style="display:none"><label>Custom Password <span style="color:var(--text-secondary);font-weight:400">(leave blank to keep)</span></label><input name="custom_password" id="edit-rule-pwd" placeholder="new password" class="input" style="width:100%"></div>
     </div>
-    <div class="modal-footer" style="border-color:var(--border)"><span id="edit-test-result" class="test-result" role="status" aria-live="polite"></span><button type="button" class="btn icon-btn" onclick="testRuleDraft('edit')" title="Test before saving" aria-label="Test before saving"><i class="fa-solid fa-plug" aria-hidden="true"></i></button><button type="button" class="btn icon-btn" data-bs-dismiss="modal" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary)" title="Cancel" aria-label="Cancel"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button><button type="submit" class="btn btn-accent icon-btn" title="Save" aria-label="Save"><i class="fa-solid fa-floppy-disk" aria-hidden="true"></i></button></div>
+    <div class="ui-modal__footer" style="border-color:var(--border)"><span id="edit-test-result" class="test-result" role="status" aria-live="polite"></span><button type="button" class="btn icon-btn" onclick="testRuleDraft('edit')" title="Test before saving" aria-label="Test before saving"><i class="fa-solid fa-plug" aria-hidden="true"></i></button><button type="button" class="btn icon-btn" data-modal-close style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary)" title="Cancel" aria-label="Cancel"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button><button type="submit" class="btn btn-accent icon-btn" title="Save" aria-label="Save"><i class="fa-solid fa-floppy-disk" aria-hidden="true"></i></button></div>
   </form>
 </div></div></div>
 <script>
@@ -143,7 +143,7 @@ function openEditRule(id, path, action, isDefault){
   document.getElementById('edit-custom-pwd-group').style.display=action==='custom_password'?'':'none';
   document.getElementById('edit-rule-pwd').value='';
   document.getElementById('editRuleForm').action='/manage/rules/'+id+'/edit';
-  $('#editRuleModal').modal('show');
+  openModal('#editRuleModal');
 }
 
 /* The pre-save rule test. Asks the gate what it would do with the path as it is

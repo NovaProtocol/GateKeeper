@@ -54,8 +54,8 @@
           <button class="btn btn-accent icon-btn" type="submit" title="Re-plot with this measure" aria-label="Apply aggregation"><i class="fa-solid fa-rotate" aria-hidden="true"></i></button>
         </form>
         <a class="btn btn-ghost btn-sm" href="/manage/settings" title="Open the settings page to change the retention window" aria-label="Open the settings page to change the retention window"><i class="fa-solid fa-gear" aria-hidden="true"></i> Retention</a>
-        <button class="btn btn-ghost icon-btn" data-bs-toggle="modal" data-bs-target="#pruneLogsModal" title="Delete audit rows older than the retention window" aria-label="Prune old audit rows"><i class="fa-solid fa-broom" aria-hidden="true"></i></button>
-        <button class="btn btn-outline-danger icon-btn" data-bs-toggle="modal" data-bs-target="#clearLogsModal" title="Delete every audit row" aria-label="Clear all logs"><i class="fa-solid fa-trash" aria-hidden="true"></i></button>
+        <button class="btn btn-ghost icon-btn" data-modal-open="#pruneLogsModal" title="Delete audit rows older than the retention window" aria-label="Prune old audit rows"><i class="fa-solid fa-broom" aria-hidden="true"></i></button>
+        <button class="btn btn-outline-danger icon-btn" data-modal-open="#clearLogsModal" title="Delete every audit row" aria-label="Clear all logs"><i class="fa-solid fa-trash" aria-hidden="true"></i></button>
       </div>
     </div>
     <div class="card-body" style="padding:1.25rem">
@@ -130,16 +130,16 @@
   </div>
 </div>
 
-<div class="modal fade" id="pruneLogsModal" tabindex="-1" role="dialog" aria-hidden="true">
-  <div class="modal-dialog modal-dialog-centered" role="document">
-    <div class="modal-content" style="background:var(--bg-card);border:1px solid var(--border);border-radius:8px">
+<div class="ui-modal" id="pruneLogsModal" tabindex="-1" role="dialog" aria-hidden="true">
+  <div class="ui-modal__dialog" role="document">
+    <div class="ui-modal__content" style="background:var(--bg-card);border:1px solid var(--border);border-radius:8px">
       <form method="post" action="/manage/logs/prune">
         <input type="hidden" name="back" value="audit">
-        <div class="modal-header" style="border-bottom:1px solid var(--border)">
-          <h5 class="modal-title" style="color:var(--text-primary)">Prune old audit rows</h5>
-          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close" style="color:var(--text-secondary)"></button>
+        <div class="ui-modal__header" style="border-bottom:1px solid var(--border)">
+          <h5 class="ui-modal__title" style="color:var(--text-primary)">Prune old audit rows</h5>
+          <button type="button" class="ui-modal__close" data-modal-close title="Close" aria-label="Close" style="color:var(--text-secondary)"></button>
         </div>
-        <div class="modal-body">
+        <div class="ui-modal__body">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           <p style="color:var(--text-secondary);font-size:.9rem">
             Deletes audit rows older than the retention window set on the settings page, and
@@ -149,11 +149,11 @@
           <p style="font-size:.9rem">Type <code>{{ confirm_word }}</code> to confirm.</p>
           <div class="form-group">
             <label for="prune-confirm-audit" style="color:var(--text-secondary);font-size:.85rem">Confirmation</label>
-            <input type="text" name="confirm" class="form-control" id="prune-confirm-audit" autocomplete="off" placeholder="{{ confirm_word }}" title="Type {{ confirm_word }} to enable the button" aria-label="Prune confirmation word">
+            <input type="text" name="confirm" class="ui-input" id="prune-confirm-audit" autocomplete="off" placeholder="{{ confirm_word }}" title="Type {{ confirm_word }} to enable the button" aria-label="Prune confirmation word">
           </div>
         </div>
-        <div class="modal-footer" style="border-top:1px solid var(--border)">
-          <button type="button" class="btn btn-secondary icon-btn" data-bs-dismiss="modal" title="Cancel" aria-label="Cancel"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
+        <div class="ui-modal__footer" style="border-top:1px solid var(--border)">
+          <button type="button" class="ui-btn icon-btn" data-modal-close title="Cancel" aria-label="Cancel"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
           <button type="submit" class="btn btn-outline-danger icon-btn" title="Delete audit rows past the retention window" aria-label="Prune old audit rows"><i class="fa-solid fa-broom" aria-hidden="true"></i></button>
         </div>
       </form>
@@ -161,15 +161,15 @@
   </div>
 </div>
 
-<div class="modal fade" id="clearLogsModal" tabindex="-1" role="dialog" aria-hidden="true">
-  <div class="modal-dialog modal-dialog-centered" role="document">
-    <div class="modal-content" style="background:var(--bg-card);border:1px solid var(--border);border-radius:8px">
+<div class="ui-modal" id="clearLogsModal" tabindex="-1" role="dialog" aria-hidden="true">
+  <div class="ui-modal__dialog" role="document">
+    <div class="ui-modal__content" style="background:var(--bg-card);border:1px solid var(--border);border-radius:8px">
       <form method="post" action="/manage/logs/clear">
-        <div class="modal-header" style="border-bottom:1px solid var(--border)">
-          <h5 class="modal-title" style="color:var(--danger)">Delete every audit row</h5>
-          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close" style="color:var(--text-secondary)"></button>
+        <div class="ui-modal__header" style="border-bottom:1px solid var(--border)">
+          <h5 class="ui-modal__title" style="color:var(--danger)">Delete every audit row</h5>
+          <button type="button" class="ui-modal__close" data-modal-close title="Close" aria-label="Close" style="color:var(--text-secondary)"></button>
         </div>
-        <div class="modal-body">
+        <div class="ui-modal__body">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           <p style="color:var(--text-secondary);font-size:.9rem">
             This deletes all {{ remaining }} audit rows and cannot be undone. Nothing behind it can
@@ -184,11 +184,11 @@
           <p style="font-size:.9rem">Type <code>{{ confirm_word }}</code> to confirm.</p>
           <div class="form-group">
             <label for="clear-confirm" style="color:var(--text-secondary);font-size:.85rem">Confirmation</label>
-            <input type="text" name="confirm" class="form-control" id="clear-confirm" autocomplete="off" placeholder="{{ confirm_word }}" title="Type {{ confirm_word }} to enable the button" aria-label="Clear confirmation word">
+            <input type="text" name="confirm" class="ui-input" id="clear-confirm" autocomplete="off" placeholder="{{ confirm_word }}" title="Type {{ confirm_word }} to enable the button" aria-label="Clear confirmation word">
           </div>
         </div>
-        <div class="modal-footer" style="border-top:1px solid var(--border)">
-          <button type="button" class="btn btn-secondary icon-btn" data-bs-dismiss="modal" title="Cancel" aria-label="Cancel"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
+        <div class="ui-modal__footer" style="border-top:1px solid var(--border)">
+          <button type="button" class="ui-btn icon-btn" data-modal-close title="Cancel" aria-label="Cancel"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
           <button type="submit" class="btn btn-outline-danger icon-btn" title="Delete every audit row" aria-label="Delete every audit row"><i class="fa-solid fa-trash" aria-hidden="true"></i></button>
         </div>
       </form>

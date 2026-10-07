@@ -415,7 +415,8 @@ ALLOWED_HOSTS = {
     "fonts.googleapis.com",  # base.html, Inter and JetBrains Mono
     "fonts.gstatic.com",  # the font files those rules point at
     "cdnjs.cloudflare.com",  # base.html, Font Awesome
-    "cdn.jsdelivr.net",  # base.html, Bootstrap and the audit map
+    "cdn.jsdelivr.net",  # the audit map's Leaflet
+    "cdn.projectnova.download",  # the shared design-language kit
     "portfolio.projectnova.download",  # an example in a routing placeholder
     "testserver",  # the request's own absolute URL in the test client
 }

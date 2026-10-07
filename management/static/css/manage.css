@@ -1,19 +1,16 @@
   :root {
-    --bg-primary: #0a0a0f;
-    --bg-secondary: #12121a;
-    --bg-card: #1a1a28;
-    --border: #2a2a3e;
-    --text-primary: #e8e8f0;
-    --text-secondary: #8888a0;
-    --accent: #64ffda;
+    --bg-primary: var(--ui-surface);
+    --bg-secondary: var(--ui-surface-variant);
+    --bg-card: var(--ui-surface-variant);
+    --border: var(--ui-outline);
+    --text-primary: var(--ui-on-surface);
+    --text-secondary: var(--ui-on-surface-variant);
+    --accent: var(--ui-primary);
     --accent-dim: rgba(100, 255, 218, 0.1);
     --danger: #f87171;
     --danger-dim: rgba(248, 113, 113, 0.1);
 
-    /* Bootstrap component colors default to its light theme; pin them to the
-       tokens so cards, modals and tables inherit the dark theme's text. */
-    --bs-body-color: var(--text-primary);
-    --bs-body-bg: var(--bg-primary);
+    /* Drive the shared kit's components from GateKeeper's own palette. */
   }
 
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -564,24 +561,55 @@
     color: var(--text-secondary);
   }
 
-  /* A dialog taller than the window was clipped by `.modal`'s own
-     `overflow: hidden`, which left the backdrop drawn and the dialog cut off
-     below the fold, the bottom of the form, submit button included, was
-     simply not reachable. The content box is capped instead and the body is
-     what scrolls, so the header and the footer stay where they are.
+  /* The modal system, replacing Bootstrap's. `.ui-modal` is the overlay, hidden
+     until `.is-open`. The dialog uses `margin: auto` rather than `align-items:
+     center` so a dialog taller than the window still scrolls from its top
+     instead of being clipped at both ends; the content box is what is capped,
+     and the body is what scrolls, so the header and footer stay where they are.
 
-     The form wrapper has to be a flex link like the rest: `.modal-content` is
-     `display: flex`, but the `<form>` that wraps the header, body and footer is
-     a plain block, so capping the content shrank the form's own box while the
-     form kept its natural height and overflowed the cap. Without that rule the
-     submit button lands off-screen at 1280x627 and below. It is also why the
-     dialog is top-aligned rather than transform-centred: a centred oversized
-     dialog is clipped at both ends. */
-  .modal .modal-content { max-height: calc(100vh - 3.5rem); overflow: hidden; }
-  .modal .modal-dialog-centered { align-items: flex-start; }
-  .modal .modal-content > form { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
-  .modal .modal-body { overflow-y: auto; min-height: 0; }
-  .modal .modal-header, .modal .modal-footer { flex-shrink: 0; }
+     The form wrapper is a flex link like the rest: `.ui-modal__content` is
+     `display: flex`, but the `<form>` that wraps header, body and footer is a
+     plain block, so capping the content shrank the form's own box while the form
+     kept its natural height and overflowed the cap. Without that rule the submit
+     button lands off-screen at 1280x627 and below. */
+  .ui-modal {
+    position: fixed;
+    inset: 0;
+    display: none;
+    overflow-y: auto;
+    padding: 1.75rem 1rem;
+    background: rgba(0, 0, 0, 0.55);
+    z-index: 1000;
+  }
+
+  .ui-modal.is-open { display: flex; align-items: flex-start; justify-content: center; }
+
+  .ui-modal__dialog { width: 100%; max-width: 520px; margin: auto; }
+
+  .ui-modal__content {
+    background: var(--bg-card);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    display: flex;
+    flex-direction: column;
+    max-height: calc(100vh - 3.5rem);
+    overflow: hidden;
+  }
+
+  .ui-modal__content > form { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+  .ui-modal__header, .ui-modal__footer { display: flex; align-items: center; flex-shrink: 0; padding: 1rem 1.25rem; }
+  .ui-modal__header { justify-content: space-between; border-bottom: 1px solid var(--border); }
+  .ui-modal__footer { justify-content: flex-end; gap: 0.5rem; border-top: 1px solid var(--border); }
+  .ui-modal__title { font-size: 1rem; font-weight: 700; }
+  .ui-modal__body { padding: 1.25rem; overflow-y: auto; min-height: 0; }
+  .ui-modal__close { background: none; border: 0; padding: 0.25rem; color: var(--text-secondary); font-size: 1.1rem; line-height: 1; cursor: pointer; }
+  .ui-modal__close::before { content: "\2715"; }
+  .ui-modal__close:hover { color: var(--text-primary); }
+
+  /* The dice control beside the access-code field. */
+  .ui-input-group { display: flex; align-items: stretch; gap: 0.5rem; }
+  .ui-input-group .ui-input { flex: 1; }
 
   @media (max-width: 1200px) {
     .dash-grid { grid-template-columns: minmax(0, 1fr); }

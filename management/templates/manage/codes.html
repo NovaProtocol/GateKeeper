@@ -25,7 +25,7 @@
           </label>
           <span>Permanent delete</span>
         </div>
-        <button class="btn btn-accent icon-btn" data-bs-toggle="modal" data-bs-target="#addCodeModal" title="Add Code" aria-label="Add Code"><i class="fa-solid fa-plus" aria-hidden="true"></i></button>
+        <button class="btn btn-accent icon-btn" data-modal-open="#addCodeModal" title="Add Code" aria-label="Add Code"><i class="fa-solid fa-plus" aria-hidden="true"></i></button>
       </div>
     </div>
     <div class="card-body" style="padding:0">
@@ -69,31 +69,31 @@
   </div>
 </div>
 
-<div class="modal fade" id="addCodeModal" tabindex="-1" role="dialog" aria-hidden="true">
-  <div class="modal-dialog modal-dialog-centered" role="document">
-    <div class="modal-content" style="background:var(--bg-card);border:1px solid var(--border);border-radius:8px">
+<div class="ui-modal" id="addCodeModal" tabindex="-1" role="dialog" aria-hidden="true">
+  <div class="ui-modal__dialog" role="document">
+    <div class="ui-modal__content" style="background:var(--bg-card);border:1px solid var(--border);border-radius:8px">
       <form method="post" action="/manage/codes">
-        <div class="modal-header" style="border-bottom:1px solid var(--border)">
-          <h5 class="modal-title" style="color:var(--text-primary)">Add Access Code</h5>
-          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close" style="color:var(--text-secondary)"></button>
+        <div class="ui-modal__header" style="border-bottom:1px solid var(--border)">
+          <h5 class="ui-modal__title" style="color:var(--text-primary)">Add Access Code</h5>
+          <button type="button" class="ui-modal__close" data-modal-close title="Close" aria-label="Close" style="color:var(--text-secondary)"></button>
         </div>
-        <div class="modal-body">
+        <div class="ui-modal__body">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           <div class="form-group">
             <label for="code-label" style="color:var(--text-secondary);font-size:.85rem">Label <span style="color:var(--text-secondary);font-weight:400">(optional, defaults to blank)</span></label>
-            <input type="text" class="form-control" id="code-label" name="label" placeholder="e.g. Alice">
+            <input type="text" class="ui-input" id="code-label" name="label" placeholder="e.g. Alice">
           </div>
           <div class="form-group">
             <label for="code-value" style="color:var(--text-secondary);font-size:.85rem">Access Code <span style="color:var(--danger)">*</span></label>
-            <div class="input-group">
-              <input type="text" class="form-control" id="code-value" name="code" placeholder="my-code-123" required>
-              <button type="button" class="btn btn-outline-secondary" onclick="genDice()" title="Generate random 8 chars"><i class="fa-solid fa-dice"></i></button>
+            <div class="ui-input-group">
+              <input type="text" class="ui-input" id="code-value" name="code" placeholder="my-code-123" required>
+              <button type="button" class="ui-btn ui-btn--outline" onclick="genDice()" title="Generate random 8 chars"><i class="fa-solid fa-dice"></i></button>
             </div>
             <small style="color:var(--text-secondary)">Manual code can be anything (letters, numbers, dashes). Dice generates 8 random chars.</small>
           </div>
         </div>
-        <div class="modal-footer" style="border-top:1px solid var(--border)">
-          <button type="button" class="btn btn-secondary icon-btn" data-bs-dismiss="modal" title="Cancel" aria-label="Cancel"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
+        <div class="ui-modal__footer" style="border-top:1px solid var(--border)">
+          <button type="button" class="ui-btn icon-btn" data-modal-close title="Cancel" aria-label="Cancel"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
           <button type="submit" class="btn btn-accent icon-btn" title="Create" aria-label="Create"><i class="fa-solid fa-plus" aria-hidden="true"></i></button>
         </div>
       </form>
@@ -101,27 +101,27 @@
   </div>
 </div>
 
-<div class="modal fade" id="editCodeModal" tabindex="-1" role="dialog" aria-hidden="true">
-  <div class="modal-dialog modal-dialog-centered" role="document">
-    <div class="modal-content" style="background:var(--bg-card);border:1px solid var(--border);border-radius:8px">
+<div class="ui-modal" id="editCodeModal" tabindex="-1" role="dialog" aria-hidden="true">
+  <div class="ui-modal__dialog" role="document">
+    <div class="ui-modal__content" style="background:var(--bg-card);border:1px solid var(--border);border-radius:8px">
       <form method="post" id="editCodeForm">
-        <div class="modal-header" style="border-bottom:1px solid var(--border)">
-          <h5 class="modal-title" style="color:var(--text-primary)">Edit Code</h5>
-          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close" style="color:var(--text-secondary)"></button>
+        <div class="ui-modal__header" style="border-bottom:1px solid var(--border)">
+          <h5 class="ui-modal__title" style="color:var(--text-primary)">Edit Code</h5>
+          <button type="button" class="ui-modal__close" data-modal-close title="Close" aria-label="Close" style="color:var(--text-secondary)"></button>
         </div>
-        <div class="modal-body">
+        <div class="ui-modal__body">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           <div class="form-group">
             <label style="color:var(--text-secondary);font-size:.85rem">Label</label>
-            <input type="text" class="form-control" id="edit-label" name="label" placeholder="e.g. Alice">
+            <input type="text" class="ui-input" id="edit-label" name="label" placeholder="e.g. Alice">
           </div>
           <div class="form-group">
             <label style="color:var(--text-secondary);font-size:.85rem">Access Code <span style="color:var(--text-secondary);font-weight:400">(leave blank to keep)</span></label>
-            <input type="text" class="form-control" id="edit-code" name="code" placeholder="my-code-123">
+            <input type="text" class="ui-input" id="edit-code" name="code" placeholder="my-code-123">
           </div>
         </div>
-        <div class="modal-footer" style="border-top:1px solid var(--border)">
-          <button type="button" class="btn btn-secondary icon-btn" data-bs-dismiss="modal" title="Cancel" aria-label="Cancel"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
+        <div class="ui-modal__footer" style="border-top:1px solid var(--border)">
+          <button type="button" class="ui-btn icon-btn" data-modal-close title="Cancel" aria-label="Cancel"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
           <button type="submit" class="btn btn-accent icon-btn" title="Save" aria-label="Save"><i class="fa-solid fa-floppy-disk" aria-hidden="true"></i></button>
         </div>
       </form>
@@ -129,15 +129,15 @@
   </div>
 </div>
 
-<div class="modal fade" id="deleteCodeModal" tabindex="-1" role="dialog" aria-hidden="true">
-  <div class="modal-dialog modal-dialog-centered" role="document">
-    <div class="modal-content" style="background:var(--bg-card);border:1px solid var(--border);border-radius:8px">
+<div class="ui-modal" id="deleteCodeModal" tabindex="-1" role="dialog" aria-hidden="true">
+  <div class="ui-modal__dialog" role="document">
+    <div class="ui-modal__content" style="background:var(--bg-card);border:1px solid var(--border);border-radius:8px">
       <form method="post" id="deleteCodeForm" action="">
-        <div class="modal-header" style="border-bottom:1px solid var(--border)">
-          <h5 class="modal-title" style="color:var(--danger)">Delete code permanently</h5>
-          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close" style="color:var(--text-secondary)"></button>
+        <div class="ui-modal__header" style="border-bottom:1px solid var(--border)">
+          <h5 class="ui-modal__title" style="color:var(--danger)">Delete code permanently</h5>
+          <button type="button" class="ui-modal__close" data-modal-close title="Close" aria-label="Close" style="color:var(--text-secondary)"></button>
         </div>
-        <div class="modal-body">
+        <div class="ui-modal__body">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           <p style="color:var(--text-secondary);font-size:.9rem">
             This removes the code from the database. Nothing is left behind: it cannot be
@@ -147,11 +147,11 @@
           <p style="font-size:.9rem">Type <code id="delete-code-shown" style="color:var(--danger)"></code> to confirm.</p>
           <div class="form-group">
             <label for="delete-code-typed" style="color:var(--text-secondary);font-size:.85rem">Code</label>
-            <input type="text" name="confirm_code" class="form-control" id="delete-code-typed" autocomplete="off" placeholder="type the code exactly">
+            <input type="text" name="confirm_code" class="ui-input" id="delete-code-typed" autocomplete="off" placeholder="type the code exactly">
           </div>
         </div>
-        <div class="modal-footer" style="border-top:1px solid var(--border)">
-          <button type="button" class="btn btn-secondary icon-btn" data-bs-dismiss="modal" title="Cancel" aria-label="Cancel"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
+        <div class="ui-modal__footer" style="border-top:1px solid var(--border)">
+          <button type="button" class="ui-btn icon-btn" data-modal-close title="Cancel" aria-label="Cancel"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
           <button type="submit" class="btn btn-outline-danger icon-btn" title="Delete permanently" aria-label="Delete permanently"><i class="fa-solid fa-trash" aria-hidden="true"></i></button>
         </div>
       </form>
@@ -181,7 +181,7 @@ function openEditCode(id, label, display, code){
   document.getElementById('edit-label').value=display||label||'';
   document.getElementById('edit-code').value=code||'';
   document.getElementById('editCodeForm').action='/manage/codes/'+id+'/edit';
-  $('#editCodeModal').modal('show');
+  openModal('#editCodeModal');
 }
 /* The switch controls `active`/inactive and nothing else. It is a state
    indicator, so it never deletes and never asks for a confirmation: the change
@@ -197,7 +197,7 @@ function openDeleteCode(cid, button){
   document.getElementById('deleteCodeForm').action='/manage/codes/'+cid+'/delete';
   document.getElementById('delete-code-typed').value='';
   document.getElementById('delete-code-shown').textContent=button.getAttribute('data-code');
-  $('#deleteCodeModal').modal('show');
+  openModal('#deleteCodeModal');
 }
 document.getElementById('show-inactive')?.addEventListener('change',function(){
   var url=new URL(window.location.href);

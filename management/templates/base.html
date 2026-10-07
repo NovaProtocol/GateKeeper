@@ -4,12 +4,14 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}GateKeeper{% endblock %}</title>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css" integrity="sha384-nRgPTkuX86pH8yjPJUAFuASXQSSl2/bBUiNV47vSYpKFxHJhbcrGnmlYpYJMeD7a" crossorigin="anonymous">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/css/manage.css?v=7">
+<link rel="preconnect" href="https://cdn.projectnova.download" crossorigin>
+<link rel="stylesheet" href="https://cdn.projectnova.download/flat/dark/theme.css?v=7">
+<link rel="stylesheet" href="/static/css/tailwind.css?v=1">
+<link rel="stylesheet" href="/static/css/manage.css?v=8">
 <style>
 .layout{display:flex;min-height:100vh}
 .sidebar{width:260px;background:var(--bg-secondary);border-right:1px solid var(--border);padding:1.5rem 0;flex-shrink:0;position:sticky;top:0;height:100vh;overflow-y:auto}
@@ -23,23 +25,24 @@
 @media(max-width:768px){.layout{flex-direction:column}.sidebar{width:100%;height:auto;position:relative}}
 </style>
 {% block head_extra %}{% endblock %}
+    <script src="https://cdn.projectnova.download/shell.js"></script>
 </head>
 <body>
-<header class="header">
-  <div class="header-left" style="display:flex;align-items:center;gap:1rem">
-    <div class="header-title">~/<span>gatekeeper</span></div>
-    <span class="header-badge">projectnova.download</span>
+<nav class="ui-navbar">
+  <div class="ui-navbar__inner">
+    <span class="ui-navbar__lead" aria-hidden="true"></span>
+    <a class="ui-navbar__brand" href="/">~/<span>gatekeeper</span></a>
+    <div class="ui-navbar__right">
+      <ul class="ui-navbar__links">
+      <li><a class="ui-navbar__link" href="/manage">Manage</a></li>
+      {% if request.cookies.get("gatekeeper_token") %}
+      <li><form method="post" action="/logout" style="margin:0"><input type="hidden" name="csrf_token" value="{{ csrf_token if csrf_token is defined else request.cookies.get('csrf_token','') }}"><button class="ui-navbar__link" type="submit" style="background:none;border:0;cursor:pointer">End session</button></form></li>
+      {% endif %}
+    </ul>
+      <button class="ui-theme-toggle" title="Toggle light/dark" aria-label="Toggle light/dark"></button>
+    </div>
   </div>
-  <div class="header-actions">
-    {% if request.cookies.get("gatekeeper_token") %}
-    <a href="/manage" class="btn btn-accent btn-sm"><i class="fa-solid fa-screwdriver-wrench"></i> Manage</a>
-    <form method="post" action="/logout" style="display:inline;margin:0">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token if csrf_token is defined else request.cookies.get('csrf_token','') }}">
-      <button type="submit" class="btn btn-ghost btn-sm"><i class="fa-solid fa-right-from-bracket"></i> End session</button>
-    </form>
-    {% endif %}
-  </div>
-</header>
+</nav>
 <div class="layout">
   {% block sidebar %}
   <nav class="sidebar">
@@ -64,6 +67,6 @@
     {% block content %}{% endblock %}
   </div>
 </div>
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous"></script>
+<script src="/static/js/manage.js?v=1" defer></script>
 </body>
 </html>

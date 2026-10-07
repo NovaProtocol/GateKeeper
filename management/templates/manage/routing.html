@@ -19,7 +19,7 @@
 {% block content %}
 <div class="container">
   <div class="card">
-    <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.75rem"><h2><i class="fa-solid fa-route"></i> Routing</h2><div style="display:flex;gap:.5rem"><button class="btn btn-accent" data-bs-toggle="modal" data-bs-target="#addProxyModal"><i class="fa-solid fa-plus"></i> Add Proxy Route</button><button class="btn" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary)" data-bs-toggle="modal" data-bs-target="#addRedirectModal"><i class="fa-solid fa-right-left"></i> Add Redirect Route</button></div></div>
+    <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.75rem"><h2><i class="fa-solid fa-route"></i> Routing</h2><div style="display:flex;gap:.5rem"><button class="btn btn-accent" data-modal-open="#addProxyModal"><i class="fa-solid fa-plus"></i> Add Proxy Route</button><button class="btn" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary)" data-modal-open="#addRedirectModal"><i class="fa-solid fa-right-left"></i> Add Redirect Route</button></div></div>
     <div class="card-body" style="padding:0">
       <div class="table-scroll" tabindex="0" role="region" aria-label="Routes">
       <table class="codes-table" id="routesTable">
@@ -124,7 +124,7 @@
       document.getElementById('edit-redirect-path').value=path;
       document.getElementById('edit-redirect-target').value=target; document.getElementById('edit-redirect-code').value=code||'302';
     }
-    $('#editRouteModal').modal('show');
+    openModal('#editRouteModal');
   }
   document.getElementById('editForm')?.addEventListener('submit',function(e){
     const type=document.getElementById('edit-type').value;
@@ -217,10 +217,10 @@
   </script>
 </div>
 
-<div class="modal fade" id="addProxyModal" tabindex="-1"><div class="modal-dialog"><div class="modal-content" style="background:var(--bg-card);border:1px solid var(--border);color:var(--text-primary)">
-  <div class="modal-header" style="border-color:var(--border)"><h5 class="modal-title" style="font-weight:700">Add Proxy Route</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" style="color:var(--text-primary)"></button></div>
+<div class="ui-modal" id="addProxyModal" tabindex="-1"><div class="ui-modal__dialog"><div class="ui-modal__content" style="background:var(--bg-card);border:1px solid var(--border);color:var(--text-primary)">
+  <div class="ui-modal__header" style="border-color:var(--border)"><h5 class="ui-modal__title" style="font-weight:700">Add Proxy Route</h5><button type="button" class="ui-modal__close" data-modal-close style="color:var(--text-primary)"></button></div>
   <form method="post" action="/manage/routing" id="proxyForm">
-    <div class="modal-body">
+    <div class="ui-modal__body">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <input type="hidden" name="host" id="proxy-host">
       <input type="hidden" name="port" id="proxy-port-hidden">
@@ -229,14 +229,14 @@
       <div class="form-group"><label>Path <span style="color:var(--text-secondary);font-weight:400">(optional)</span></label><input id="proxy-path" name="path" placeholder="/" value="/" class="input" style="width:100%"><small style="color:var(--text-secondary)">Leave "/" for catch-all, or "/api/*" for specific</small></div>
       <div class="form-group"><label>Upstream</label><div class="split-input" style="display:flex;align-items:center;gap:0"><input id="proxy-upstream" name="upstream" placeholder="myapp" required class="input input-cap-left" style="flex:1"><span class="colon" style="background:var(--bg-primary);border:1px solid var(--border);border-left:none;border-right:none;padding:.6rem .4rem;color:var(--text-secondary)">:</span><input id="proxy-port" name="port_visible" placeholder="8080" inputmode="numeric" pattern="[0-9]*" class="input input-cap-right" style="width:90px"></div></div>
     </div>
-    <div class="modal-footer" style="border-color:var(--border)"><span id="proxy-test-result" class="test-result" role="status" aria-live="polite"></span><button type="button" class="btn icon-btn" onclick="testDraft('proxy')" title="Test before saving" aria-label="Test before saving"><i class="fa-solid fa-plug" aria-hidden="true"></i></button><button type="button" class="btn icon-btn" data-bs-dismiss="modal" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary)" title="Cancel" aria-label="Cancel"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button><button type="submit" class="btn btn-accent icon-btn" title="Add Proxy Route" aria-label="Add Proxy Route"><i class="fa-solid fa-plus" aria-hidden="true"></i></button></div>
+    <div class="ui-modal__footer" style="border-color:var(--border)"><span id="proxy-test-result" class="test-result" role="status" aria-live="polite"></span><button type="button" class="btn icon-btn" onclick="testDraft('proxy')" title="Test before saving" aria-label="Test before saving"><i class="fa-solid fa-plug" aria-hidden="true"></i></button><button type="button" class="btn icon-btn" data-modal-close style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary)" title="Cancel" aria-label="Cancel"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button><button type="submit" class="btn btn-accent icon-btn" title="Add Proxy Route" aria-label="Add Proxy Route"><i class="fa-solid fa-plus" aria-hidden="true"></i></button></div>
   </form>
 </div></div></div>
 
-<div class="modal fade" id="addRedirectModal" tabindex="-1"><div class="modal-dialog"><div class="modal-content" style="background:var(--bg-card);border:1px solid var(--border);color:var(--text-primary)">
-  <div class="modal-header" style="border-color:var(--border)"><h5 class="modal-title" style="font-weight:700">Add Redirect Route</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" style="color:var(--text-primary)"></button></div>
+<div class="ui-modal" id="addRedirectModal" tabindex="-1"><div class="ui-modal__dialog"><div class="ui-modal__content" style="background:var(--bg-card);border:1px solid var(--border);color:var(--text-primary)">
+  <div class="ui-modal__header" style="border-color:var(--border)"><h5 class="ui-modal__title" style="font-weight:700">Add Redirect Route</h5><button type="button" class="ui-modal__close" data-modal-close style="color:var(--text-primary)"></button></div>
   <form method="post" action="/manage/routing" id="redirectForm">
-    <div class="modal-body">
+    <div class="ui-modal__body">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <input type="hidden" name="host" id="redirect-host">
       <input type="hidden" name="route_type" value="redirect">
@@ -245,14 +245,14 @@
       <div class="form-group"><label>Redirect Target</label><input name="redirect_target" id="redirect-target" placeholder="https://portfolio.projectnova.download or /newpath" required class="input" style="width:100%"><small style="color:var(--text-secondary)">Full URL or path, e.g. projectnova.download → portfolio...</small></div>
       <div class="form-group"><label>Redirect Code</label><select name="redirect_code" class="input" style="width:100%"><option value="302" selected>302 Found</option><option value="301">301 Moved Permanently</option><option value="307">307 Temporary</option><option value="308">308 Permanent</option></select></div>
     </div>
-    <div class="modal-footer" style="border-color:var(--border)"><span id="redirect-test-result" class="test-result" role="status" aria-live="polite"></span><button type="button" class="btn icon-btn" onclick="testDraft('redirect')" title="Test before saving" aria-label="Test before saving"><i class="fa-solid fa-plug" aria-hidden="true"></i></button><button type="button" class="btn icon-btn" data-bs-dismiss="modal" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary)" title="Cancel" aria-label="Cancel"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button><button type="submit" class="btn btn-accent icon-btn" title="Add Redirect Route" aria-label="Add Redirect Route"><i class="fa-solid fa-right-left" aria-hidden="true"></i></button></div>
+    <div class="ui-modal__footer" style="border-color:var(--border)"><span id="redirect-test-result" class="test-result" role="status" aria-live="polite"></span><button type="button" class="btn icon-btn" onclick="testDraft('redirect')" title="Test before saving" aria-label="Test before saving"><i class="fa-solid fa-plug" aria-hidden="true"></i></button><button type="button" class="btn icon-btn" data-modal-close style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary)" title="Cancel" aria-label="Cancel"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button><button type="submit" class="btn btn-accent icon-btn" title="Add Redirect Route" aria-label="Add Redirect Route"><i class="fa-solid fa-right-left" aria-hidden="true"></i></button></div>
   </form>
 </div></div></div>
 
-<div class="modal fade" id="editRouteModal" tabindex="-1"><div class="modal-dialog"><div class="modal-content" style="background:var(--bg-card);border:1px solid var(--border);color:var(--text-primary)">
-  <div class="modal-header" style="border-color:var(--border)"><h5 class="modal-title" style="font-weight:700">Edit Route</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" style="color:var(--text-primary)"></button></div>
+<div class="ui-modal" id="editRouteModal" tabindex="-1"><div class="ui-modal__dialog"><div class="ui-modal__content" style="background:var(--bg-card);border:1px solid var(--border);color:var(--text-primary)">
+  <div class="ui-modal__header" style="border-color:var(--border)"><h5 class="ui-modal__title" style="font-weight:700">Edit Route</h5><button type="button" class="ui-modal__close" data-modal-close style="color:var(--text-primary)"></button></div>
   <form method="post" id="editForm">
-    <div class="modal-body">
+    <div class="ui-modal__body">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <input type="hidden" name="host" id="edit-host">
       <input type="hidden" name="host" id="edit-redirect-host">
@@ -271,7 +271,7 @@
         <div class="form-group"><label>Code</label><select name="redirect_code" id="edit-redirect-code" class="input" style="width:100%"><option value="302">302</option><option value="301">301</option><option value="307">307</option><option value="308">308</option></select></div>
       </div>
     </div>
-    <div class="modal-footer" style="border-color:var(--border)"><span id="edit-test-result" class="test-result" role="status" aria-live="polite"></span><button type="button" class="btn icon-btn" onclick="testDraft('edit')" title="Test before saving" aria-label="Test before saving"><i class="fa-solid fa-plug" aria-hidden="true"></i></button><button type="button" class="btn icon-btn" data-bs-dismiss="modal" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary)" title="Cancel" aria-label="Cancel"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button><button type="submit" class="btn btn-accent icon-btn" title="Save" aria-label="Save"><i class="fa-solid fa-floppy-disk" aria-hidden="true"></i></button></div>
+    <div class="ui-modal__footer" style="border-color:var(--border)"><span id="edit-test-result" class="test-result" role="status" aria-live="polite"></span><button type="button" class="btn icon-btn" onclick="testDraft('edit')" title="Test before saving" aria-label="Test before saving"><i class="fa-solid fa-plug" aria-hidden="true"></i></button><button type="button" class="btn icon-btn" data-modal-close style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary)" title="Cancel" aria-label="Cancel"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button><button type="submit" class="btn btn-accent icon-btn" title="Save" aria-label="Save"><i class="fa-solid fa-floppy-disk" aria-hidden="true"></i></button></div>
   </form>
 </div></div></div>
 <script>

@@ -15,6 +15,8 @@ A signed cookie on the shared domain is the credential. Anyone without one is se
 instead of the app they asked for. Entering a correct access code once is enough to get into every
 app behind the gate, and closing the browser or letting the cookie expire closes that session again.
 
+**Design language:** Flat — per-app Tailwind plus the shared `flat/dark` kit from the CDN. No Bootstrap.
+
 ## What it does
 
 **One gate, many apps.** Every app keeps its own domain and its own code, and none of them implement

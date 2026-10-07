@@ -106,11 +106,11 @@
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
           <div class="form-group">
             <label for="backup-file">Backup file</label>
-            <input type="file" class="form-control" id="backup-file" name="file" accept=".json,application/json" required>
+            <input type="file" class="ui-input" id="backup-file" name="file" accept=".json,application/json" required>
           </div>
           <div class="form-group">
             <label for="backup-confirm">Type {{ confirm_word }} to confirm</label>
-            <input type="text" class="form-control" id="backup-confirm" name="confirm" autocomplete="off" placeholder="{{ confirm_word }}" required>
+            <input type="text" class="ui-input" id="backup-confirm" name="confirm" autocomplete="off" placeholder="{{ confirm_word }}" required>
             <small class="backup-note">Required for both preview and restore. It is checked on the server, not only here.</small>
           </div>
           <div class="backup-actions">

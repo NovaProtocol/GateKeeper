@@ -1,0 +1,10 @@
+{
+  "name": "gatekeeper",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "build": "tailwindcss -i ./management/static/src/input.css -o ./management/static/css/tailwind.css --minify",
+    "watch": "tailwindcss -i ./management/static/src/input.css -o ./management/static/css/tailwind.css --watch"
+  },
+  "devDependencies": { "tailwindcss": "^3.4.17" }
+}
