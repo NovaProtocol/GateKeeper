@@ -9,6 +9,11 @@
     --accent-dim: rgba(100, 255, 218, 0.1);
     --danger: #f87171;
     --danger-dim: rgba(248, 113, 113, 0.1);
+
+    /* Bootstrap component colors default to its light theme; pin them to the
+       tokens so cards, modals and tables inherit the dark theme's text. */
+    --bs-body-color: var(--text-primary);
+    --bs-body-bg: var(--bg-primary);
   }
 
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -107,6 +112,7 @@
 
   .card {
     background: var(--bg-card);
+    color: var(--text-primary);
     border: 1px solid var(--border);
     border-radius: 12px;
     overflow: hidden;
