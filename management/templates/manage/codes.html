@@ -25,7 +25,7 @@
           </label>
           <span>Permanent delete</span>
         </div>
-        <button class="btn btn-accent icon-btn" data-toggle="modal" data-target="#addCodeModal" title="Add Code" aria-label="Add Code"><i class="fa-solid fa-plus" aria-hidden="true"></i></button>
+        <button class="btn btn-accent icon-btn" data-bs-toggle="modal" data-bs-target="#addCodeModal" title="Add Code" aria-label="Add Code"><i class="fa-solid fa-plus" aria-hidden="true"></i></button>
       </div>
     </div>
     <div class="card-body" style="padding:0">
@@ -75,7 +75,7 @@
       <form method="post" action="/manage/codes">
         <div class="modal-header" style="border-bottom:1px solid var(--border)">
           <h5 class="modal-title" style="color:var(--text-primary)">Add Access Code</h5>
-          <button type="button" class="close" data-dismiss="modal" aria-label="Close" style="color:var(--text-secondary)"><span aria-hidden="true">&times;</span></button>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close" style="color:var(--text-secondary)"></button>
         </div>
         <div class="modal-body">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -87,15 +87,13 @@
             <label for="code-value" style="color:var(--text-secondary);font-size:.85rem">Access Code <span style="color:var(--danger)">*</span></label>
             <div class="input-group">
               <input type="text" class="form-control" id="code-value" name="code" placeholder="my-code-123" required>
-              <div class="input-group-append">
-                <button type="button" class="btn btn-outline-secondary" onclick="genDice()" title="Generate random 8 chars"><i class="fa-solid fa-dice"></i></button>
-              </div>
+              <button type="button" class="btn btn-outline-secondary" onclick="genDice()" title="Generate random 8 chars"><i class="fa-solid fa-dice"></i></button>
             </div>
             <small style="color:var(--text-secondary)">Manual code can be anything (letters, numbers, dashes). Dice generates 8 random chars.</small>
           </div>
         </div>
         <div class="modal-footer" style="border-top:1px solid var(--border)">
-          <button type="button" class="btn btn-secondary icon-btn" data-dismiss="modal" title="Cancel" aria-label="Cancel"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
+          <button type="button" class="btn btn-secondary icon-btn" data-bs-dismiss="modal" title="Cancel" aria-label="Cancel"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
           <button type="submit" class="btn btn-accent icon-btn" title="Create" aria-label="Create"><i class="fa-solid fa-plus" aria-hidden="true"></i></button>
         </div>
       </form>
@@ -109,7 +107,7 @@
       <form method="post" id="editCodeForm">
         <div class="modal-header" style="border-bottom:1px solid var(--border)">
           <h5 class="modal-title" style="color:var(--text-primary)">Edit Code</h5>
-          <button type="button" class="close" data-dismiss="modal" aria-label="Close" style="color:var(--text-secondary)"><span aria-hidden="true">&times;</span></button>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close" style="color:var(--text-secondary)"></button>
         </div>
         <div class="modal-body">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -123,7 +121,7 @@
           </div>
         </div>
         <div class="modal-footer" style="border-top:1px solid var(--border)">
-          <button type="button" class="btn btn-secondary icon-btn" data-dismiss="modal" title="Cancel" aria-label="Cancel"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
+          <button type="button" class="btn btn-secondary icon-btn" data-bs-dismiss="modal" title="Cancel" aria-label="Cancel"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
           <button type="submit" class="btn btn-accent icon-btn" title="Save" aria-label="Save"><i class="fa-solid fa-floppy-disk" aria-hidden="true"></i></button>
         </div>
       </form>
@@ -137,7 +135,7 @@
       <form method="post" id="deleteCodeForm" action="">
         <div class="modal-header" style="border-bottom:1px solid var(--border)">
           <h5 class="modal-title" style="color:var(--danger)">Delete code permanently</h5>
-          <button type="button" class="close" data-dismiss="modal" aria-label="Close" style="color:var(--text-secondary)"><span aria-hidden="true">&times;</span></button>
+          <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close" style="color:var(--text-secondary)"></button>
         </div>
         <div class="modal-body">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -153,7 +151,7 @@
           </div>
         </div>
         <div class="modal-footer" style="border-top:1px solid var(--border)">
-          <button type="button" class="btn btn-secondary icon-btn" data-dismiss="modal" title="Cancel" aria-label="Cancel"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
+          <button type="button" class="btn btn-secondary icon-btn" data-bs-dismiss="modal" title="Cancel" aria-label="Cancel"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
           <button type="submit" class="btn btn-outline-danger icon-btn" title="Delete permanently" aria-label="Delete permanently"><i class="fa-solid fa-trash" aria-hidden="true"></i></button>
         </div>
       </form>

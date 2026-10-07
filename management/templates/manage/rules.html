@@ -3,7 +3,7 @@
 {% block content %}
 <div class="container">
   <div class="card">
-    <div class="card-header" style="display:flex;justify-content:space-between;align-items:center"><h2>Rule Groups</h2><div style="display:flex;gap:.5rem;align-items:center"><span class="header-badge">{{ groups|length }} groups</span><button class="btn btn-accent icon-btn" data-toggle="modal" data-target="#addGroupModal" title="Add Group" aria-label="Add Group"><i class="fa-solid fa-plus" aria-hidden="true"></i></button></div></div>
+    <div class="card-header" style="display:flex;justify-content:space-between;align-items:center"><h2>Rule Groups</h2><div style="display:flex;gap:.5rem;align-items:center"><span class="header-badge">{{ groups|length }} groups</span><button class="btn btn-accent icon-btn" data-bs-toggle="modal" data-bs-target="#addGroupModal" title="Add Group" aria-label="Add Group"><i class="fa-solid fa-plus" aria-hidden="true"></i></button></div></div>
     <div class="card-body" style="padding:0">
       <div class="table-scroll" tabindex="0" role="region" aria-label="Rule groups">
       <table class="codes-table">
@@ -56,26 +56,26 @@
 </div>
 
 <div class="modal fade" id="addGroupModal" tabindex="-1"><div class="modal-dialog"><div class="modal-content" style="background:var(--bg-card);border:1px solid var(--border);color:var(--text-primary)">
-  <div class="modal-header" style="border-color:var(--border)"><h5 class="modal-title" style="font-weight:700">Add Rule Group</h5><button type="button" class="close" data-dismiss="modal" style="color:var(--text-primary)"><span>&times;</span></button></div>
+  <div class="modal-header" style="border-color:var(--border)"><h5 class="modal-title" style="font-weight:700">Add Rule Group</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" style="color:var(--text-primary)"></button></div>
   <form method="post" action="/manage/groups">
     <div class="modal-body">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <div class="form-group"><label>Name</label><input name="name" placeholder="e.g. portfolio" required style="width:100%;background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:.6rem .875rem;color:var(--text-primary)"></div>
       <div class="form-group"><label>Domain</label><input name="domain" placeholder="portfolio.projectnova.download or *.projectnova.download or *.*/*" required style="width:100%;background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:.6rem .875rem;color:var(--text-primary)"><small style="color:var(--text-secondary)">Use <code>*.*/*</code> for catch-all default, <code>*.example.com</code> for wildcard</small></div>
     </div>
-    <div class="modal-footer" style="border-color:var(--border)"><button type="button" class="btn icon-btn" data-dismiss="modal" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary)" title="Cancel" aria-label="Cancel"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button><button type="submit" class="btn btn-accent icon-btn" title="Add Group" aria-label="Add Group"><i class="fa-solid fa-plus" aria-hidden="true"></i></button></div>
+    <div class="modal-footer" style="border-color:var(--border)"><button type="button" class="btn icon-btn" data-bs-dismiss="modal" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary)" title="Cancel" aria-label="Cancel"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button><button type="submit" class="btn btn-accent icon-btn" title="Add Group" aria-label="Add Group"><i class="fa-solid fa-plus" aria-hidden="true"></i></button></div>
   </form>
 </div></div></div>
 
 <div class="modal fade" id="editGroupModal" tabindex="-1"><div class="modal-dialog"><div class="modal-content" style="background:var(--bg-card);border:1px solid var(--border);color:var(--text-primary)">
-  <div class="modal-header" style="border-color:var(--border)"><h5 class="modal-title" style="font-weight:700">Edit Rule Group</h5><button type="button" class="close" data-dismiss="modal" style="color:var(--text-primary)"><span>&times;</span></button></div>
+  <div class="modal-header" style="border-color:var(--border)"><h5 class="modal-title" style="font-weight:700">Edit Rule Group</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" style="color:var(--text-primary)"></button></div>
   <form method="post" id="editGroupForm">
     <div class="modal-body">
       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <div class="form-group"><label>Name</label><input name="name" id="edit-group-name" required style="width:100%;background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:.6rem .875rem;color:var(--text-primary)"></div>
       <div class="form-group"><label>Domain</label><input name="domain" id="edit-group-domain" style="width:100%;background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:.6rem .875rem;color:var(--text-primary)"><small id="edit-group-domain-help" style="color:var(--text-secondary)">Use <code>*.*/*</code> for catch-all default, <code>*.example.com</code> for wildcard</small></div>
     </div>
-    <div class="modal-footer" style="border-color:var(--border)"><button type="button" class="btn icon-btn" data-dismiss="modal" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary)" title="Cancel" aria-label="Cancel"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button><button type="submit" class="btn btn-accent icon-btn" title="Save" aria-label="Save"><i class="fa-solid fa-floppy-disk" aria-hidden="true"></i></button></div>
+    <div class="modal-footer" style="border-color:var(--border)"><button type="button" class="btn icon-btn" data-bs-dismiss="modal" style="background:var(--bg-primary);border:1px solid var(--border);color:var(--text-primary)" title="Cancel" aria-label="Cancel"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button><button type="submit" class="btn btn-accent icon-btn" title="Save" aria-label="Save"><i class="fa-solid fa-floppy-disk" aria-hidden="true"></i></button></div>
   </form>
 </div></div></div>
 <script>

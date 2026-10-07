@@ -641,7 +641,7 @@ def test_every_control_on_the_page_has_a_title_and_an_aria_label(
         tag
         for tag in controls
         if 'type="hidden"' not in tag
-        and "data-dismiss" not in tag
+        and "data-bs-dismiss" not in tag
         and ("title=" not in tag or "aria-label=" not in tag)
     ]
 
