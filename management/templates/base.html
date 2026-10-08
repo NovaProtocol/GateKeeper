@@ -1,16 +1,9 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{% block title %}GateKeeper{% endblock %}</title>
+{% extends "_shell/base.html" %}
+
+{% block title %}GateKeeper{% endblock %}
+
+{% block head_assets %}
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css" integrity="sha384-nRgPTkuX86pH8yjPJUAFuASXQSSl2/bBUiNV47vSYpKFxHJhbcrGnmlYpYJMeD7a" crossorigin="anonymous">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="preconnect" href="https://cdn.projectnova.download" crossorigin>
-<link rel="stylesheet" href="https://cdn.projectnova.download/flat/dark/theme.css?v=7">
-<link rel="stylesheet" href="/static/css/tailwind.css?v=1">
 <link rel="stylesheet" href="/static/css/manage.css?v=8">
 <style>
 .layout{display:flex;min-height:100vh}
@@ -24,25 +17,20 @@
 .main{flex:1;min-width:0}
 @media(max-width:768px){.layout{flex-direction:column}.sidebar{width:100%;height:auto;position:relative}}
 </style>
-{% block head_extra %}{% endblock %}
-    <script src="https://cdn.projectnova.download/shell.js"></script>
-</head>
-<body>
-<nav class="ui-navbar">
-  <div class="ui-navbar__inner">
-    <span class="ui-navbar__lead" aria-hidden="true"></span>
-    <a class="ui-navbar__brand" href="/">~/<span>gatekeeper</span></a>
-    <div class="ui-navbar__right">
-      <ul class="ui-navbar__links">
-      <li><a class="ui-navbar__link" href="/manage">Manage</a></li>
-      {% if request.cookies.get("gatekeeper_token") %}
-      <li><form method="post" action="/logout" style="margin:0"><input type="hidden" name="csrf_token" value="{{ csrf_token if csrf_token is defined else request.cookies.get('csrf_token','') }}"><button class="ui-navbar__link" type="submit" style="background:none;border:0;cursor:pointer">End session</button></form></li>
-      {% endif %}
-    </ul>
-      <button class="ui-theme-toggle" title="Toggle light/dark" aria-label="Toggle light/dark"></button>
-    </div>
-  </div>
-</nav>
+{% endblock %}
+
+{% block brand_name %}gatekeeper{% endblock %}
+
+{% block nav_links %}
+<li><a class="ui-navbar__link" href="/manage">Manage</a></li>
+{% if request.cookies.get("gatekeeper_token") %}
+<li><form method="post" action="/logout" style="margin:0"><input type="hidden" name="csrf_token" value="{{ csrf_token if csrf_token is defined else request.cookies.get('csrf_token','') }}"><button class="ui-navbar__link" type="submit" style="background:none;border:0;cursor:pointer">End session</button></form></li>
+{% endif %}
+{% endblock %}
+
+{% block footer %}{% endblock %}
+
+{% block layout %}
 <div class="layout">
   {% block sidebar %}
   <nav class="sidebar">
@@ -67,6 +55,6 @@
     {% block content %}{% endblock %}
   </div>
 </div>
-<script src="/static/js/manage.js?v=1" defer></script>
-</body>
-</html>
+{% endblock %}
+
+{% block scripts_pre %}<script src="/static/js/manage.js?v=1" defer></script>{% endblock %}

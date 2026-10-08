@@ -1,0 +1,79 @@
+{# GENERATED — do not edit. Copied from CDNServer/shell/base.html by
+   CDNServer/scripts/sync_shell.py. Edit the source and re-run the sync. #}
+{# ---------------------------------------------------------------------------
+   Canonical shared shell — ONE source for every app's chrome.
+
+   This file is the source of truth for the parts of a page that are genuinely
+   identical across the fleet: the <head> wiring (design-language kit, webfonts,
+   shell.js), the `.ui-navbar` skeleton, and the canonical footer. It is copied
+   verbatim into each app as `_shell/base.html` by
+   `CDNServer/scripts/sync_shell.py`, and each app's own `base.html` is a thin
+   child that fills the blocks below. Never hand-edit the copy: edit this file
+   and re-run the sync.
+
+   What lives here: the kit link and its version, the webfont links, shell.js,
+   the navbar markup (so the slot geometry cannot drift), the footer.
+   What does NOT: anything app-specific — brand text, nav entries, the app's own
+   CSS/JS, page layout. Those are the blocks.
+   --------------------------------------------------------------------------- #}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}{% endblock %}</title>
+
+  <link rel="preconnect" href="https://cdn.projectnova.download" crossorigin>
+  <link rel="stylesheet" href="https://cdn.projectnova.download/flat/dark/theme.css?v=7">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap">
+
+  {# The app's compiled Tailwind, so the link (and its cache-buster) is defined once. #}
+  {% block tailwind %}<link rel="stylesheet" href="/static/css/tailwind.css?v=1">{% endblock %}
+
+  {# App-wide CSS/JS (the app's own stylesheets, icon sets, libs). Page templates may
+     override `head_extra`, so anything the app needs on EVERY page belongs here. #}
+  {% block head_assets %}{% endblock %}
+  {% block head_extra %}{% endblock %}
+  <script src="https://cdn.projectnova.download/shell.js"></script>
+</head>
+<body {% block body_attrs %}class="{% block body_class %}{% endblock %}"{% endblock %}>
+
+<nav class="ui-navbar">
+  <div class="ui-navbar__inner">
+    {% block lead %}<span class="ui-navbar__lead" aria-hidden="true"></span>{% endblock %}
+    <a class="ui-navbar__brand" href="{% block brand_href %}/{% endblock %}">~/<span>{% block brand_name %}{% endblock %}</span></a>
+    <div class="ui-navbar__right">
+      {% block nav_right %}
+      <ul class="ui-navbar__links">{% block nav_links %}{% endblock %}</ul>
+      {% block nav_right_pre %}{% endblock %}
+      <button class="ui-theme-toggle" aria-label="Toggle light/dark"></button>
+      {% block nav_right_extra %}{% endblock %}
+      {% endblock %}
+    </div>
+  </div>
+</nav>
+
+{% block layout %}
+<main>
+  {% block content %}{% endblock %}
+</main>
+{% endblock %}
+
+{% block footer %}
+<footer class="ui-footer">
+  <div class="ui-footer__inner">
+    <div>{% block footer_text %}&copy; 2026 Nova.{% endblock %}</div>
+    <div><a href="https://github.com/NovaProtocol" target="_blank" rel="noopener noreferrer"><i class="fab fa-github"></i></a></div>
+  </div>
+</footer>
+{% endblock %}
+
+{# App-wide JS goes in scripts_pre: children override `scripts` without calling
+   super(), so anything inside that block would be replaced by a page template. #}
+{% block scripts_pre %}{% endblock %}
+{% block scripts %}{% endblock %}
+</body>
+</html>
