@@ -1181,7 +1181,7 @@ def create_app() -> FastAPI:
         custom_cookie_rule: Rule | None = None
         # Whether this request has already been audited. Most outcomes audit
         # before returning, but a request that reaches the application audits
-        # after the response comes back — so without knowing this, the paths that
+        # after the response comes back, so without knowing this, the paths that
         # audit on the way past (a valid cookie, a successful code) would get a
         # second row for the same request when the proxy row is added. One
         # request writes exactly one row.
@@ -1361,8 +1361,8 @@ def create_app() -> FastAPI:
             # `send(..., stream=True)`, not `request(...)`.
             #
             # `client.request()` reads the entire response body before it returns.
-            # For a normal page that is fine. For a **stream** — a
-            # `text/event-stream` that stays open and pushes a frame per tick — the
+            # For a normal page that is fine. For a **stream**, a
+            # `text/event-stream` that stays open and pushes a frame per tick, the
             # body never ends, so the call never returns, and the gateway holds the
             # request open until its 30s timeout while the browser waits for a first
             # byte that is already sitting in the socket. The dashboard's live
@@ -1432,7 +1432,7 @@ def create_app() -> FastAPI:
             resp_headers.pop("content-encoding", None)
 
         # The request reached the application, so it gets a row like every other
-        # outcome — and only if nothing above already wrote one. Without this the
+        # outcome, and only if nothing above already wrote one. Without this the
         # *successful* case was the one case the gate did not record: refusals,
         # redirects, custom pages and "route not found" all audit before
         # returning, and a proxied 200 audited nothing. That is how a host served
@@ -1449,7 +1449,7 @@ def create_app() -> FastAPI:
 
         if small_known_body:
             # `stream=True` means the body has not been read yet, so it is read
-            # here — before the response object is closed.
+            # here, before the response object is closed.
             content = await rp.aread()
             await rp.aclose()
             resp = Response(content=content, status_code=rp.status_code, headers=resp_headers)

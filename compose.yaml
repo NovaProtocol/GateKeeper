@@ -33,7 +33,7 @@ services:
     # treat a bare name as **absolute and try it first**.
     #
     # `main-server` is not a public name. The absolute query `main-server.` goes
-    # out, sits until the resolver's timeout, and comes back NXDOMAIN — then glibc
+    # out, sits until the resolver's timeout, and comes back NXDOMAIN, then glibc
     # tries the search domain and answers instantly. Measured: 3.9-4.0s per
     # lookup, every time, on every route proxied to another machine.
     #

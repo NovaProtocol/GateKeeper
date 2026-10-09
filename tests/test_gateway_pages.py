@@ -533,8 +533,8 @@ def test_a_proxied_request_writes_an_audit_row(
 ) -> None:
     """The request that *succeeds* is still a request, and still gets a row.
 
-    Every other outcome audits before it returns — a refusal, a redirect, a
-    custom page, "route not found" — so the one path that returned the
+    Every other outcome audits before it returns, a refusal, a redirect, a
+    custom page, "route not found", so the one path that returned the
     application's own response was the one path that recorded nothing. A host
     served entirely through the gate therefore appeared in the audit trail only
     for the requests that failed, which is the opposite of a trail.
@@ -569,7 +569,7 @@ def test_a_proxied_request_writes_an_audit_row(
 def test_a_proxied_request_is_audited_exactly_once(
     gateway_client: Any, upstream: Any, monkeypatch: Any
 ) -> None:
-    """One request, one row — including the paths that audit on the way past.
+    """One request, one row, including the paths that audit on the way past.
 
     A validated cookie writes its own row before the request is proxied. Adding
     the proxy row without knowing that would give the same request two rows, and
@@ -589,7 +589,7 @@ def test_a_proxied_request_is_audited_exactly_once(
     )
 
     # The gate refuses a cookie-less request to an access_code rule, so it
-    # redirects rather than proxying — that path already audits once, and the
+    # redirects rather than proxying, that path already audits once, and the
     # proxy row must not be added on top of it.
     get(gateway_client, HOST, "/")
     assert len(rows) == 1, rows

@@ -136,7 +136,7 @@ class _RoutedClient:
         return await self.request("POST", url, **kwargs)
 
     # The gateway proxies with `build_request` + `send(stream=True)` so that a
-    # response whose body never ends — a text/event-stream — is not read to
+    # response whose body never ends, a text/event-stream, is not read to
     # completion before it is handed on. `httpx.AsyncClient` implements both, so
     # this stub has to as well or the proxy path cannot be driven from a test.
     def build_request(self, method: str, url: str, **kwargs: Any) -> Any:
