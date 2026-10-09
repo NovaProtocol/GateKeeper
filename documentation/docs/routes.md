@@ -64,7 +64,7 @@ The draft probe is key-gated exactly as the saved-route probe is, so it widens n
 
 A route whose `upstream` is a **container on this compose file** resolves through
 Docker's internal DNS and costs nothing. A route whose upstream is the *hostname of
-another machine* — a name Tailscale publishes, like `main-server` — costs a DNS
+another machine*, meaning a name Tailscale publishes like `main-server`, costs a DNS
 lookup, and on this host that lookup used to take **four seconds**.
 
 ### What was wrong
@@ -75,8 +75,8 @@ also copied was `options ndots:0`, and `ndots:0` tells glibc that **any** name i
 absolute and should be tried as written *first*.
 
 `main-server` is not a public name. So the resolver asked for `main-server.`, waited
-for the timeout, got `NXDOMAIN`, and only then tried the search domain —
-`main-server.ghoul-aldebaran.ts.net` — which answered immediately. The delay was a
+for the timeout, got `NXDOMAIN`, and only then tried the search domain,
+`main-server.ghoul-aldebaran.ts.net`, which answered immediately. The delay was a
 name that does not exist being asked for and waited on, every single request.
 
 Measured on the live stack, both forms, same container:
@@ -98,7 +98,7 @@ The fix is one line in `compose.yaml`:
 `ndots:1` means "try the search domain first for a name with no dots", which is
 what the operator wrote the name to mean. Docker-internal names are unaffected:
 they are answered by Docker's resolver before the search list is consulted
-(verified — `gatekeeper_api` still resolves in 0.000s).
+(verified: `gatekeeper_api` still resolves in 0.000s).
 
 ### Why it looks intermittent
 
@@ -106,7 +106,7 @@ The gateway pools its outbound sockets, so the lookup happens only when it has t
 open a **new** connection. httpx's `keepalive_expiry` defaults to five seconds, so
 a visitor who pauses to read a page has an empty pool and pays the lookup again on
 their next click, while rapid clicks reuse the socket and feel instant. The audit
-log shows both halves as plain latency — mostly 3ms, with the occasional 3.8s:
+log shows both halves as plain latency: mostly 3ms, with the occasional 3.8s:
 
 ```
 id=12846       3 ms  /
@@ -118,9 +118,9 @@ id=12836    4002 ms  /
 Three separate causes had to line up to produce it, and each is worth knowing on
 its own:
 
-1. **`ndots:0` inherited into the container** — the four seconds.
-2. **A five-second keepalive** — why only *some* requests pay it.
-3. **A route to another machine** — Docker-internal routes never resolve through
+1. **`ndots:0` inherited into the container**: the four seconds.
+2. **A five-second keepalive**: why only *some* requests pay it.
+3. **A route to another machine**: Docker-internal routes never resolve through
    the host's search list at all, so this only affects cross-host upstreams.
 
 The gateway also raises `keepalive_expiry` to five minutes, so a normal reading
