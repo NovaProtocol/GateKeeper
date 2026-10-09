@@ -15,7 +15,7 @@ A signed cookie on the shared domain is the credential. Anyone without one is se
 instead of the app they asked for. Entering a correct access code once is enough to get into every
 app behind the gate, and closing the browser or letting the cookie expire closes that session again.
 
-**Design language:** Flat — per-app Tailwind plus the shared `flat/dark` kit from the CDN. No Bootstrap.
+**Design language:** flat. Per-app Tailwind plus the shared `flat/dark` kit from the CDN. No Bootstrap.
 
 ## What it does
 
@@ -49,7 +49,7 @@ explanation rather than being a mystery.
 ## Running it
 
 ```bash
-# env comes from the shell — there is no .env file (see .env.example for the list)
+# env comes from the shell, there is no .env file (see .env.example for the list)
 export DEPLOYMENT_TYPE=debug SECRET_KEY=<32+ chars> MANAGE_PASSWORD=<password>
 docker compose up -d
 ```
