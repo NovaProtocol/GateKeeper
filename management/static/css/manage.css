@@ -630,3 +630,19 @@
     .codes-table th, .codes-table td { padding: 0.5rem 0.75rem; }
     .stat-strip .stat { padding: 0 0.6rem; }
   }
+
+/* iOS Safari zooms the viewport when a form control under 16px takes focus.
+   .ui-input / .ui-select come from the shared kit; override here for narrow screens. */
+@media (max-width: 639px) {
+  .form-group input, .form-group select, .input, .ui-input, .ui-select { font-size: 1rem; }
+}
+
+/* ------------------------------------------------------- typography mechanics */
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+h1, h2, h3, h4, h5, h6 { text-wrap: balance; }
+p, li { text-wrap: pretty; }
+body { overflow-wrap: break-word; }
+table { font-variant-numeric: tabular-nums; }

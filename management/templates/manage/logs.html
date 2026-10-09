@@ -95,7 +95,7 @@
   async function loadNext(){
     if(loading||done) return;
     loading=true;
-    statusEl.textContent='Loading…';
+    statusEl.textContent='Loading more logs…';
     try{
       const qs=currentParams(page+1);
       const r=await fetch('/manage/logs?'+qs, {headers:{'Accept':'application/json'}});
