@@ -95,7 +95,7 @@ Trust model: only the tunnel may reach the origin (`gatekeeper_caddy` is the sol
 
 ## Visitor country
 
-`audit_logs.country` holds the visitor's country, resolved by `shared/geo.py:get_country()` from `CF-IPCountry`, the same edge header family as `CF-Connecting-IP`. Country level only: two uppercase letters, `XX` (Cloudflare's unknown) and `T1` (a Tor exit) treated as absent, everything else discarded rather than trimmed into shape. No city, no coordinates derived from the visitor address, no lookup service.
+`audit_logs.country` holds the visitor's country, resolved by `shared/geo.py:get_country()` from `CF-IPCountry`, the same edge header family as `CF-Connecting-IP`. Country level only: two uppercase letters, `XX` (Cloudflare's unknown) and `T1` (a Tor exit) treated as absent, everything else discarded rather than trimmed into shape. No city, no coordinates derived from the visitor address. What is *stored* here is always the tunnel's answer; the audit can also look an address up through `shared/ipapi.py` and keeps that in `ip_geo` separately, so the two are compared rather than merged - see [Logs & Audit](logs.md).
 
 The gateway reads it once per request, gated by the `geo_lookup_enabled` setting (default `true`), and sends it with the audit payload; `api` stores it after the same validation. Both ends tolerate the key being absent, so a gateway container that predates the column cannot break logging, and a stale one cannot store a value the reader would refuse.
 

@@ -12,6 +12,7 @@ cached ``Settings`` object instead of through the environment.
 
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 import os
 import sys
@@ -45,28 +46,29 @@ os.environ["API_HTTP_ADDR"] = "http://api.invalid:8002"
 from api.app import app as api_app  # noqa: E402
 from management.app import app as manage_app  # noqa: E402
 
-from shared import ipgeo  # noqa: E402
+from shared import ipapi  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
-def _no_ipgeo_download() -> Iterator[None]:
+def _no_ipapi_worker() -> Iterator[None]:
     """Keep the suite off the network.
 
-    Building the management app runs its lifespan, which ensures the ip66
-    database - an 18 MB fetch that would otherwise happen on every app the tests
-    create. The download itself is covered by ``tests/test_ipgeo.py``, which
-    injects its own fetcher; every other test only needs it not to happen.
-
-    Plain save/restore rather than ``monkeypatch``: the built-in fixture shares
-    one undo stack with the tests that also use it, and adding an entry reorders
-    the teardown of ``tests/test_backup.py``'s config restore enough to break it.
+    Building the API app runs its lifespan, which starts the freeipapi worker. A
+    stub that simply sleeps keeps that task cancellable and awaitable, which is
+    what the lifespan's shutdown expects, without a request ever leaving the
+    machine. The lookup itself is covered by ``tests/test_ipapi.py``, which
+    drives ``worker_step`` with its own fetcher.
     """
-    original = ipgeo._download
-    ipgeo._download = lambda dest, **kw: None
+    original = ipapi.worker_loop
+
+    async def _idle(sessionmaker, **kwargs) -> None:  # noqa: ANN001, ANN003
+        await asyncio.sleep(3600)
+
+    ipapi.worker_loop = _idle
     try:
         yield
     finally:
-        ipgeo._download = original
+        ipapi.worker_loop = original
 
 
 def _load_gateway_app():

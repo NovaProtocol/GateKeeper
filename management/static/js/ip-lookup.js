@@ -2,20 +2,23 @@
    ================================================
    A manager reading an address in the log wants to know who it is without
    leaving the page. This widget turns any element carrying `data-ip` into a
-   control that opens a small panel with the ip66.dev view of that address:
-   country, continent, autonomous system and the anonymising flags.
+   control that opens a small panel with what is known about that address:
+   country, city, coordinates, the network it belongs to, and whether it looks
+   like a proxy.
 
    Three things it deliberately is not:
 
    * **Not a hover-only affordance.** Hover opens it for a mouse, but the element
      is a real button, so keyboard (Enter/Space) and touch reach the same panel.
      A feature that only exists under a cursor does not exist.
-   * **Not a second copy of the data.** The panel is built from the lookup
-     response and thrown away when it closes; the row keeps the country
-     Cloudflare reported, and a disagreement between the two is shown as such
-     rather than resolved.
-   * **Not chatty.** Responses are cached in localStorage for a few hours, so
-     reading the same address twice costs one request, not two.
+   * **Not a second copy of the data.** The panel is built from the answer and
+     thrown away when it closes; the row keeps the country Cloudflare reported,
+     and a disagreement between the two sources is shown as such - with the
+     lookup named the one to act on - rather than resolved silently.
+   * **Not a way to spend a request.** The lookup itself happens once, in the
+     background, and is stored; this asks for the stored answer and says
+     "queued" when there genuinely is not one yet. The short cache here is only
+     to stop one page re-asking for the same address.
 
    The endpoint is `/manage/ip`, which is behind the manage session - the panel
    is the only thing that can ask, and a lapsed session answers with a 401 that
@@ -25,13 +28,14 @@
 
   var ENDPOINT = "/manage/ip";
   var CACHE_KEY = "gk.ipgeo.cache.v1";
-  var TTL_MS = 3 * 60 * 60 * 1000;
+  var TTL_MS = 60 * 1000;
   var HOVER_DELAY_MS = 160;
 
   var cache = readCache();
   var pop = null;
   var current = null;
   var hoverTimer = null;
+  var ticker = null;
 
   function readCache() {
     try { return JSON.parse(localStorage.getItem(CACHE_KEY)) || {}; } catch (e) { return {}; }
@@ -132,36 +136,83 @@
     });
   }
 
+  function humanAge(seconds) {
+    if (seconds == null) return "never";
+    if (seconds < 45) return "just now";
+    if (seconds < 3600) return Math.round(seconds / 60) + " min ago";
+    if (seconds < 86400) return Math.round(seconds / 3600) + " h ago";
+    return Math.round(seconds / 86400) + " d ago";
+  }
+
+  function startTicking(data) {
+    stopTicking();
+    if (!data || data.queued || !data.found || data.age_seconds == null) return;
+    /* The answer carries the age as of the response, so each tick adds the time
+       since the panel opened. That is the difference between "last updated" and
+       "last updated when you asked". */
+    var base = data.age_seconds;
+    var opened = Date.now();
+    ticker = setInterval(function () {
+      var node = pop && pop.querySelector(".ipgeo-aged");
+      if (!node) return;
+      node.textContent = humanAge(base + (Date.now() - opened) / 1000);
+    }, 1000);
+  }
+
+  function stopTicking() {
+    if (ticker) {
+      clearInterval(ticker);
+      ticker = null;
+    }
+  }
+
   function render(ip, data) {
     var lookup = data.lookup || {};
-    var country = lookup.country || {};
-    var continent = lookup.continent || {};
-    var asn = lookup.asn || {};
+    var country = data.country || {};
     var html = '<div class="ipgeo-head"><span>' + esc(ip) + "</span>" +
       '<button type="button" class="ipgeo-close" aria-label="Close">&times;</button></div>';
 
-    if (!data.found) {
-      html += '<div class="ipgeo-muted">This address is not in the ip66 database, or the database is not available right now.</div>';
+    if (data.queued) {
+      html += '<div class="ipgeo-muted">Queued for lookup. It will be fetched in the background at the provider\'s pace, so this page never waits on it.</div>';
+      if (data.error) {
+        html += '<div class="ipgeo-warn">The last attempt failed' +
+          (data.attempts ? " (" + esc(data.attempts) + ")" : "") + ": " + esc(data.error) + "</div>";
+      }
+    } else if (!data.found) {
+      html += '<div class="ipgeo-muted">Nothing is stored for this address.</div>';
     } else {
-      html += row("Country", esc(country.name || " - ") + (country.code ? " (" + esc(country.code) + ")" : ""));
-      html += row("Continent", esc(continent.name || " - "));
-      if (asn.number) {
-        html += row("AS", "AS" + esc(asn.number));
+      html += row("Country", esc(lookup.countryName || " - ") + (lookup.countryCode ? " (" + esc(lookup.countryCode) + ")" : ""));
+      if (lookup.continent) html += row("Continent", esc(lookup.continent) + (lookup.continentCode ? " (" + esc(lookup.continentCode) + ")" : ""));
+      if (lookup.cityName) html += row("City", esc(lookup.cityName));
+      if (lookup.regionName) html += row("Region", esc(lookup.regionName) + (lookup.regionCode ? " (" + esc(lookup.regionCode) + ")" : ""));
+      if (lookup.zipCode) html += row("ZIP", esc(lookup.zipCode));
+      if (lookup.latitude != null && lookup.longitude != null) {
+        html += row("Coordinates", esc(lookup.latitude) + ", " + esc(lookup.longitude));
       }
-      if (asn.organization) {
-        html += row("Operator", esc(asn.organization));
+      if (lookup.asn) html += row("AS", "AS" + esc(lookup.asn));
+      if (lookup.asnOrganization) html += row("Operator", esc(lookup.asnOrganization));
+      if (lookup.capital) html += row("Capital", esc(lookup.capital));
+      if (lookup.timeZones && lookup.timeZones.length) {
+        html += row("Time zone", esc(lookup.timeZones[0]) +
+          (lookup.timeZones.length > 1 ? " +" + (lookup.timeZones.length - 1) : ""));
       }
-      var flags = lookup.flags || [];
-      if (flags.length) {
-        html += '<div class="ipgeo-flags">' + flags.map(function (f) {
-          return '<span class="ipgeo-flag">' + esc(f) + "</span>";
-        }).join("") + "</div>";
-      }
-      if (data.mismatch) {
-        html += '<div class="ipgeo-warn">Red flag: Cloudflare reported a different country than the database resolves for this address.</div>';
-      }
+      if (lookup.currencies && lookup.currencies.length) html += row("Currencies", esc(lookup.currencies.join(", ")));
+      if (lookup.languages && lookup.languages.length) html += row("Languages", esc(lookup.languages.join(", ")));
+      html += row("Proxy", lookup.isProxy ? '<span class="ipgeo-flag">Proxy / VPN</span>' : "none detected");
+      html += '<div class="ipgeo-row"><span class="k">Last updated</span><span class="v ipgeo-aged">' +
+        esc(humanAge(data.age_seconds)) + "</span></div>";
     }
+
+    if (country.mismatch) {
+      html += '<div class="ipgeo-warn">Red flag: Cloudflare reported <strong>' + esc(country.cf) +
+        "</strong> for this address, the lookup says <strong>" + esc(country.lookup) +
+        "</strong>. The lookup is the source of truth.</div>";
+    } else if (country.truth) {
+      html += '<div class="ipgeo-muted">Country: ' + esc(country.truth) + " (from " + esc(country.source) + ").</div>";
+    }
+
     pop.innerHTML = html;
+    startTicking(data);
   }
 
   function show(anchor) {
@@ -187,6 +238,7 @@
   }
 
   function hide() {
+    stopTicking();
     if (pop) pop.hidden = true;
     current = null;
   }

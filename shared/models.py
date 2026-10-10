@@ -146,3 +146,40 @@ class AuditLog(Base):
     method: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
     status_code: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     attempted_code: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+
+
+class IpGeo(Base):
+    """One row per address the audit has seen, and the queue for looking it up.
+
+    The row *is* the queue. ``fetched_at`` NULL means "this address is known to
+    exist but has not been looked up yet", which is what makes adding an address
+    free: seeing a new visitor costs a row, never an API call. Draining those
+    NULL rows is what :mod:`shared.ipapi` does, at the free tier's pace.
+
+    ``data`` is the whole freeipapi response, verbatim, rather than the handful
+    of columns this page happens to read today: the upstream is the one that
+    knows what it returns, and a column per field would mean a migration every
+    time they add one. ``country_code`` is lifted out of it because the audit
+    compares countries constantly and a JSON parse per row is not the way to ask.
+
+    ``queued_at`` doubles as the next-attempt time, so a row that keeps failing
+    is pushed further out instead of being retried in a hot loop.
+    """
+
+    __tablename__ = "ip_geo"
+    ip: Mapped[str] = mapped_column(String(64), primary_key=True)
+    #: The full JSON body from freeipapi, or NULL while queued.
+    data: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    #: Lifted from ``data.countryCode`` so the audit can compare without parsing.
+    country_code: Mapped[Optional[str]] = mapped_column(String(2), nullable=True, index=True)
+    #: When this address entered the queue, and - after a failure - the earliest
+    #: time it may be attempted again.
+    queued_at: Mapped[dt.datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now(), index=True
+    )
+    #: When the lookup last succeeded. NULL is the queue.
+    fetched_at: Mapped[Optional[dt.datetime]] = mapped_column(DateTime, nullable=True, index=True)
+    #: Failed attempts since the last success, and the last reason. Visible so a
+    #: row that never resolves is legible instead of merely absent.
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
+    last_error: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)

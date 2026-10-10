@@ -9,7 +9,8 @@ import logging
 import secrets
 import socket
 import uuid
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
+from pathlib import Path
 from typing import Any
 
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request, Response
@@ -33,8 +34,8 @@ from shared.geo import (
     build_points,
     normalize_country,
 )
-from shared import ipgeo
-from shared.models import AuditLog, Code, CustomPage, Route, Rule, RuleGroup, Setting
+from shared import ipapi
+from shared.models import AuditLog, Code, CustomPage, IpGeo, Route, Rule, RuleGroup, Setting
 from shared.pages import (
     DEFAULT_PAGE_CONTENT_TYPE as pages_default_content_type,
 )
@@ -398,12 +399,17 @@ def _migrate_audit(sync_conn: Any) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
-    # The ip66 database is fetched here, and here only, because this is the one
-    # service that mounts `/data`. A copy younger than a day is kept; otherwise it
-    # is re-fetched before the first lookup. `ensure_database` never raises, so a
-    # failed fetch cannot keep the API from starting - the audit simply stays on
-    # the country Cloudflare's header gave it.
-    await asyncio.to_thread(ipgeo.ensure_database)
+    # The ip66 download is gone from this build - lookups go to freeipapi now and
+    # are cached in `ip_geo`. Its 18 MB file would otherwise sit in `/data`
+    # forever, so it is removed once here. This block is the whole of it: delete
+    # it with the next cleanup pass, long after every volume has booted once.
+    stale_db = Path(get_config().DB_DIR) / "ip66.mmdb"
+    if stale_db.exists():
+        try:
+            stale_db.unlink()
+            _log("ip66_database_removed", path=str(stale_db))
+        except OSError as e:
+            _log("ip66_database_remove_failed", path=str(stale_db), error=str(e))
     engine = get_engine()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -544,7 +550,16 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
             # A boot sweep is housekeeping. Losing it must never stop the API.
             await s.rollback()
             _log("audit_logs_prune_skipped", error=str(e))
-    yield
+    # The lookup queue drains here, in the one service that owns `/data`. It is a
+    # background task rather than a request path, so a page view never waits on
+    # freeipapi, and its pace is the free tier's own.
+    worker = ipapi.start_worker(get_sessionmaker())
+    try:
+        yield
+    finally:
+        worker.cancel()
+        with suppress(asyncio.CancelledError):
+            await worker
 
 
 async def prune_audit_logs(db: Any, days: int | None = None) -> int:
@@ -1447,25 +1462,39 @@ def create_app() -> FastAPI:
         return build_points([(row[0], row[1]) for row in rows])
 
     @app.get("/api/ip")
-    async def ip_lookup(ip: str = Query(...), country: str | None = None):  # type: ignore[no-untyped-def]
-        """What the ip66 database knows about one address.
+    async def ip_lookup(ip: str = Query(...), country: str | None = None, db=Depends(get_db)):  # type: ignore[no-untyped-def]
+        """What is known about one address, from the cache - never a live call.
 
-        Internal on this network like the other read endpoints, and the manage
-        panel is what puts a session in front of it: `GET /manage/ip` is the
-        gated surface, this is the work behind it. It lives here rather than in
-        the panel because the database file is in `/data`, and `api` is the one
-        service that mounts it.
+        A page view must not spend a request, so an address that has never been
+        seen is *queued* here rather than looked up, and the answer says so. The
+        worker does the looking up, at the free tier's pace; `queued` is the
+        truth, not a spinner.
 
-        The answer is a lookup, never a stored value. `audit_logs.country` keeps
-        whatever `CF-IPCountry` said, so the two are allowed to disagree -
-        `mismatch` reports that rather than one overwriting the other.
+        Two countries come back. Cloudflare's arrives on the row being viewed,
+        the lookup's is stored beside it, and `country.truth` names the lookup as
+        the answer to act on - see :func:`shared.ipapi.decide_country`.
         """
-        info = await asyncio.to_thread(ipgeo.lookup, ip)
+        address = (ip or "").strip()[:64]
+        if not address:
+            raise HTTPException(status_code=400, detail="ip required")
+        row = await db.get(IpGeo, address)
+        if row is None:
+            await ipapi.ensure_queued(db, address)
+            row = await db.get(IpGeo, address)
+        data = ipapi.parse(row) if row is not None else None
+        fetched = row.fetched_at if row is not None else None
+        age = int((ipapi.utcnow() - fetched).total_seconds()) if fetched else None
         return {
-            "ip": ip,
-            "found": info is not None,
-            "lookup": info,
-            "mismatch": ipgeo.mismatch(country, info),
+            "ip": address,
+            "found": data is not None,
+            "queued": fetched is None,
+            "last_updated": (fetched.isoformat() + "Z") if fetched else None,
+            "age_seconds": age,
+            "stale": bool(age is not None and age > ipapi.RECHECK_AFTER_S),
+            "lookup": data,
+            "error": (row.last_error if row is not None else None),
+            "attempts": (int(row.attempts or 0) if row is not None else 0),
+            "country": ipapi.decide_country(country, row.country_code if row is not None else None),
         }
 
     @app.get("/api/logs/export")
@@ -1772,10 +1801,17 @@ def create_app() -> FastAPI:
             )
             db.add(obj)
             await db.commit()
-            return {"ok": True, "id": obj.id}
         except Exception as e:
             await db.rollback()
             raise HTTPException(status_code=400, detail=str(e))
+        try:
+            await ipapi.ensure_queued(db, obj.ip)
+        except Exception as e:
+            # Queueing is enrichment. A failure here must never reject the audit
+            # row that was just written - the address simply stays unqueued.
+            await db.rollback()
+            _log("ipapi_enqueue_failed", error=str(e), ip=obj.ip)
+        return {"ok": True, "id": obj.id}
 
     return app
 

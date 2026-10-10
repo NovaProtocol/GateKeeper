@@ -21,13 +21,13 @@ project/
 │ ├── config.py # pydantic-settings: SECRET_KEY, MANAGE_PASSWORD, DATABASE_URL, INTERNAL_API_KEY, DEPLOYMENT_TYPE, BACKUP_CODE
 │ ├── jwt.py # PyJWT HS256 iss=gatekeeper aud=projectnova.download exp configurable/8h/configurable + jti
 │ ├── csp.py # the site-wide security headers (CONTENT_SECURITY_POLICY, SECURITY_HEADERS, apply_security_headers)
-│ ├── models.py # 7 tables + settings + audit_logs (routes, rule_groups, rules, codes, custom_pages, settings, audit_logs with method/status_code/attempted_code/country)
+│ ├── models.py # 7 config tables + settings + audit_logs (routes, rule_groups, rules, codes, custom_pages, settings, audit_logs with method/status_code/attempted_code/country, ip_geo)
 │ ├── settings_spec.py # the settings table: accepted values, defaults, fallback direction
 │ ├── security.py # pbkdf2_hmac sha512 100k, host_matches, path_matches, mask_code, apex_domain
 │ ├── pages.py # custom-page patterns: split_pattern, glob_match, sample_from_pattern
 │ ├── gate.py # rule dispatch + the unmatched-request decision (find_group_rule, resolve_rule_action)
 │ ├── geo.py # country resolution from CF-IPCountry + the static centroid table (country level only)
-│ ├── ipgeo.py # the ip66.dev MMDB: fetched to DB_DIR at startup, looked up on the spot (never stored)
+│ ├── ipapi.py # freeipapi lookups: the `ip_geo` queue, its pacing, and the country verdict
 │ ├── backup.py # signed plain-JSON export/restore of the config tables (HMAC-SHA256 over `config`)
 │ ├── rule_defaults.py # boot backfill: exactly one `/*` catch-all per group, forced last
 │ ├── error_pages.py # wants_html, render_error_html, render_maintenance_html (dark theme)
