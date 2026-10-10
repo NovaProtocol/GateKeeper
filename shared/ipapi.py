@@ -364,6 +364,11 @@ async def worker_step(
     return True
 
 
+def start_worker(sessionmaker: async_sessionmaker[AsyncSession]) -> asyncio.Task[None]:
+    """Start the loop as a background task. The caller owns cancelling it."""
+    return asyncio.create_task(worker_loop(sessionmaker), name="ipapi-worker")
+
+
 async def worker_loop(
     sessionmaker: async_sessionmaker[AsyncSession],
     *,
@@ -375,8 +380,13 @@ async def worker_loop(
     The sleep is computed from the limiter rather than fixed: when the tier is
     close to its window the loop waits exactly the remaining time, and when
     there is simply nothing due it waits :data:`IDLE_SLEEP_S` and looks again.
+
+    That last state is announced once per idle stretch rather than every poll -
+    "nothing is due" is a normal place to be, and a line a minute saying so is
+    noise, but a completely silent worker is indistinguishable from a dead one.
     """
     limiter = limiter or RateLimiter()
+    idle = False
     while True:
         try:
             worked = await worker_step(sessionmaker, limiter=limiter, fetcher=fetcher)
@@ -385,10 +395,10 @@ async def worker_loop(
         except Exception as exc:  # noqa: BLE001 - the loop must outlive any one failure
             log.warning("ipapi_worker_error", error=str(exc)[:200])
             worked = False
+        if worked:
+            idle = False
+        elif not idle:
+            idle = True
+            log.info("ipapi_queue_idle", note="nothing queued and nothing past the floor")
         wait = limiter.retry_after(time.monotonic())
         await asyncio.sleep(wait if wait > 0 else (0.0 if worked else IDLE_SLEEP_S))
-
-
-def start_worker(sessionmaker: async_sessionmaker[AsyncSession]) -> asyncio.Task[None]:
-    """Start the loop as a background task. The caller owns cancelling it."""
-    return asyncio.create_task(worker_loop(sessionmaker), name="ipapi-worker")
