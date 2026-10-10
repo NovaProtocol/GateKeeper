@@ -35,7 +35,8 @@ SESSION = create_manage_token()
 
 API = "http://api:8002"
 
-#: Two countries and an unknown bucket, as the API's `/api/logs/geo` returns it.
+#: What the API's `/api/logs/geo` returns now: the plotted points (the map), the
+#: country rollup (the table) and the count with no coordinates yet.
 GEO_POINTS: list[dict[str, Any]] = [
     {
         "cc": "PH",
@@ -43,28 +44,32 @@ GEO_POINTS: list[dict[str, Any]] = [
         "count": 6,
         "lat": 13.0,
         "lon": 122.0,
-        "share": 0.6,
+        "share": 0.75,
         "radius": 21.3,
     },
     {
         "cc": "DE",
         "name": "Germany",
-        "count": 3,
+        "count": 2,
         "lat": 51.0,
         "lon": 9.0,
-        "share": 0.3,
+        "share": 0.25,
         "radius": 15.2,
     },
-    {
-        "cc": None,
-        "name": "Unknown",
-        "count": 1,
-        "lat": None,
-        "lon": None,
-        "share": 0.1,
-        "radius": 0.0,
-    },
 ]
+
+GEO: dict[str, Any] = {
+    "points": GEO_POINTS,
+    "countries": [
+        {"cc": "PH", "name": "Philippines", "count": 6, "share": 0.6},
+        {"cc": "DE", "name": "Germany", "count": 3, "share": 0.3},
+        {"cc": None, "name": "Not yet located", "count": 1, "share": 0.1},
+    ],
+    "plotted": len(GEO_POINTS),
+    "unlocated": 1,
+    "total": 10,
+    "summary": "Philippines 6, Germany 3, and 1 more.",
+}
 
 BY_IP: list[dict[str, Any]] = [
     {
@@ -120,7 +125,7 @@ class _FakeClient:
     async def get(self, url: str, **kwargs: Any) -> _FakeResponse:
         self.calls.append(("GET", url, None, kwargs))
         if url.endswith("/api/logs/geo"):
-            return _FakeResponse(200, GEO_POINTS)
+            return _FakeResponse(200, GEO)
         if url.endswith("/api/logs/by-ip"):
             return _FakeResponse(200, BY_IP)
         if url.endswith("/api/logs"):
@@ -210,7 +215,7 @@ def test_the_country_totals_are_rendered_as_a_table_too(
     html = _page(manage_client)
 
     assert "Germany" in html
-    assert "Unknown" in html
+    assert "Not yet located" in html
     assert "60.0%" in html, "the share is rendered for each country"
 
 
@@ -223,13 +228,13 @@ def test_the_log_row_count_is_shown_from_the_pagination_header(
     assert "97" in html
 
 
-def test_the_page_says_country_level_only(manage_client: Any, fake_api: _FakeClient) -> None:
-    """The map stays header-only; the per-address lookup is a separate, queued thing."""
+def test_the_page_says_where_the_points_come_from(manage_client: Any, fake_api: _FakeClient) -> None:
+    """Plotted from the lookup's coordinates, with the unplottable still counted."""
     html = _page(manage_client)
 
-    assert "CF-IPCountry" in html
-    assert "Unknown" in html
-    assert "looked up once, in the background" in html
+    assert "resolved each address" in html
+    assert "Not yet located" in html
+    assert "not yet located" in html
 
 
 # --------------------------------------------------------------------------- #

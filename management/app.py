@@ -627,9 +627,16 @@ async def _audit_context(
     selected = str(mode or DEFAULT_GEO_MODE).strip().lower()
     if selected not in GEO_MODES:
         selected = DEFAULT_GEO_MODE
-    points = await _api_proxy_get("/api/logs/geo", {"mode": selected})
-    if not isinstance(points, list):
-        points = []
+    # One call now: the API returns the plotted points (the map), the country
+    # rollup (the table) and the unplotted count together, because they are three
+    # views of one aggregation and fetching them separately would let them drift.
+    geo = await _api_proxy_get("/api/logs/geo", {"mode": selected})
+    if not isinstance(geo, dict):
+        geo = {}
+    raw_points = geo.get("points")
+    points = raw_points if isinstance(raw_points, list) else []
+    raw_countries = geo.get("countries")
+    countries = raw_countries if isinstance(raw_countries, list) else []
     items = await _api_proxy_get("/api/logs/by-ip", {"limit": "50"})
     if not isinstance(items, list):
         items = []
@@ -637,10 +644,12 @@ async def _audit_context(
         "items": items,
         "points": points,
         "plotted": plot_geo_points(points),
+        "countries": countries,
         "mode": selected,
         "modes": GEO_MODES,
-        "summary": summarize_geo(points),
-        "geo_total": geo_totals(points),
+        "summary": geo.get("summary") or summarize_geo(countries),
+        "geo_total": int(geo.get("total") or geo_totals(points)),
+        "unlocated": int(geo.get("unlocated") or 0),
         "remaining": await _audit_log_count(),
         "confirm_word": CLEAR_CONFIRM,
         "clear_verdict": verdict,

@@ -26,7 +26,7 @@ project/
 │ ├── security.py # pbkdf2_hmac sha512 100k, host_matches, path_matches, mask_code, apex_domain
 │ ├── pages.py # custom-page patterns: split_pattern, glob_match, sample_from_pattern
 │ ├── gate.py # rule dispatch + the unmatched-request decision (find_group_rule, resolve_rule_action)
-│ ├── geo.py # country resolution from CF-IPCountry + the static centroid table (country level only)
+│ ├── geo.py # CF-IPCountry capture, country names, and the map's point maths on ip_geo coordinates
 │ ├── ipapi.py # freeipapi lookups: the `ip_geo` queue, its pacing, and the country verdict
 │ ├── backup.py # signed plain-JSON export/restore of the config tables (HMAC-SHA256 over `config`)
 │ ├── rule_defaults.py # boot backfill: exactly one `/*` catch-all per group, forced last
@@ -64,7 +64,7 @@ All healthchecks: `python -c "import urllib.request; urllib.request.urlopen('htt
 | `settings` | `key PK, value, updated_at`. Keys the panel edits: `unmatched_action` (`access_code`/`deny`/`none`), `rate_limit_access_code_per_min` (1..1000), `session_lifetime_hours` (1..720), `maintenance_mode` (`true`/`false`), `maintenance_message` (≤200 chars), `log_retention_days` (7..3650), `geo_lookup_enabled` (`true`/`false`). The accepted values, defaults and fallback direction for each live in `shared/settings_spec.py`, which the API validator, both reader services and the manage form all read |
 | `audit_logs` | `ts, ip, host, path, action, code_id, rule_group_id, rule_id, method, status_code, attempted_code, country, latency_ms, request_id, user_agent, referer` |
 
-`audit_logs.country` is a two-character code resolved from `CF-IPCountry` by `shared/geo.py`, or `NULL` when the header is absent, a Cloudflare sentinel, or not a country code. It is added to a live table by the guarded `ALTER TABLE ... ADD COLUMN` block in `api/app.py:_migrate_audit`, which also creates `ix_audit_logs_country`, and it is **never back-filled**: rows written before the column existed stay `NULL` and are reported as `Unknown` rather than guessed at from an address. Country level only, no city and no coordinates derived from a visitor's own address.
+`audit_logs.country` is a two-character code resolved from `CF-IPCountry` by `shared/geo.py`, or `NULL` when the header is absent, a Cloudflare sentinel, or not a country code. It is added to a live table by the guarded `ALTER TABLE ... ADD COLUMN` block in `api/app.py:_migrate_audit`, which also creates `ix_audit_logs_country`, and it is **never back-filled**: rows written before the column existed keep a `NULL` there, because the lookup's own answer is kept separately in `ip_geo` rather than written into the audit row. Country level only, from the header - the coordinates the map plots come from the lookup.
 
 `allow_ip / allow_time / rate_limit` on `rules` are **reserved** (stored, not enforced on hot path).
 

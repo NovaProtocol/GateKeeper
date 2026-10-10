@@ -40,13 +40,13 @@ The reader is deliberately strict about what it will accept, because a stored va
 
 `geo_lookup_enabled` (default `true`) is the switch. It is checked **before** the header is read, so turning it off means no country is captured at all, while the address, host, path and action are still audited: the switch is a privacy choice, not a logging outage. An unreadable value for the switch leaves capture on, matching the seeded default.
 
-**The header reaching the origin is unverified.** cloudflared is documented to forward `CF-IPCountry`; that it does so on this deployment was not testable from the build environment. The design's response is to degrade rather than guess: if the header never arrives, every request stores `NULL`, `GET /api/logs/geo` returns a single `Unknown` bucket, the map card renders a text sentence instead of a map, and nothing raises. The proof by effect after a deploy is one request followed by a read of the newest row: a non-NULL `country` means it arrived, a `NULL` across several requests means it did not, and the fix in that case is a Cloudflare setting rather than code.
+**The header reaching the origin is unverified.** cloudflared is documented to forward `CF-IPCountry`; that it does so on this deployment was not testable from the build environment. The design's response is to degrade rather than guess: if the header never arrives, every request stores `NULL`, the map plots whatever the lookup resolved and counts the rest as not yet located, the card renders a text sentence instead of a map, and nothing raises. The proof by effect after a deploy is one request followed by a read of the newest row: a non-NULL `country` means it arrived, a `NULL` across several requests means it did not, and the fix in that case is a Cloudflare setting rather than code.
 
-There is **no backfill**. Rows written before the column existed stay `NULL` and are reported as `Unknown`, which is honest: deriving a country for an old row would need a lookup service, and it would be a guess written into a record.
+There is **no backfill of the column.** Rows written before it existed keep a `NULL` there, and nothing infers one from the address: what the lookup resolves is kept in `ip_geo` beside it rather than written into the audit row.
 
 ## The viewer map
 
-`GET /api/logs/geo` returns one entry per country, ordered by count, with the name, the centroid, the share of the total and a marker radius. Four modes answer four different questions about the same rows, and the page's dropdown is a GET form so the mode is in the URL and the view is linkable:
+`GET /api/logs/geo` returns the map's points - one per rounded coordinate, with the country name, the share of the mode's total and a marker radius - plus the country rollup the table reads and the count of matched rows whose address has no coordinates yet. Four modes answer four different questions about the same rows, and the page's dropdown is a GET form so the mode is in the URL and the view is linkable:
 
 | `mode` | Counts |
 |---|---|
@@ -55,11 +55,11 @@ There is **no backfill**. Rows written before the column existed stay `NULL` and
 | `gated` | requests a code was presented for (`code_id IS NOT NULL`) |
 | `blocked` | requests the gate turned away (`action` in `deny`, `access_code_fail`, `access_code_rate_limited`) |
 
-Only the grouping happens in SQL. Ordering, share, radius and the `Unknown` bucket are decided by `shared/geo.py:build_points`, which is pure and unit-tested without a browser.
+Only the grouping happens in SQL. Ordering, share, radius and the unplotted bucket are decided by `shared/geo.py:build_location_points`, which is pure and unit-tested without a browser.
 
-The page draws **radius-scaled circle markers**, not a heat layer. With country-level data, one centroid per country, a heat map would render the shape of the centroid table weighted by traffic and imply a per-visitor density the data does not contain. The circle area scales with the count instead (radius proportional to the square root, so area tracks the number), which is the honest rendering of what was recorded. A real heat map would need a city-level GeoIP database, which is a separate decision with a licence and an update story attached.
+The page draws **radius-scaled circle markers**, not a heat layer. Each marker is one rounded coordinate the lookup resolved - about a kilometre of precision - so a heat layer would draw where the provider places its cities rather than where visitors were, and would imply a per-visitor density the data does not contain. The circle area scales with the count instead (radius proportional to the square root, so area tracks the number), which is the honest rendering of what was recorded.
 
-A country the centroid table does not carry still counts, appears in the table, and is simply not plotted; the `Unknown` bucket behaves the same way. The card carries the top countries as text as well, so the numbers exist without the picture for a screen reader, a failed tile fetch or an export.
+An address the lookup has not placed yet still counts, appears in the totals, and is simply not plotted; "Not yet located" is where those rows are reported rather than guessed at. The card carries the top countries as text as well, so the numbers exist without the picture for a screen reader, a failed tile fetch or an export.
 
 The map's wheel zooms only while the map holds focus: clicking it focuses the
 container, clicking away hands the wheel straight back to the page. The wheel is

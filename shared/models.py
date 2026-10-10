@@ -3,7 +3,7 @@ from __future__ import annotations
 import datetime as dt
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, func, text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, func, text
 from sqlalchemy.dialects.mysql import MEDIUMTEXT
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -172,6 +172,12 @@ class IpGeo(Base):
     data: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     #: Lifted from ``data.countryCode`` so the audit can compare without parsing.
     country_code: Mapped[Optional[str]] = mapped_column(String(2), nullable=True, index=True)
+    #: Lifted from ``data.latitude``/``longitude`` for the map. Same reasoning as
+    #: ``country_code``, and one more: the map groups by these, and picking two
+    #: numbers out of a JSON blob in SQL is backend-specific - SQLite and MySQL do
+    #: it differently - which a query that has to run on both should not be.
+    latitude: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    longitude: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     #: When this address entered the queue, and - after a failure - the earliest
     #: time it may be attempted again.
     queued_at: Mapped[dt.datetime] = mapped_column(

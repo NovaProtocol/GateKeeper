@@ -32,9 +32,10 @@ from shared.geo import (
     MAX_RADIUS,
     MIN_RADIUS,
     UNKNOWN_CC,
-    build_points,
-    centroid,
+    UNLOCATED_LABEL,
+    build_location_points,
     country_name,
+    country_rollup,
     get_country,
     marker_radius,
     normalize_country,
@@ -155,29 +156,6 @@ def test_the_obvious_countries_are_present() -> None:
         assert cc in COUNTRY_INFO, cc
 
 
-def test_centroid_returns_the_point_for_a_known_code() -> None:
-    lat, lon = centroid("PH")
-    assert lat == COUNTRY_INFO["PH"][0]
-    assert lon == COUNTRY_INFO["PH"][1]
-
-
-@pytest.mark.parametrize(
-    "value",
-    [
-        pytest.param("ZZ", id="unassigned"),
-        pytest.param("", id="empty"),
-        pytest.param(None, id="none"),
-    ],
-)
-def test_centroid_is_none_for_a_code_the_table_does_not_carry(value: str | None) -> None:
-    assert centroid(value) is None
-
-
-def test_centroid_upper_cases_before_looking_up() -> None:
-    """Lookup is not the same question as capture: a stored `PH` is `PH`."""
-    assert centroid("ph") == centroid("PH")
-
-
 def test_country_name_uses_the_display_name() -> None:
     assert country_name("PH") == COUNTRY_INFO["PH"][2]
     assert country_name("PH") != "PH"
@@ -228,71 +206,82 @@ def test_radius_never_exceeds_the_maximum() -> None:
 # --------------------------------------------------------------------------- #
 
 
+def test_points_carry_the_lookup_coordinates() -> None:
+    points = build_location_points([(37.4225, -122.085, "US", 3)])
+    assert points[0]["lat"] == 37.4225
+    assert points[0]["lon"] == -122.085
+    assert points[0]["cc"] == "US"
+    assert points[0]["name"] == COUNTRY_INFO["US"][2]
+
+
 def test_points_are_sorted_by_count_then_name() -> None:
-    points = build_points([("US", 5), ("PH", 9), ("DE", 5)])
+    points = build_location_points([(1.0, 1.0, "US", 5), (2.0, 2.0, "PH", 9), (3.0, 3.0, "DE", 5)])
     assert [(p["cc"], p["count"]) for p in points] == [("PH", 9), ("DE", 5), ("US", 5)]
 
 
-def test_every_point_carries_its_centroid_and_name() -> None:
-    points = build_points([("PH", 3)])
-    assert points[0]["lat"] == COUNTRY_INFO["PH"][0]
-    assert points[0]["lon"] == COUNTRY_INFO["PH"][1]
-    assert points[0]["name"] == COUNTRY_INFO["PH"][2]
+def test_a_row_without_coordinates_is_dropped_rather_than_guessed() -> None:
+    """A queued address has no point; placing it anywhere would be an invention."""
+    points = build_location_points([(None, None, "US", 4), (2.0, 2.0, "PH", 1)])
+    assert [p["cc"] for p in points] == ["PH"]
+    assert totals(points) == 1
 
 
-def test_shares_add_up_across_every_bucket() -> None:
-    points = build_points([("PH", 3), ("US", 1)])
+def test_half_a_coordinate_is_not_enough() -> None:
+    assert build_location_points([(12.0, None, "US", 3)]) == []
+    assert build_location_points([(None, 12.0, "US", 3)]) == []
+
+
+def test_every_plotted_point_is_mappable() -> None:
+    """The marker layer must never see a null: everything here has both ordinates."""
+    points = build_location_points([(1.0, 1.0, "PH", 3), (None, None, "US", 2)])
+    assert points == plot_points(points)
+
+
+def test_zero_and_negative_counts_are_dropped() -> None:
+    assert build_location_points([(1.0, 1.0, "PH", 0), (2.0, 2.0, "US", -3)]) == []
+
+
+def test_an_empty_input_produces_an_empty_list() -> None:
+    assert build_location_points([]) == []
+    assert totals([]) == 0
+
+
+def test_shares_add_up_across_every_point() -> None:
+    points = build_location_points([(1.0, 1.0, "PH", 3), (2.0, 2.0, "US", 1)])
     assert points[0]["share"] == 0.75
     assert points[1]["share"] == 0.25
     assert math.isclose(sum(p["share"] for p in points), 1.0, rel_tol=1e-9)
 
 
-def test_the_unknown_bucket_is_appended_last_and_only_when_rows_lacked_a_country() -> None:
-    with_unknown = build_points([("PH", 3), (None, 2)])
-    assert with_unknown[-1]["name"] == UNKNOWN_CC
-    assert with_unknown[-1]["cc"] is None
-    assert with_unknown[-1]["count"] == 2
-    assert with_unknown[-1]["share"] == 0.4
-
-    without = build_points([("PH", 3)])
-    assert [p["name"] for p in without] == [COUNTRY_INFO["PH"][2]]
-
-
-def test_the_unknown_bucket_has_no_point_to_plot() -> None:
-    points = build_points([(None, 4), ("PH", 1)])
-    assert [p["name"] for p in plot_points(points)] == [COUNTRY_INFO["PH"][2]]
-
-
-def test_a_country_with_no_centroid_still_counts_in_the_total() -> None:
-    """It is data; it just has nowhere to be drawn."""
-    points = build_points([("XE", 2), ("PH", 6)])
-    assert totals(points) == 8
-    assert [p["cc"] for p in plot_points(points)] == ["PH"]
-    assert points[0]["cc"] == "PH"
-
-
-def test_zero_and_negative_counts_are_dropped() -> None:
-    assert build_points([("PH", 0), ("US", -3)]) == []
-
-
-def test_an_empty_input_produces_an_empty_list() -> None:
-    assert build_points([]) == []
-    assert totals([]) == 0
-
-
-def test_a_null_country_alone_produces_only_the_unknown_bucket() -> None:
-    """The state the page is in if `CF-IPCountry` never arrives at all."""
-    points = build_points([(None, 8162)])
-    assert len(points) == 1
-    assert points[0]["name"] == UNKNOWN_CC
-    assert points[0]["lat"] is None and points[0]["lon"] is None
-    assert plot_points(points) == []
-    assert totals(points) == 8162
+def test_a_code_the_name_table_does_not_carry_keeps_the_code() -> None:
+    points = build_location_points([(1.0, 1.0, "XE", 2)])
+    assert points[0]["name"] == "XE"
 
 
 def test_shares_are_rounded_so_the_page_does_not_render_a_dozen_digits() -> None:
-    points = build_points([("PH", 1), ("US", 2)])
+    points = build_location_points([(1.0, 1.0, "PH", 1), (2.0, 2.0, "US", 2)])
     assert all(len(str(p["share"]).split(".")[-1]) <= 4 for p in points)
+
+
+# --------------------------------------------------------------------------- #
+# The country rollup (the totals table and the text)
+# --------------------------------------------------------------------------- #
+
+
+def test_the_rollup_adds_one_country_s_points_together() -> None:
+    points = build_location_points([(1.0, 1.0, "US", 3), (2.0, 2.0, "US", 2), (3.0, 3.0, "PH", 1)])
+    rows = country_rollup(points)
+    assert [(r["cc"], r["count"]) for r in rows] == [("US", 5), ("PH", 1)]
+    assert rows[0]["share"] == 0.8333
+
+
+def test_the_rollup_of_nothing_is_empty() -> None:
+    assert country_rollup([]) == []
+
+
+def test_a_point_with_no_country_rolls_up_as_unknown() -> None:
+    rows = country_rollup(build_location_points([(1.0, 1.0, None, 2)]))
+    assert rows[0]["name"] == UNKNOWN_CC
 
 
 # --------------------------------------------------------------------------- #
@@ -301,21 +290,23 @@ def test_shares_are_rounded_so_the_page_does_not_render_a_dozen_digits() -> None
 
 
 def test_the_summary_names_the_largest_countries_with_their_counts() -> None:
-    points = build_points([("PH", 9), ("US", 4)])
-    text = summarize(points)
+    points = build_location_points([(1.0, 1.0, "PH", 9), (2.0, 2.0, "US", 4)])
+    text = summarize(country_rollup(points))
     assert COUNTRY_INFO["PH"][2] in text
     assert "9" in text
     assert COUNTRY_INFO["US"][2] in text
 
 
 def test_the_summary_counts_the_remainder_rather_than_listing_everything() -> None:
-    points = build_points([("PH", 9), ("US", 4), ("DE", 2), ("FR", 1)])
-    text = summarize(points, limit=2)
+    points = build_location_points(
+        [(1.0, 1.0, "PH", 9), (2.0, 2.0, "US", 4), (3.0, 3.0, "DE", 2), (4.0, 4.0, "FR", 1)]
+    )
+    text = summarize(country_rollup(points), limit=2)
     assert "and 2 more" in text
 
 
 def test_the_summary_says_so_when_a_single_country_is_all_there_is() -> None:
-    text = summarize(build_points([("PH", 1)]))
+    text = summarize(country_rollup(build_location_points([(1.0, 1.0, "PH", 1)])))
     assert text.endswith(".")
     assert "more" not in text
 
@@ -324,10 +315,11 @@ def test_the_summary_handles_no_data() -> None:
     assert summarize([]) == "No country data recorded yet."
 
 
-def test_the_summary_includes_the_unknown_bucket() -> None:
-    """Otherwise the one number that explains the missing map would be hidden."""
-    text = summarize(build_points([(None, 7), ("PH", 2)]))
-    assert UNKNOWN_CC in text
+def test_the_summary_includes_the_not_yet_located_bucket() -> None:
+    """Otherwise the number that explains a sparse map would be hidden."""
+    rows = country_rollup(build_location_points([(1.0, 1.0, "PH", 2)]))
+    rows.append({"cc": None, "name": UNLOCATED_LABEL, "count": 7, "share": 0.0})
+    assert UNLOCATED_LABEL in summarize(rows)
 
 
 # --------------------------------------------------------------------------- #

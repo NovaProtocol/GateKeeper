@@ -20,11 +20,13 @@ Three deliberate limits:
   ``Unknown`` bucket, and the page renders a sentence instead of a map. Nothing
   raises and nothing retries.
 
-The centroid table is country-labelled points, not a density surface. Every
-country is one dot, regardless of how many of its people visited, which is why
-the audit page draws radius-scaled markers rather than a heat layer: heat over
-centroids would render the shape of this table and imply per-visitor density that
-the data does not contain.
+The map is no longer drawn from this table. It plots where the *lookup* placed
+each address - real coordinates from ``ip_geo``, via :func:`build_location_points`
+- because a country has exactly one centre and almost nobody is standing on it,
+so a country-centroid map draws the shape of a lookup table and says nothing
+about where anyone was. What the table below is still for is the country-code to
+display-name authority this module leans on everywhere, plus each country's
+reference point, which stays part of it.
 """
 
 from __future__ import annotations
@@ -61,9 +63,86 @@ BLOCKED_ACTIONS = ("deny", "access_code_fail", "access_code_rate_limited")
 #: silently dropped from a total.
 UNKNOWN_CC = "Unknown"
 
+#: The bucket for rows the mode counted that have no coordinates yet - a lookup
+#: still queued, or one that failed. Named rather than dropped, so the totals
+#: still add up to the mode's own count and a shrinking map is explained.
+UNLOCATED_LABEL = "Not yet located"
+
 #: Marker radius bounds, in pixels, for the audit map.
 MIN_RADIUS = 4.0
 MAX_RADIUS = 26.0
+
+
+def build_location_points(
+    rows: list[tuple[Any, Any, str | None, int]], *, total: int | None = None
+) -> list[dict[str, Any]]:
+    """Turn ``(lat, lon, country_code, count)`` rows into map points.
+
+    The map plots where the *lookup* resolved each address - ``ip_geo``'s
+    coordinates, rounded by SQL to about a kilometre - rather than a country's
+    centre. A country has exactly one centre and almost nobody is standing on it,
+    so a country-centroid map draws the shape of a lookup table and says nothing
+    about where anyone was. A resolved point is a real place.
+
+    Pure and database-free, like the rest of this module: the SQL only groups and
+    counts, and every presentation decision (ordering, share, radius) is made
+    here, which is what makes it unit-testable without a browser.
+
+    A row with no coordinates is skipped rather than placed at a guess; the
+    caller counts those separately so they are reported as unplotted instead of
+    quietly disappearing from a total.
+    """
+    points: list[dict[str, Any]] = []
+    for lat, lon, cc, count in rows:
+        count = int(count or 0)
+        if count <= 0 or lat is None or lon is None:
+            continue
+        points.append(
+            {
+                "cc": str(cc).upper() if cc else None,
+                "name": country_name(cc),
+                "count": count,
+                "lat": float(lat),
+                "lon": float(lon),
+                "share": 0.0,
+                "radius": 0.0,
+            }
+        )
+
+    points.sort(key=lambda p: (-p["count"], p["name"] or ""))
+    # `total` is the mode's own count when the caller knows it - which includes
+    # the rows that could not be placed. Falling back to the plotted sum would
+    # make every share a share of the *map*, so the percentages would add up to
+    # 100 while a fifth of the traffic sat outside them.
+    denominator = total if total is not None else sum(p["count"] for p in points)
+    max_count = max((p["count"] for p in points), default=0)
+    for point in points:
+        point["share"] = round(point["count"] / denominator, 4) if denominator else 0.0
+        point["radius"] = marker_radius(point["count"], max_count)
+    return points
+
+
+def country_rollup(
+    points: list[dict[str, Any]], *, total: int | None = None
+) -> list[dict[str, Any]]:
+    """Roll the plotted points up by country, largest first.
+
+    This is what the totals table and the text summary read now: countries as
+    the *lookup* resolved them, counted from the same points the markers use, so
+    the table and the map cannot disagree about the numbers. ``total`` works the
+    same way as in :func:`build_location_points`.
+    """
+    totals: dict[str, dict[str, Any]] = {}
+    for point in points:
+        key = point.get("cc") or UNKNOWN_CC
+        entry = totals.setdefault(key, {"cc": point.get("cc"), "name": point.get("name") or UNKNOWN_CC, "count": 0})
+        entry["count"] += int(point.get("count") or 0)
+
+    rows = sorted(totals.values(), key=lambda e: (-e["count"], e["name"] or ""))
+    denominator = total if total is not None else sum(r["count"] for r in rows)
+    for row in rows:
+        row["share"] = round(row["count"] / denominator, 4) if denominator else 0.0
+    return rows
 
 
 def normalize_country(value: Any) -> str | None:
@@ -91,14 +170,6 @@ def get_country(request: Request) -> str | None:
         if country:
             return country
     return None
-
-
-def centroid(cc: str | None) -> tuple[float, float] | None:
-    """The ``(lat, lon)`` point for a country code, or ``None`` if unknown."""
-    entry = COUNTRY_INFO.get(str(cc or "").strip().upper())
-    if entry is None:
-        return None
-    return (entry[0], entry[1])
 
 
 def country_name(cc: str | None) -> str:
@@ -134,61 +205,6 @@ def marker_radius(count: int, max_count: int) -> float:
     return round(MIN_RADIUS + (MAX_RADIUS - MIN_RADIUS) * math.sqrt(share), 1)
 
 
-def build_points(counts: list[tuple[str | None, int]]) -> list[dict[str, Any]]:
-    """Turn ``(country, count)`` pairs into map points, joining in the centroids.
-
-    Pure and database-free so the aggregation can be unit-tested without a
-    browser or a server: the SQL only produces counts per country, and every
-    presentation decision (ordering, share, radius, the unknown bucket) is made
-    here.
-
-    A country with no centroid in the table keeps its entry with ``lat``/``lon``
-    ``None``, so it counts in the totals and appears in the text summary while
-    being skipped by the marker layer. The unknown bucket is appended only when
-    rows actually lacked a country, and always last.
-    """
-    known: list[dict[str, Any]] = []
-    unknown = 0
-    for cc, count in counts:
-        count = int(count or 0)
-        if count <= 0:
-            continue
-        if cc is None:
-            unknown += count
-            continue
-        point = centroid(cc)
-        known.append(
-            {
-                "cc": str(cc).upper(),
-                "name": country_name(cc),
-                "count": count,
-                "lat": point[0] if point else None,
-                "lon": point[1] if point else None,
-            }
-        )
-
-    known.sort(key=lambda p: (-p["count"], p["name"]))
-    total = sum(p["count"] for p in known) + unknown
-    max_count = max((p["count"] for p in known), default=0)
-    for point in known:
-        point["share"] = round(point["count"] / total, 4) if total else 0.0
-        point["radius"] = marker_radius(point["count"], max_count)
-
-    if unknown:
-        known.append(
-            {
-                "cc": None,
-                "name": UNKNOWN_CC,
-                "count": unknown,
-                "lat": None,
-                "lon": None,
-                "share": round(unknown / total, 4) if total else 0.0,
-                "radius": 0.0,
-            }
-        )
-    return known
-
-
 def plot_points(points: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Only the points a map can draw, so the marker layer never sees a null."""
     return [p for p in points if p.get("lat") is not None and p.get("lon") is not None]
@@ -215,13 +231,13 @@ def totals(points: list[dict[str, Any]]) -> int:
     return sum(int(p.get("count") or 0) for p in points)
 
 
-#: Country label points: ``CC -> (latitude, longitude, display name)``.
+#: Country reference: ``CC -> (latitude, longitude, display name)``.
 #:
-#: One point per country, sourced from a public country-centroid table and
-#: rounded to two decimals. It is a static table in this file on purpose: a
-#: GeoIP database would be a licence, an update cadence and a large artifact in
-#: the image, and an external API would send visitor addresses to a third party,
-#: which contradicts the privacy posture the country-only design exists to keep.
+#: The display name is what this module is mostly for now - :func:`country_name`
+#: reads it for every rollup and every marker label, including for codes freeipapi
+#: reports. Each entry also carries the country's representative point, which the
+#: map used to plot and no longer does; it is kept because a country's reference
+#: point is part of what this table is, not because anything looks it up.
 COUNTRY_INFO: dict[str, tuple[float, float, str]] = {
     "AD": (42.5, 1.6, "Andorra"),
     "AE": (24.0, 54.0, "United Arab Emirates"),

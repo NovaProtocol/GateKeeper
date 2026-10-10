@@ -40,17 +40,26 @@ from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from shared.models import IpGeo
+from shared.models import AuditLog, IpGeo
 
 log = structlog.get_logger("gatekeeper.ipapi")
 
 #: One address, JSON in, JSON out. The free tier needs no key.
 API_BASE = "https://free.freeipapi.com/api/v1/json"
 
-#: The published free-tier limits. Both are enforced: 60 in a minute is the
-#: headline, 10 in 10 seconds is the one a burst actually trips.
-RATE_PER_MINUTE = 60
-RATE_PER_10S = 10
+#: The free tier publishes 60 requests a minute and 10 in ten seconds, and this
+#: worker deliberately paces *under* both. Sitting exactly on the boundary trips
+#: 429s - the provider's window is theirs, not this object's, and their clock is
+#: not ours - and a 429 is a request that bought nothing. The margin is what keeps
+#: a long drain unbroken.
+PUBLISHED_PER_MINUTE = 60
+PUBLISHED_PER_10S = 10
+RATE_PER_MINUTE = 48
+RATE_PER_10S = 8
+
+#: How long to hold off after the provider says 429. Long enough for a window to
+#: clear, short enough that a drain resumes in a minute rather than stalling.
+RATE_LIMIT_PAUSE_S = 30.0
 
 #: How old data has to be before it is worth looking up again, and the floor the
 #: idle path will not cross. The floor is the more aggressive of the two - the
@@ -76,25 +85,39 @@ def utcnow() -> dt.datetime:
     return dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)
 
 
+class RateLimited(RuntimeError):
+    """The provider refused a call with 429.
+
+    Its own exception because it is not about the address: the caller did nothing
+    wrong, the window is shut. It pauses the worker instead of penalising the row.
+    """
+
+
 class RateLimiter:
-    """A sliding window over the calls actually made.
+    """A sliding window over the calls actually made, plus an external pause.
 
     Both published limits in one object, because a caller that respects one and
     not the other still gets blocked. ``retry_after`` answers "how long until a
     call is allowed", which lets the worker sleep exactly that long instead of
-    polling.
+    polling - and it is `max()` of the two windows and any pause, so a 429 from
+    the provider holds the loop off no matter what the sliding window thinks.
     """
 
     def __init__(self, *, per_minute: int = RATE_PER_MINUTE, per_10s: int = RATE_PER_10S) -> None:
         self.per_minute = per_minute
         self.per_10s = per_10s
         self._calls: deque[float] = deque()
+        self._paused_until = 0.0
+
+    def pause_for(self, seconds: float) -> None:
+        """Hold every call off for ``seconds`` from now. Set by a 429."""
+        self._paused_until = max(self._paused_until, time.monotonic() + seconds)
 
     def retry_after(self, now: float) -> float:
         """Seconds to wait before the next call may be made."""
         while self._calls and now - self._calls[0] > 60.0:
             self._calls.popleft()
-        wait = 0.0
+        wait = max(0.0, self._paused_until - now)
         if len(self._calls) >= self.per_10s:
             wait = max(wait, self._calls[-self.per_10s] + 10.0 - now)
         if len(self._calls) >= self.per_minute:
@@ -117,6 +140,8 @@ async def fetch(ip: str, *, client: httpx.AsyncClient | None = None) -> dict[str
     else:
         async with httpx.AsyncClient(timeout=TIMEOUT_S, follow_redirects=True) as own:
             response = await own.get(url)
+    if response.status_code == 429:
+        raise RateLimited("freeipapi returned 429")
     response.raise_for_status()
     data = response.json()
     if not isinstance(data, dict) or not data:
@@ -133,6 +158,32 @@ def country_of(data: dict[str, Any] | None) -> str | None:
         return None
     code = code.strip().upper()
     return code if len(code) == 2 and code.isalpha() else None
+
+
+def coordinates_of(data: dict[str, Any] | None) -> tuple[float | None, float | None]:
+    """The ``(latitude, longitude)`` the API reported, if both are usable numbers.
+
+    Both or neither: a point needs two ordinates, and a half a coordinate would
+    plot somewhere arbitrary. Booleans are excluded deliberately - ``True`` is an
+    ``int`` in Python and would otherwise come out as latitude 1.
+    """
+    if not isinstance(data, dict):
+        return (None, None)
+
+    def number(value: Any) -> float | None:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        value = float(value)
+        if value != value:  # NaN
+            return None
+        return value
+
+    lat, lon = number(data.get("latitude")), number(data.get("longitude"))
+    if lat is None or lon is None:
+        return (None, None)
+    if not (-90.0 <= lat <= 90.0) or not (-180.0 <= lon <= 180.0):
+        return (None, None)
+    return (lat, lon)
 
 
 def decide_country(cf_country: str | None, lookup_country: str | None) -> dict[str, Any]:
@@ -220,6 +271,28 @@ def next_due(now: dt.datetime | None = None):
     )
 
 
+async def backfill_queue(
+    sessionmaker: async_sessionmaker[AsyncSession], *, limit: int = 10000
+) -> int:
+    """Queue every address already recorded in the audit. Returns how many were added.
+
+    Run at boot. Queueing costs a row and never a request, so this is free and
+    safe to repeat - which is the point: the map plots coordinates, and without
+    this it would only ever know about addresses seen since the lookup existed.
+    Draining happens at the provider's pace, in the background, like everything
+    else here.
+    """
+    added = 0
+    async with sessionmaker() as session:
+        result = await session.execute(
+            select(AuditLog.ip).where(AuditLog.ip.is_not(None)).distinct().limit(limit)
+        )
+        for ip in result.scalars().all():
+            if await ensure_queued(session, ip):
+                added += 1
+    return added
+
+
 async def worker_step(
     sessionmaker: async_sessionmaker[AsyncSession],
     *,
@@ -248,6 +321,13 @@ async def worker_step(
     limiter.record(time.monotonic())
     try:
         data = await fetch_one(address)
+    except RateLimited as exc:
+        # Not the address's fault and not a failure to record against it: the
+        # provider's window is shut. Hold every call off and leave the row where
+        # it is, queued, so the next pass picks it up first.
+        limiter.pause_for(RATE_LIMIT_PAUSE_S)
+        log.warning("ipapi_rate_limited", ip=address, error=str(exc)[:200])
+        return True
     except Exception as exc:  # noqa: BLE001 - a failed lookup is stored as a failure
         async with sessionmaker() as session:
             row = await session.get(IpGeo, address)
@@ -269,11 +349,18 @@ async def worker_step(
             return True
         row.data = json.dumps(data, separators=(",", ":"))
         row.country_code = country_of(data)
+        row.latitude, row.longitude = coordinates_of(data)
         row.fetched_at = utcnow()
         row.attempts = 0
         row.last_error = None
         await session.commit()
-    log.info("ipapi_lookup_stored", ip=address, country=country_of(data))
+    log.info(
+        "ipapi_lookup_stored",
+        ip=address,
+        country=country_of(data),
+        lat=row.latitude,
+        lon=row.longitude,
+    )
     return True
 
 

@@ -1,21 +1,20 @@
-"""`GET /api/logs/geo`: the four aggregations, over a fixture with known numbers.
+"""`GET /api/logs/geo`: the four aggregations, plotted at the lookup's coordinates.
 
-The endpoint is the only place the country column is turned into something an
-operator reads, and it is checked from the outside for the same reason the rest
-of the API is: the shapes it returns are what the page plots, so a wrong total
-here is a wrong map there.
+The endpoint is the only place the audit is turned into something an operator
+reads, and it is checked from the outside for the same reason the rest of the API
+is: the shapes it returns are what the page plots, so a wrong total here is a
+wrong map there.
 
-The fixture is deliberately small and fully specified: three countries and one
-row with no country, with a duplicate address inside one country so `visitors`
-has something to de-duplicate, and with exactly one blocked action and one
-gated row, so each mode has a number it could only get by counting the right
-thing.
+The fixture is small and fully specified. Three addresses resolve to coordinates
+(two of them to the *same* point, so the grouping has something to merge), and a
+fourth is left without a lookup row at all, which is the state every address is
+in until the worker reaches it.
 
 Two things are load-bearing and both are asserted:
 
-* **the unknown bucket appears only when there are unknown rows**, because the
-  alternative is a permanent "Unknown" entry that makes a healthy capture look
-  broken;
+* **an address with no coordinates is counted, not guessed.** It lands in the
+  unplotted bucket and the totals still add up to the mode's own count, because a
+  map that quietly shrinks is worse than one that admits what it cannot place;
 * **missing `country` on ingest is a NULL, not a rejection.** A gateway container
   that has not been rebuilt yet sends no such key, and logging must survive that.
 """
@@ -24,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import json
 from typing import Any
 
 import pytest
@@ -33,8 +33,8 @@ from tests.conftest import TEST_INTERNAL_API_KEY
 
 INTERNAL_KEY_HEADERS = {"X-Internal-Api-Key": TEST_INTERNAL_API_KEY}
 
-#: `(country, ip, action, code_id, port)`, one row each, plus a second row that
-#: shares the PH address so `visitors` has something to collapse.
+#: `(country, ip, action, code_id)`, one row each. The first address appears
+#: twice so `visitors` has something to collapse.
 ROWS: list[tuple[str | None, str, str, int | None]] = [
     ("PH", "203.0.113.10", "auth_success", 1),
     ("PH", "203.0.113.10", "no_cookie_redirect", None),
@@ -43,19 +43,30 @@ ROWS: list[tuple[str | None, str, str, int | None]] = [
     (None, "203.0.113.40", "access_code_fail", None),
 ]
 
-#: What each mode must return, as `{country: count}` before the Unknown bucket is
-#: appended. `views` counts rows, `visitors` distinct addresses, `gated` rows with
-#: a code, `blocked` rows whose action is one of the three refusals.
-EXPECTED = {
-    "views": {"PH": 2, "US": 1, "DE": 1},
-    "visitors": {"PH": 1, "US": 1, "DE": 1},
-    "gated": {"PH": 1, "US": 1},
-    "blocked": {"DE": 1},
+#: What the lookup resolved for each address: `(country, latitude, longitude)`,
+#: or `None` for an address the worker has not reached. `.40` shares `.10`'s
+#: point on purpose - two addresses a city's single point puts in one place.
+GEO_ROWS: dict[str, tuple[str, float, float] | None] = {
+    "203.0.113.10": ("PH", 14.5995, 120.9842),
+    "203.0.113.20": ("US", 37.4225, -122.085),
+    "203.0.113.30": None,
+    "203.0.113.40": ("PH", 14.5995, 120.9842),
 }
 
-#: The fixture's one row with no country, which every mode that matches it
-#: reports in the unknown bucket rather than dropping from the total.
-UNKNOWN_ROW = {"views": 1, "visitors": 1, "gated": 0, "blocked": 1}
+#: What each mode must total, as `{country: count}` over the *plotted* points.
+EXPECTED = {
+    "views": {"PH": 3, "US": 1},
+    "visitors": {"PH": 2, "US": 1},
+    "gated": {"PH": 1, "US": 1},
+    "blocked": {"PH": 1},
+}
+
+#: Mode-matched rows whose address has no coordinates yet - every mode that
+#: matches `.30`, which is the one the fixture leaves unqueued.
+UNPLOTTED = {"views": 1, "visitors": 1, "gated": 0, "blocked": 1}
+
+#: The mode's own count, which is plotted rows plus the unplotted bucket.
+TOTALS = {"views": 5, "visitors": 4, "gated": 2, "blocked": 2}
 
 
 async def _clear() -> None:
@@ -63,18 +74,18 @@ async def _clear() -> None:
 
     async with get_sessionmaker()() as s:
         await s.execute(text("DELETE FROM audit_logs"))
+        await s.execute(text("DELETE FROM ip_geo"))
         await s.commit()
 
 
 async def _seed(rows: list[tuple[str | None, str, str, int | None]]) -> None:
     from shared.db import get_sessionmaker
-    from shared.models import AuditLog, Code
+    from shared.models import AuditLog, Code, IpGeo
 
     async with get_sessionmaker()() as s:
         res = await s.execute(select(Code).where(Code.id == 1))
         if res.scalars().first() is None:
-            placeholder = Code(id=1, code="geo-fixture-code", label="fixture")
-            s.add(placeholder)
+            s.add(Code(id=1, code="geo-fixture-code", label="fixture"))
             await s.commit()
         now = dt.datetime.utcnow()  # the column stores naive UTC
         for index, (country, ip, action, code_id) in enumerate(rows):
@@ -89,26 +100,40 @@ async def _seed(rows: list[tuple[str | None, str, str, int | None]]) -> None:
                     code_id=code_id,
                 )
             )
+        for ip, resolved in GEO_ROWS.items():
+            if resolved is None:
+                continue  # no row at all: the queued state
+            code, lat, lon = resolved
+            s.add(
+                IpGeo(
+                    ip=ip,
+                    data=json.dumps({"countryCode": code, "latitude": lat, "longitude": lon}),
+                    country_code=code,
+                    latitude=lat,
+                    longitude=lon,
+                    fetched_at=now,
+                )
+            )
         await s.commit()
 
 
-def _geo(client: Any, mode: str = "views", **params: str) -> list[dict[str, Any]]:
+def _geo(client: Any, mode: str = "views", **params: str) -> dict[str, Any]:
     r = client.get("/api/logs/geo", params={"mode": mode, **params})
     assert r.status_code == 200, r.text
     return r.json()
 
 
-def _by_code(points: list[dict[str, Any]]) -> dict[str | None, int]:
-    return {p["cc"]: p["count"] for p in points}
+def _by_code(countries: list[dict[str, Any]]) -> dict[str | None, int]:
+    return {c["cc"]: c["count"] for c in countries}
 
 
 @pytest.fixture()
 def geo_rows() -> Any:
-    """A clean audit table with the fixture rows, restored afterwards.
+    """A clean audit and lookup table with the fixture rows, restored afterwards.
 
-    The database is shared by the whole run, so the table is cleared before and
-    after rather than left populated: another module asserting on an empty or
-    specific log table would otherwise fail for a reason it never caused.
+    The database is shared by the whole run, so both tables are cleared before
+    and after rather than left populated: another module asserting on an empty
+    log or queue would otherwise fail for a reason it never caused.
     """
     asyncio.run(_clear())
     asyncio.run(_seed(ROWS))
@@ -123,55 +148,43 @@ def geo_rows() -> Any:
 
 @pytest.mark.parametrize("mode", sorted(EXPECTED))
 def test_each_mode_counts_exactly_what_it_says(client: Any, geo_rows: None, mode: str) -> None:
-    got = _by_code(_geo(client, mode))
+    body = _geo(client, mode)
+    got = _by_code(body["countries"])
     for cc, count in EXPECTED[mode].items():
         assert got.get(cc) == count, (mode, cc, got)
-    assert got.get(None, 0) == UNKNOWN_ROW[mode], (mode, got)
+    assert body["unlocated"] == UNPLOTTED[mode], (mode, body)
+    assert body["total"] == TOTALS[mode], (mode, body)
 
 
 def test_views_counts_requests_not_visitors(client: Any, geo_rows: None) -> None:
     """The same address visiting twice is two views: that is the difference."""
-    points = _geo(client, "views")
-    ph = next(p for p in points if p["cc"] == "PH")
-    assert ph["count"] == 2
-    # 2 of 5 rows, because the row with no country counts in the total too: a
-    # share that ignored it would make the percentages add up to more than 100.
-    assert ph["share"] == 0.4
+    body = _geo(client, "views")
+    assert _by_code(body["countries"])["PH"] == 3
+    # 3 of 5 in the total: the unplotted row counts too, and a share that ignored
+    # it would make the percentages add up to more than 100.
+    ph = next(c for c in body["countries"] if c["cc"] == "PH")
+    assert ph["share"] == 0.6
 
 
 def test_visitors_de_duplicates_the_address(client: Any, geo_rows: None) -> None:
-    points = _geo(client, "visitors")
-    ph = next(p for p in points if p["cc"] == "PH")
-    assert ph["count"] == 1
+    """Two addresses, one point: distinct counting happens per point, not per row."""
+    body = _geo(client, "visitors")
+    assert _by_code(body["countries"])["PH"] == 2
 
 
 def test_gated_counts_only_the_rows_that_presented_a_code(client: Any, geo_rows: None) -> None:
-    """Two rows carry a code, and both of them have a country."""
-    got = _by_code(_geo(client, "gated"))
-    assert got == {"PH": 1, "US": 1}
+    assert _by_code(_geo(client, "gated")["countries"]) == {"PH": 1, "US": 1}
 
 
 def test_blocked_counts_only_the_refusals(client: Any, geo_rows: None) -> None:
-    """The fixture has two refusals: a `deny` from DE and a failed code with no country.
-
-    So one lands under a code and one lands in the unknown bucket, which is the
-    honest outcome and precisely why the bucket exists.
-    """
-    got = _by_code(_geo(client, "blocked"))
-    assert got == {"DE": 1, None: 1}
-
-
-def test_blocked_does_not_count_a_success_or_a_plain_redirect(
-    client: Any, geo_rows: None
-) -> None:
-    """`auth_success` and `no_cookie_redirect` are not refusals."""
-    assert sum(_by_code(_geo(client, "blocked")).values()) == 2
+    """`deny` from the unqueued address and a failed code from `.40`, which is plotted."""
+    assert _by_code(_geo(client, "blocked")["countries"]) == {"PH": 1, None: 1}
 
 
 def test_the_default_mode_is_views(client: Any, geo_rows: None) -> None:
     r = client.get("/api/logs/geo")
     assert r.status_code == 200
-    assert _by_code(r.json()) == _by_code(_geo(client, "views"))
+    assert r.json()["total"] == _geo(client, "views")["total"]
 
 
 def test_an_unknown_mode_is_refused_with_the_accepted_list(client: Any, geo_rows: None) -> None:
@@ -189,46 +202,42 @@ def test_a_mode_is_case_insensitive_through_the_page_but_not_the_api(
 
 
 # --------------------------------------------------------------------------- #
-# The unknown bucket
+# The unplotted bucket
 # --------------------------------------------------------------------------- #
 
 
-def test_the_unknown_bucket_appears_when_rows_lack_a_country(
+def test_an_address_with_no_coordinates_is_counted_not_guessed(client: Any, geo_rows: None) -> None:
+    body = _geo(client, "views")
+    bucket = [c for c in body["countries"] if c["cc"] is None]
+    assert len(bucket) == 1
+    assert bucket[0]["name"] == "Not yet located"
+    assert bucket[0]["count"] == 1
+    assert body["unlocated"] == 1
+
+
+def test_the_unplotted_bucket_is_absent_when_every_row_is_placed(
     client: Any, geo_rows: None
 ) -> None:
-    points = _geo(client, "views")
-    unknown = [p for p in points if p["cc"] is None]
-    assert len(unknown) == 1
-    assert unknown[0]["name"] == "Unknown"
-    assert unknown[0]["count"] == 1
+    """`gated` matches only the two placed addresses, so nothing is left over."""
+    body = _geo(client, "gated")
+    assert body["unlocated"] == 0
+    assert all(c["cc"] is not None for c in body["countries"])
 
 
-def test_the_unknown_bucket_is_last_so_it_never_leads_the_list(
-    client: Any, geo_rows: None
-) -> None:
-    points = _geo(client, "views")
-    assert points[-1]["cc"] is None
+def test_the_totals_add_up_to_the_modes_own_count(client: Any, geo_rows: None) -> None:
+    """Plotted plus unplotted is the mode's count: nothing is silently lost."""
+    for mode in sorted(EXPECTED):
+        body = _geo(client, mode)
+        plotted = sum(p["count"] for p in body["points"])
+        assert plotted + body["unlocated"] == body["total"], mode
 
 
-def test_the_unknown_bucket_is_absent_when_every_matched_row_has_a_country(
-    client: Any, geo_rows: None
-) -> None:
-    """`gated` matches only rows that carried a code, all of which have a country.
-
-    `blocked` is the counter-example in the same fixture: its one matching row
-    has no country, so the bucket appears. The bucket follows the rows, not the
-    mode.
-    """
-    assert all(p["cc"] is not None for p in _geo(client, "gated"))
-    assert any(p["cc"] is None for p in _geo(client, "blocked"))
-
-
-def test_the_unknown_bucket_is_not_plotted(client: Any, geo_rows: None) -> None:
-    """It counts, and it has nowhere to go: no coordinates, so no marker."""
-    unknown = next(p for p in _geo(client, "views") if p["cc"] is None)
-    assert unknown["lat"] is None
-    assert unknown["lon"] is None
-    assert unknown["radius"] == 0.0
+def test_the_unplotted_bucket_is_never_a_marker(client: Any, geo_rows: None) -> None:
+    """Everything mapped has both ordinates; what cannot be drawn is counted instead."""
+    body = _geo(client, "views")
+    assert body["points"], "the fixture plots something"
+    assert all(p["lat"] is not None and p["lon"] is not None for p in body["points"])
+    assert body["unlocated"] == 1
 
 
 # --------------------------------------------------------------------------- #
@@ -236,34 +245,48 @@ def test_the_unknown_bucket_is_not_plotted(client: Any, geo_rows: None) -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_every_known_point_carries_a_centroid_a_name_and_a_radius(
+def test_every_point_carries_lookup_coordinates_a_name_and_a_radius(
     client: Any, geo_rows: None
 ) -> None:
-    for point in _geo(client, "views"):
-        if point["cc"] is None:
-            continue
+    for point in _geo(client, "views")["points"]:
         assert isinstance(point["lat"], float) and -90 <= point["lat"] <= 90
         assert isinstance(point["lon"], float) and -180 <= point["lon"] <= 180
         assert point["name"] and point["name"] != point["cc"]
         assert point["radius"] > 0
 
 
+def test_the_same_point_is_one_marker(client: Any, geo_rows: None) -> None:
+    """`.10` and `.40` resolve to one place, so they share a marker, not stack.
+
+    The coordinates arrive rounded to two decimals by SQL, which is the grouping
+    key - so this asserts on 14.6, not on the fixture's 14.5995.
+    """
+    points = _geo(client, "views")["points"]
+    assert len([p for p in points if p["lat"] == 14.6]) == 1
+    merged = next(p for p in points if p["lat"] == 14.6)
+    assert merged["count"] == 3  # .10 twice and .40 once
+
+
 def test_points_are_ordered_largest_first(client: Any, geo_rows: None) -> None:
-    counts = [p["count"] for p in _geo(client, "views") if p["cc"] is not None]
+    counts = [p["count"] for p in _geo(client, "views")["points"]]
     assert counts == sorted(counts, reverse=True)
 
 
-def test_the_largest_country_has_the_largest_radius(client: Any, geo_rows: None) -> None:
-    plotted = [p for p in _geo(client, "views") if p["lat"] is not None]
+def test_the_largest_point_has_the_largest_radius(client: Any, geo_rows: None) -> None:
+    plotted = _geo(client, "views")["points"]
     biggest = max(plotted, key=lambda p: p["count"])
     assert biggest["radius"] == max(p["radius"] for p in plotted)
 
 
-def test_an_empty_table_returns_an_empty_list_not_an_error(client: Any) -> None:
+def test_an_empty_table_returns_empty_shapes_not_an_error(client: Any) -> None:
     """The state the page is in before any traffic, and after a clear."""
     asyncio.run(_clear())
     try:
-        assert _geo(client, "views") == []
+        body = _geo(client, "views")
+        assert body["points"] == []
+        assert body["countries"] == []
+        assert body["total"] == 0
+        assert body["unlocated"] == 0
     finally:
         asyncio.run(_clear())
 
@@ -274,17 +297,17 @@ def test_an_empty_table_returns_an_empty_list_not_an_error(client: Any) -> None:
 
 
 def test_the_host_filter_narrows_the_totals(client: Any, geo_rows: None) -> None:
-    assert _geo(client, "views", host="geo.test") != []
-    assert _geo(client, "views", host="elsewhere.test") == []
+    assert _geo(client, "views", host="geo.test")["total"] > 0
+    assert _geo(client, "views", host="elsewhere.test")["total"] == 0
 
 
 def test_a_time_window_excludes_the_rows_outside_it(client: Any, geo_rows: None) -> None:
     future = (dt.datetime.utcnow() + dt.timedelta(days=1)).strftime("%Y-%m-%d")
-    assert _geo(client, "views", **{"from": future}) == []
+    assert _geo(client, "views", **{"from": future})["points"] == []
 
 
 # --------------------------------------------------------------------------- #
-# Ingest: the column, and the absent key
+# Ingest: the column, the queue, and the absent key
 # --------------------------------------------------------------------------- #
 
 
@@ -305,6 +328,18 @@ def _stored_country(host: str) -> str | None:
     return asyncio.run(_read())
 
 
+def _queued(ip: str) -> Any:
+    from shared.db import get_sessionmaker
+    from shared.models import IpGeo
+
+    async def _read() -> Any:
+        async with get_sessionmaker()() as s:
+            row = await s.get(IpGeo, ip)
+            return None if row is None else (row.fetched_at is None)
+
+    return asyncio.run(_read())
+
+
 @pytest.fixture()
 def clean_logs() -> Any:
     asyncio.run(_clear())
@@ -317,6 +352,12 @@ def test_a_request_carrying_a_country_stores_it(client: Any, clean_logs: None) -
     r = _ingest(client, {"host": "country.test", "path": "/", "ip": "203.0.113.1", "country": "PH"})
     assert r.status_code == 200
     assert _stored_country("country.test") == "PH"
+
+
+def test_ingest_queues_the_address_without_looking_it_up(client: Any, clean_logs: None) -> None:
+    """Seen once, queued, no request spent - the promise the whole design rests on."""
+    _ingest(client, {"host": "queued.test", "path": "/", "ip": "203.0.113.77"})
+    assert _queued("203.0.113.77") is True
 
 
 def test_a_missing_country_key_is_stored_as_null_and_does_not_fail(
@@ -362,17 +403,23 @@ def test_a_long_country_value_cannot_exceed_the_column(client: Any, clean_logs: 
     assert _stored_country("long.test") is None
 
 
-def test_an_ingested_country_then_appears_in_the_aggregation(
+def test_an_ingested_address_without_a_lookup_is_counted_as_unplotted(
     client: Any, clean_logs: None
 ) -> None:
-    """Capture and aggregation are two halves of one claim; check them joined."""
+    """Capture and aggregation are two halves of one claim; check them joined.
+
+    Nothing has looked these two up yet, so the honest answer is that they are
+    counted and not placed - not that they are somewhere.
+    """
     _ingest(client, {"host": "joined.test", "path": "/", "ip": "203.0.113.9", "country": "PH"})
     assert _ingest(
         client, {"host": "joined.test", "path": "/", "ip": "203.0.113.8", "country": "US"}
     ).status_code == 200
 
-    got = _by_code(_geo(client, "views", host="joined.test"))
-    assert got == {"PH": 1, "US": 1}
+    body = _geo(client, "views", host="joined.test")
+    assert body["points"] == []
+    assert body["unlocated"] == 2
+    assert body["total"] == 2
 
 
 # --------------------------------------------------------------------------- #

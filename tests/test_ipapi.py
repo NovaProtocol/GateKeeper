@@ -358,6 +358,48 @@ def test_a_failed_lookup_is_recorded_and_pushed_back(tmp_path: Path) -> None:
     _run(scenario())
 
 
+def test_the_worker_paces_under_the_published_ceiling() -> None:
+    """Pacing exactly at the limit trips 429s, and a 429 buys nothing."""
+    assert ipapi.RATE_PER_MINUTE < ipapi.PUBLISHED_PER_MINUTE
+    assert ipapi.RATE_PER_10S < ipapi.PUBLISHED_PER_10S
+
+
+def test_a_429_holds_every_call_off_and_does_not_blame_the_row(tmp_path: Path) -> None:
+    """The provider's window is global, so the pause has to be too.
+
+    A 429 is not about the address - the caller did nothing wrong - so the row is
+    left exactly as it was, still queued, still first in line when the window
+    reopens.
+    """
+    async def scenario() -> None:
+        engine, sm = await _make_db(tmp_path / "s5.db")
+        async with sm() as session:
+            await ipapi.ensure_queued(session, "1.2.3.4")
+
+        limiter = ipapi.RateLimiter()
+        calls: list[str] = []
+
+        async def refusing(ip: str) -> dict:
+            calls.append(ip)
+            raise ipapi.RateLimited("429")
+
+        assert await ipapi.worker_step(sm, limiter=limiter, fetcher=refusing) is True
+        assert limiter.retry_after(time.monotonic()) > 0, "the whole loop is held off"
+
+        async with sm() as session:
+            row = await session.get(IpGeo, "1.2.3.4")
+            assert row is not None
+            assert row.fetched_at is None
+            assert row.attempts == 0, "a shut window is not this address's failure"
+            assert row.last_error is None
+
+        assert await ipapi.worker_step(sm, limiter=limiter, fetcher=refusing) is False
+        assert calls == ["1.2.3.4"], "nothing was asked while paused"
+        await engine.dispose()
+
+    _run(scenario())
+
+
 def test_the_limiter_stops_a_step_from_spending_a_request(tmp_path: Path) -> None:
     async def scenario() -> None:
         engine, sm = await _make_db(tmp_path / "s4.db")

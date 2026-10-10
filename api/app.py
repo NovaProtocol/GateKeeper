@@ -31,8 +31,11 @@ from shared.geo import (
     BLOCKED_ACTIONS,
     DEFAULT_GEO_MODE,
     GEO_MODES,
-    build_points,
+    UNLOCATED_LABEL,
+    build_location_points,
+    country_rollup,
     normalize_country,
+    summarize,
 )
 from shared import ipapi
 from shared.models import AuditLog, Code, CustomPage, IpGeo, Route, Rule, RuleGroup, Setting
@@ -340,6 +343,28 @@ def _parse_dt(s: str | None) -> dt.datetime | None:
     return None
 
 
+def _migrate_ip_geo(sync_conn: Any) -> None:
+    """Add the ``ip_geo`` columns a live table may be missing, guarded and idempotent.
+
+    Same shape as :func:`_migrate_audit`. The table is new so ``create_all``
+    makes it; these two columns joined it afterwards, so a volume that already
+    has the rows needs the ALTER. No backfill: the values are still in ``data``,
+    and digging them out here would mean parsing JSON in SQL, which SQLite and
+    MySQL do differently.
+    """
+    try:
+        res = sync_conn.execute(text("PRAGMA table_info(ip_geo)"))
+        cols = {row[1] for row in res.fetchall()}
+        if not cols:
+            return
+        if "latitude" not in cols:
+            sync_conn.execute(text("ALTER TABLE ip_geo ADD COLUMN latitude FLOAT"))
+        if "longitude" not in cols:
+            sync_conn.execute(text("ALTER TABLE ip_geo ADD COLUMN longitude FLOAT"))
+    except Exception:
+        pass
+
+
 def _migrate_audit(sync_conn: Any) -> None:
     """Add the audit columns a live table may be missing, guarded and idempotent.
 
@@ -454,6 +479,7 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
         await conn.run_sync(_migrate_routes)
 
         await conn.run_sync(_migrate_audit)
+        await conn.run_sync(_migrate_ip_geo)
 
         def _migrate_rules(sync_conn):  # type: ignore[no-untyped-def]
             add_is_default_column(sync_conn)
@@ -552,7 +578,15 @@ async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
             _log("audit_logs_prune_skipped", error=str(e))
     # The lookup queue drains here, in the one service that owns `/data`. It is a
     # background task rather than a request path, so a page view never waits on
-    # freeipapi, and its pace is the free tier's own.
+    # freeipapi, and its pace is the free tier's own. The backfill before it puts
+    # every address the audit already knows about into that queue, so the map has
+    # coordinates for history and not only for traffic that arrives from now on.
+    try:
+        queued = await ipapi.backfill_queue(get_sessionmaker())
+        if queued:
+            _log("ipapi_backfill_queued", added=queued)
+    except Exception as e:
+        _log("ipapi_backfill_failed", error=str(e))
     worker = ipapi.start_worker(get_sessionmaker())
     try:
         yield
@@ -1422,7 +1456,7 @@ def create_app() -> FastAPI:
         to: str | None = Query(default=None, alias="to"),
         db=Depends(get_db),
     ):
-        """Per-country totals, ready to plot.
+        """Where visitors actually were, from the lookup's coordinates.
 
         The four modes answer four different questions about the same rows:
         ``views`` counts requests, ``visitors`` counts distinct addresses,
@@ -1431,9 +1465,19 @@ def create_app() -> FastAPI:
         single blended weight would hide the difference between an audience and
         a scan.
 
-        Only the grouping happens in SQL. Ordering, share, radius and the
-        Unknown bucket are decided by :func:`shared.geo.build_points`, which is
-        pure, so the presentation is unit-testable without a browser.
+        Markers come from ``ip_geo``'s latitude and longitude - where the lookup
+        resolved the address - grouped by the rounded coordinate (two decimals,
+        about a kilometre), which merges the visitors that a city's single point
+        puts in the same place without claiming precision the data does not have.
+        A country's centre would be worse than useless: everyone in a country
+        shares it, so the map would draw the country, not the visitors.
+
+        An address with no coordinates yet - queued, or a failed lookup - is
+        counted as unplotted and named in the text, never placed at a guess.
+
+        Only grouping and counting happen in SQL. Ordering, share, radius and the
+        unplotted bucket are decided by :func:`shared.geo.build_location_points`,
+        which is pure, so the presentation is unit-testable without a browser.
         """
         if mode not in GEO_MODES:
             raise HTTPException(
@@ -1442,24 +1486,63 @@ def create_app() -> FastAPI:
         # A single aggregate expression chosen per mode: distinct addresses for
         # `visitors`, rows for everything else.
         counter = func.count(func.distinct(AuditLog.ip)) if mode == "visitors" else func.count()
-        q = select(AuditLog.country, counter).group_by(AuditLog.country)
+
+        # Built once and reused, so the plotted rows and the mode's total cannot
+        # drift apart and report an unplotted bucket that is really a filter bug.
+        filters = []
         if mode == "gated":
-            q = q.where(AuditLog.code_id.is_not(None))
+            filters.append(AuditLog.code_id.is_not(None))
         elif mode == "blocked":
-            q = q.where(AuditLog.action.in_(BLOCKED_ACTIONS))
+            filters.append(AuditLog.action.in_(BLOCKED_ACTIONS))
         if host:
             if "*" in host or "?" in host:
-                q = q.where(AuditLog.host.like(_glob_to_like(host), escape="\\"))
+                filters.append(AuditLog.host.like(_glob_to_like(host), escape="\\"))
             else:
-                q = q.where(AuditLog.host == host)
+                filters.append(AuditLog.host == host)
         dt_from = _parse_dt(from_) if from_ else None
         dt_to = _parse_dt(to) if to else None
         if dt_from:
-            q = q.where(AuditLog.ts >= dt_from)
+            filters.append(AuditLog.ts >= dt_from)
         if dt_to:
-            q = q.where(AuditLog.ts <= dt_to)
+            filters.append(AuditLog.ts <= dt_to)
+
+        lat = func.round(IpGeo.latitude, 2)
+        lon = func.round(IpGeo.longitude, 2)
+        q = (
+            select(lat, lon, IpGeo.country_code, counter)
+            .select_from(AuditLog)
+            .join(IpGeo, AuditLog.ip == IpGeo.ip)
+            .where(IpGeo.latitude.is_not(None), IpGeo.longitude.is_not(None), *filters)
+            .group_by(lat, lon, IpGeo.country_code)
+        )
+        total = int(
+            (await db.execute(select(counter).select_from(AuditLog).where(*filters))).scalar() or 0
+        )
         rows = (await db.execute(q)).all()
-        return build_points([(row[0], row[1]) for row in rows])
+        points = build_location_points(
+            [(row[0], row[1], row[2], row[3]) for row in rows], total=total
+        )
+
+        plotted = sum(point["count"] for point in points)
+        unlocated = max(0, total - plotted)
+        countries = country_rollup(points, total=total)
+        if unlocated:
+            countries.append(
+                {
+                    "cc": None,
+                    "name": UNLOCATED_LABEL,
+                    "count": unlocated,
+                    "share": round(unlocated / total, 4) if total else 0.0,
+                }
+            )
+        return {
+            "points": points,
+            "countries": countries,
+            "plotted": len(points),
+            "unlocated": unlocated,
+            "total": total,
+            "summary": summarize(countries),
+        }
 
     @app.get("/api/ip")
     async def ip_lookup(ip: str = Query(...), country: str | None = None, db=Depends(get_db)):  # type: ignore[no-untyped-def]

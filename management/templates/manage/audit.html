@@ -17,10 +17,10 @@
 {% block content %}
 <div class="container">
   <div class="stat-strip">
-    <div class="stat"><span class="stat-label">countries</span><span class="stat-value">{{ points|length }}</span></div>
+    <div class="stat"><span class="stat-label">locations</span><span class="stat-value">{{ plotted|length }}</span></div>
+    <div class="stat"><span class="stat-label">countries</span><span class="stat-value">{{ countries|length }}</span></div>
     <div class="stat"><span class="stat-label">{{ mode }}</span><span class="stat-value">{{ geo_total }}</span></div>
     <div class="stat"><span class="stat-label">log rows</span><span class="stat-value">{{ remaining }}</span></div>
-    <div class="stat"><span class="stat-label">visitor IPs</span><span class="stat-value">{{ items|length }}</span></div>
   </div>
 
   {% if prune or clear_verdict %}
@@ -60,21 +60,21 @@
     </div>
     <div class="card-body" style="padding:1.25rem">
       <p style="color:var(--text-secondary);font-size:.85rem;margin-bottom:1rem">
-        Country level only, read from <code>CF-IPCountry</code> as the tunnel forwards it: no city,
-        no coordinates derived from the visitor address. Rows recorded before
-        this was captured, and requests where the header never arrived, are counted as
-        <strong>Unknown</strong> and are not plotted. Attach an address below to see what the
-        lookup makes of it; addresses are looked up once, in the background, and kept.
+        Plotted where the lookup resolved each address, not at a country's centre: a country has
+        exactly one centre and nobody is standing on it. Coordinates are rounded to about a
+        kilometre, so the visitors a city's single point puts in the same place share one marker.
+        Addresses not looked up yet, or whose lookup failed, are counted as
+        <strong>Not yet located</strong> and are not plotted - the table below says how many.
       </p>
 
       {% if plotted %}
-      <div id="audit-map" class="audit-map" role="img" aria-label="Visitors by country. {{ summary }}"></div>
+      <div id="audit-map" class="audit-map" role="img" aria-label="Visitors by location. {{ summary }}"></div>
       <p class="map-summary">{{ summary }}</p>
       <div class="map-legend">
         <span><i aria-hidden="true"></i> circle area scales with the count</span>
         <span>click the map, then scroll to zoom</span>
-        <span>{{ plotted|length }} plotted</span>
-        {% if points|length > plotted|length %}<span>{{ points|length - plotted|length }} with no centroid</span>{% endif %}
+        <span>{{ plotted|length }} location{{ '' if plotted|length == 1 else 's' }} plotted</span>
+        {% if unlocated %}<span>{{ unlocated }} not yet located</span>{% endif %}
       </div>
       {% else %}
       <div class="audit-map-fallback">
@@ -82,12 +82,12 @@
       </div>
       {% endif %}
 
-      {% if points %}
+      {% if countries %}
       <div class="table-scroll" tabindex="0" role="region" aria-label="Country totals" style="margin-top:1rem">
         <table class="codes-table" style="width:100%">
           <thead><tr><th scope="col">Country</th><th scope="col">Code</th><th scope="col">Count</th><th scope="col">Share</th></tr></thead>
           <tbody>
-          {% for p in points %}
+          {% for p in countries %}
           <tr>
             <td>{{ p.name }}</td>
             <td style="font-family:'JetBrains Mono',monospace">{{ p.cc or ' - ' }}</td>
@@ -200,12 +200,13 @@
 {% if plotted %}
 <script>
 /* Leaflet keeps its own DOM, so it is driven imperatively rather than through a
-   reactive binding. The data is country level only, so the markers are circles
-   whose AREA scales with the count (radius proportional to the square root): a
-   linear radius would exaggerate the busiest country by its own square. There is
-   deliberately no heat layer, which over one centroid per country would draw the
-   shape of the centroid table and imply a per-visitor density the data does not
-   contain. */
+   reactive binding. The points are the lookup's coordinates for each address,
+   grouped by the rounded coordinate, so the markers are circles whose AREA scales
+   with the count (radius proportional to the square root): a linear radius would
+   exaggerate the busiest place by its own square. There is deliberately no heat
+   layer - the upstream resolves a city to one point, so heat would draw where
+   that provider puts its cities and imply a per-visitor density this data does
+   not contain. */
 (function(){
   var data = {{ plotted|tojson }};
   var total = {{ geo_total }};

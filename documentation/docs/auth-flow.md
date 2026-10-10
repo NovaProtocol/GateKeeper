@@ -99,7 +99,7 @@ Trust model: only the tunnel may reach the origin (`gatekeeper_caddy` is the sol
 
 The gateway reads it once per request, gated by the `geo_lookup_enabled` setting (default `true`), and sends it with the audit payload; `api` stores it after the same validation. Both ends tolerate the key being absent, so a gateway container that predates the column cannot break logging, and a stale one cannot store a value the reader would refuse.
 
-**Unverified:** that cloudflared forwards `CF-IPCountry` to the origin was not testable from the build environment. The design degrades to `NULL`, which the audit page reports as `Unknown`; see [Logs & Audit](logs.md) for the fallback and the post-deploy check.
+**Unverified:** that cloudflared forwards `CF-IPCountry` to the origin was not testable from the build environment. The design degrades to `NULL`: the map still plots whatever the lookup placed and counts the rest as not yet located, so a missing header costs the comparison, not the page. See [Logs & Audit](logs.md) for the fallback and the post-deploy check.
 
 ## Rate Limit (access_code tries/min)
 

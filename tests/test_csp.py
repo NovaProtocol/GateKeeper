@@ -54,6 +54,17 @@ GEO_POINTS = [
     }
 ]
 
+#: The map card's data as the API returns it now: plotted points, the country
+#: rollup and the count with no coordinates yet.
+GEO = {
+    "points": GEO_POINTS,
+    "countries": [{"cc": "PH", "name": "Philippines", "count": 6, "share": 0.6}],
+    "plotted": len(GEO_POINTS),
+    "unlocated": 0,
+    "total": 6,
+    "summary": "Philippines 6.",
+}
+
 
 def gateway_module() -> Any:
     """The ``auth-gateway`` app module, loaded by ``tests/conftest.py``."""
@@ -100,7 +111,7 @@ class _ApiStub:
     async def get(self, url: str, **kwargs: Any) -> _StubResponse:
         self.calls.append(url)
         if url.endswith("/api/logs/geo"):
-            return _StubResponse(200, GEO_POINTS)
+            return _StubResponse(200, GEO)
         if url.endswith("/api/logs"):
             return _StubResponse(200, [], headers={"X-Total-Count": "12"})
         return _StubResponse(200, [])
