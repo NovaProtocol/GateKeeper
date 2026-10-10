@@ -41,7 +41,8 @@ Every entry resolves to a page below. There is no second navigation: the dashboa
 | `POST /manage/rules/{rid}/edit` | Edit rule (`path`, `action`, `custom_password`) **and** the row's status switch (`active`), which posts to this same route |
 | `GET /manage/codes` | Codes list + create/edit, activate/deactivate, permanent delete, `?include_inactive=1` |
 | `GET /manage/logs` | Audit logs (filters host/ip/action/endpoint) |
-| `GET /manage/audit` | Viewer map (country, four aggregation modes) plus the per-visitor table: IPs, their recent pages and the code they used |
+| `GET /manage/audit` | Viewer map (country, four aggregation modes) plus the per-visitor table: IPs, their recent pages and the code they used. Point at an address to look it up in the ip66 database on the spot |
+| `GET /manage/ip` | JSON: what the ip66 database knows about one address (`?ip=`, optional `?country=` to compare). Behind the manage session, read-only, nothing stored |
 | `GET /manage/monitoring` | `302` to `/manage/audit`, so an old bookmark still lands |
 | `GET /manage/top-pages` | Top paths by hits |
 | `GET/POST /manage/settings` | Seven editable settings in sections, plus a read-only environment panel |
@@ -121,7 +122,7 @@ Both capabilities are kept, and the split is deliberate: a switch is a state ind
 
 ## Logs, Audit, and the warnings banner
 
-`GET /manage/logs` supports `?format=json&page&per_page&ip&host&endpoint&code&from&to` with `X-Total-Count`; template `logs.html` does `IntersectionObserver` infinite scroll loading next page as you scroll. `GET /manage/audit` pairs the viewer map with `GET /api/logs/by-ip?limit=50`, which lists IPs → `{calls, recent: [{host,path,ts,action,code_label,attempted_code}], codes}` for the per-visitor view.
+`GET /manage/logs` supports `?format=json&page&per_page&ip&host&endpoint&code&from&to` with `X-Total-Count`; template `logs.html` does `IntersectionObserver` infinite scroll loading next page as you scroll. `GET /manage/audit` pairs the viewer map with `GET /api/logs/by-ip?limit=50`, which lists IPs → `{calls, recent: [{host,path,ts,action,code_label,attempted_code}], codes, country}` for the per-visitor view. Addresses on both pages carry `data-ip` (and `data-country`): pointing at one, or pressing it on a phone, opens a small panel fed by `GET /manage/ip`, whose answers the page caches client-side for a few hours so the same address is asked once.
 
 Warnings are no longer a page. `GET /api/warnings` reports a shadowed group or rule only when one exists, and on a healthy gateway it answers `{groups: [], rules: []}`, so `/manage/warnings` rendered two empty tables under a red header and nothing else. The page is deleted, the endpoint is not: the dashboard reads it and renders a `.warn-banner` **only when the response is non-empty**, linking to `/manage/rules` where the order can be fixed. Nothing about shadowing detection changed, only where it is shown.
 

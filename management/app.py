@@ -1899,6 +1899,35 @@ def create_app() -> FastAPI:
             logs = []
         return await _render_manage(request, "manage/logs.html", {"logs": logs, "filters": params})
 
+    @app.get("/manage/ip")
+    async def manage_ip_lookup(request: Request) -> Response:
+        """Relay one address's ip66 record to the page, behind the manage session.
+
+        The lookup itself is in the API, because that is the service that mounts
+        `/data` and therefore owns the database file; this route's job is to put
+        the manage session in front of it. `_require_manage_auth` is the gate, and
+        it answers a `fetch` with a 401 rather than a login redirect, so the
+        lookup is not a public IP oracle. It is a GET, so there is no CSRF surface.
+
+        The answer is a lookup, never a stored value. `audit_logs.country` keeps
+        whatever `CF-IPCountry` said, which is what lets the page show the two
+        disagreeing instead of silently overwriting one with the other.
+        """
+        _auth = await _require_manage_auth(request)
+        if _auth is not None:
+            return _auth
+        address = (request.query_params.get("ip") or "").strip()
+        if not address:
+            return JSONResponse(status_code=400, content={"detail": "ip required"})
+        params: dict[str, Any] = {"ip": address}
+        country = (request.query_params.get("country") or "").strip()
+        if country:
+            params["country"] = country
+        result = await _api_proxy_get("/api/ip", params)
+        if not isinstance(result, dict):
+            return JSONResponse(status_code=502, content={"detail": "lookup unavailable"})
+        return JSONResponse(result)
+
     @app.get("/manage/audit", response_class=HTMLResponse)
     async def manage_audit(request: Request) -> Response:
         """Per-visitor view: which IP saw which pages, and where visitors came from."""

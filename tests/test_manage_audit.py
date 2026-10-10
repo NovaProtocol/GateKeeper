@@ -224,11 +224,12 @@ def test_the_log_row_count_is_shown_from_the_pagination_header(
 
 
 def test_the_page_says_country_level_only(manage_client: Any, fake_api: _FakeClient) -> None:
+    """The map stays header-only; the per-address lookup is a separate, transient thing."""
     html = _page(manage_client)
 
     assert "CF-IPCountry" in html
     assert "Unknown" in html
-    assert "no lookup service" in html
+    assert "nothing it returns is stored" in html
 
 
 # --------------------------------------------------------------------------- #

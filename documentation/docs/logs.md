@@ -22,7 +22,9 @@ GET|PUT /api/settings[/{key}] # settings table, PUT needs X-Internal-Api-Key
 
 ## Visitor country
 
-`audit_logs.country` holds a two-letter country code, and nothing finer. It is read from `CF-IPCountry`, the header Cloudflare stamps at the edge the same way it stamps `CF-Connecting-IP`, in `shared/geo.py:get_country`. It is **not** a lookup service and **not** a GeoIP database: no visitor address leaves this stack to be identified, there is no city, and no coordinate is ever derived from a visitor's own address. Storing a country is coarse enough to be defensible in an audit trail; storing where exactly someone was would not be.
+`audit_logs.country` holds a two-letter country code, and nothing finer. It is read from `CF-IPCountry`, the header Cloudflare stamps at the edge the same way it stamps `CF-Connecting-IP`, in `shared/geo.py:get_country`. The stored value is header-only: no visitor address leaves this stack to be identified, there is no city, and no coordinate is ever derived from a visitor's own address. Storing a country is coarse enough to be defensible in an audit trail; storing where exactly someone was would not be.
+
+An address can also be looked up **on the spot**, and only in the audit view. `shared/ipgeo.py` fetches the [ip66.dev](https://ip66.dev) MMDB into `DB_DIR` at startup, and re-fetches it only once the local copy is a day old; `GET /manage/ip` (behind the manage session) then answers what it knows about one address: country, continent, autonomous system, and the anonymising flags it carries (Tor exit, public proxy, anonymous VPN, hosting provider). Nothing from that lookup is stored. `audit_logs.country` keeps what the header said, and the page marks a row where the two disagree instead of overwriting either - a transient lookup can never rewrite history.
 
 The reader is deliberately strict about what it will accept, because a stored value is a claim about a real country:
 

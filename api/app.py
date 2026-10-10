@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import csv
 import datetime as dt
 import io
@@ -32,6 +33,7 @@ from shared.geo import (
     build_points,
     normalize_country,
 )
+from shared import ipgeo
 from shared.models import AuditLog, Code, CustomPage, Route, Rule, RuleGroup, Setting
 from shared.pages import (
     DEFAULT_PAGE_CONTENT_TYPE as pages_default_content_type,
@@ -396,6 +398,12 @@ def _migrate_audit(sync_conn: Any) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # type: ignore[no-untyped-def]
+    # The ip66 database is fetched here, and here only, because this is the one
+    # service that mounts `/data`. A copy younger than a day is kept; otherwise it
+    # is re-fetched before the first lookup. `ensure_database` never raises, so a
+    # failed fetch cannot keep the API from starting - the audit simply stays on
+    # the country Cloudflare's header gave it.
+    await asyncio.to_thread(ipgeo.ensure_database)
     engine = get_engine()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -1438,6 +1446,28 @@ def create_app() -> FastAPI:
         rows = (await db.execute(q)).all()
         return build_points([(row[0], row[1]) for row in rows])
 
+    @app.get("/api/ip")
+    async def ip_lookup(ip: str = Query(...), country: str | None = None):  # type: ignore[no-untyped-def]
+        """What the ip66 database knows about one address.
+
+        Internal on this network like the other read endpoints, and the manage
+        panel is what puts a session in front of it: `GET /manage/ip` is the
+        gated surface, this is the work behind it. It lives here rather than in
+        the panel because the database file is in `/data`, and `api` is the one
+        service that mounts it.
+
+        The answer is a lookup, never a stored value. `audit_logs.country` keeps
+        whatever `CF-IPCountry` said, so the two are allowed to disagree -
+        `mismatch` reports that rather than one overwriting the other.
+        """
+        info = await asyncio.to_thread(ipgeo.lookup, ip)
+        return {
+            "ip": ip,
+            "found": info is not None,
+            "lookup": info,
+            "mismatch": ipgeo.mismatch(country, info),
+        }
+
     @app.get("/api/logs/export")
     async def logs_export(format: str = Query(default="csv"), db=Depends(get_db)):  # type: ignore[no-untyped-def]  # noqa: A002
         res = await db.execute(select(AuditLog).order_by(AuditLog.ts.desc()).limit(10000))
@@ -1706,7 +1736,7 @@ def create_app() -> FastAPI:
                     code_labels[c.id] = c.display_name or c.label or c.code[:8]
             recent = [{"host": r.host, "path": r.path, "ts": r.ts, "action": r.action, "code_label": code_labels.get(r.code_id) if r.code_id else None, "attempted_code": r.attempted_code} for r in recs]
             codes = list({code_labels[cid] for cid in code_ids if cid in code_labels})
-            out.append({"ip": ip_val, "calls": cnt, "recent": recent, "codes": codes})
+            out.append({"ip": ip_val, "calls": cnt, "recent": recent, "codes": codes, "country": recs[0].country if recs else None})
         return out
 
     @app.post("/api/logs", dependencies=[Depends(_require_internal)])

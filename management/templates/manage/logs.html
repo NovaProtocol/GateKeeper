@@ -30,7 +30,7 @@
         {% for l in logs %}
         <tr>
           <td class="date-value" style="white-space:nowrap">{{ l.ts }}</td>
-          <td style="font-family:'JetBrains Mono',monospace;font-size:.8rem;white-space:nowrap">{{ l.ip }}</td>
+          <td style="font-family:'JetBrains Mono',monospace;font-size:.8rem;white-space:nowrap" data-ip="{{ l.ip }}" data-country="{{ l.country or '' }}">{{ l.ip }}</td>
           <td style="font-family:'JetBrains Mono',monospace;font-size:.8rem;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{{ l.host }}">{{ l.host }}</td>
           <td style="font-family:'JetBrains Mono',monospace;font-size:.8rem;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="{{ l.path }}">{{ l.path }}</td>
           <td style="font-size:.8rem">
@@ -109,7 +109,7 @@
         const codeLabel=l.code_label ? `<span style="color:var(--accent)">${l.code_label}</span>` : (l.code_value ? l.code_value.slice(0,8)+'…' : (l.attempted_code||' - '));
         const host=(l.host||'').replace(/</g,'&lt;');
         const path=(l.path||'').replace(/</g,'&lt;');
-        tr.innerHTML=`<td style="white-space:nowrap">${l.ts||''}</td><td style="font-family:'JetBrains Mono',monospace;font-size:.8rem">${l.ip||''}</td><td style="font-family:'JetBrains Mono',monospace;font-size:.8rem;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${host}">${host}</td><td style="font-family:'JetBrains Mono',monospace;font-size:.8rem;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${path}">${path}</td><td style="font-size:.8rem">${codeLabel}</td><td><span class="tag tag-active">${l.action||''}${l.status_code?' '+l.status_code:''}</span></td><td style="font-family:'JetBrains Mono',monospace;font-size:.7rem;color:var(--text-secondary)">${l.request_id||''}</td>`;
+        tr.innerHTML=`<td style="white-space:nowrap">${l.ts||''}</td><td style="font-family:'JetBrains Mono',monospace;font-size:.8rem" data-ip="${l.ip||''}" data-country="${l.country||''}">${l.ip||''}</td><td style="font-family:'JetBrains Mono',monospace;font-size:.8rem;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${host}">${host}</td><td style="font-family:'JetBrains Mono',monospace;font-size:.8rem;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${path}">${path}</td><td style="font-size:.8rem">${codeLabel}</td><td><span class="tag tag-active">${l.action||''}${l.status_code?' '+l.status_code:''}</span></td><td style="font-family:'JetBrains Mono',monospace;font-size:.7rem;color:var(--text-secondary)">${l.request_id||''}</td>`;
         body.appendChild(tr);
       }
       page+=1;

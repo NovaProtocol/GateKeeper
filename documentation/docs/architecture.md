@@ -27,6 +27,7 @@ project/
 │ ├── pages.py # custom-page patterns: split_pattern, glob_match, sample_from_pattern
 │ ├── gate.py # rule dispatch + the unmatched-request decision (find_group_rule, resolve_rule_action)
 │ ├── geo.py # country resolution from CF-IPCountry + the static centroid table (country level only)
+│ ├── ipgeo.py # the ip66.dev MMDB: fetched to DB_DIR at startup, looked up on the spot (never stored)
 │ ├── backup.py # signed plain-JSON export/restore of the config tables (HMAC-SHA256 over `config`)
 │ ├── rule_defaults.py # boot backfill: exactly one `/*` catch-all per group, forced last
 │ ├── error_pages.py # wants_html, render_error_html, render_maintenance_html (dark theme)

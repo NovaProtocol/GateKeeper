@@ -61,9 +61,10 @@
     <div class="card-body" style="padding:1.25rem">
       <p style="color:var(--text-secondary);font-size:.85rem;margin-bottom:1rem">
         Country level only, read from <code>CF-IPCountry</code> as the tunnel forwards it: no city,
-        no coordinates derived from the visitor address, no lookup service. Rows recorded before
+        no coordinates derived from the visitor address. Rows recorded before
         this was captured, and requests where the header never arrived, are counted as
-        <strong>Unknown</strong> and are not plotted.
+        <strong>Unknown</strong> and are not plotted. Point at an address in the table below to
+        look it up in the ip66 database on the spot; nothing it returns is stored.
       </p>
 
       {% if plotted %}
@@ -104,14 +105,14 @@
   <div class="card">
     <div class="card-header"><h2><i class="fa-solid fa-satellite-dish" aria-hidden="true"></i> Audit: IPs &amp; Pages</h2><span class="header-badge">{{ items|length }} IPs</span></div>
     <div class="card-body" style="padding:1.25rem">
-      <p style="color:var(--text-secondary);font-size:.85rem;margin-bottom:1rem">Grouped by the visitor address that <code>shared/client_ip.py</code> resolves (Cloudflare's <code>CF-Connecting-IP</code>, never the tunnel's <code>X-Forwarded-For</code>): recent pages + access code per IP. Source: <code>GET /api/logs/by-ip</code>.</p>
+      <p style="color:var(--text-secondary);font-size:.85rem;margin-bottom:1rem">Grouped by the visitor address that <code>shared/client_ip.py</code> resolves (Cloudflare's <code>CF-Connecting-IP</code>, never the tunnel's <code>X-Forwarded-For</code>): recent pages + access code per IP. Point at an address (or press it on a phone) to see where the ip66 database places it. Source: <code>GET /api/logs/by-ip</code>.</p>
       <div class="table-scroll" tabindex="0" role="region" aria-label="IPs and pages">
       <table class="codes-table" style="width:100%">
         <thead><tr><th scope="col">IP</th><th scope="col">Calls</th><th scope="col">Recent Pages</th><th scope="col">Codes Seen</th></tr></thead>
         <tbody>
         {% for it in items %}
         <tr>
-          <td style="font-family:'JetBrains Mono',monospace;font-size:.85rem">{{ it.ip }}</td>
+          <td style="font-family:'JetBrains Mono',monospace;font-size:.85rem" data-ip="{{ it.ip }}" data-country="{{ it.country or '' }}">{{ it.ip }}</td>
           <td style="font-family:'JetBrains Mono',monospace">{{ it.calls }}</td>
           <td style="font-size:.8rem;max-width:520px">
             {% for r in it.recent %}
