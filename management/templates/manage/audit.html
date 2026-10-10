@@ -222,9 +222,11 @@
     map.on('focus', function(){ map.scrollWheelZoom.enable(); });
     map.on('blur', function(){ map.scrollWheelZoom.disable(); });
     map.on('click', function(){ map.getContainer().focus(); });
+    /* No artificial zoom window. Leaflet's own defaults are the tile source's
+       (0 to 18 for OSM), and capping it here only stopped the reader getting
+       closer than a country - which is the opposite of what a map of coordinates
+       is for. */
     L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 6,
-      minZoom: 1,
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
     }).addTo(map);
     var bounds = [];
@@ -237,7 +239,7 @@
       marker.bindPopup('<strong>' + p.name + '</strong><br>' + p.count + ' (' + share + '%)');
       bounds.push([p.lat, p.lon]);
     });
-    if(bounds.length > 1){ map.fitBounds(bounds, {padding: [30, 30], maxZoom: 4}); }
+    if(bounds.length > 1){ map.fitBounds(bounds, {padding: [30, 30]}); }
     else { map.setView(bounds[0], 3); }
   } catch (e) {
     /* A blocked tile host, an offline browser or an unexpected Leaflet shape

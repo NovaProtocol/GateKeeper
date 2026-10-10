@@ -339,6 +339,18 @@ def test_the_img_src_directive_is_what_gained_the_tile_host(
     assert TILE_HOST not in directives["style-src"]
 
 
+def test_the_map_has_no_artificial_zoom_window(manage_client: Any, fake_api: _FakeClient) -> None:
+    """Leaflet's defaults are the tile source's; a cap here only stopped the zoom.
+
+    Asserted because the page is behind the manage session and cannot be fetched
+    from outside: this is the check that the caps are actually gone.
+    """
+    html = _page(manage_client)
+
+    assert "maxZoom" not in html
+    assert "minZoom" not in html
+
+
 def test_the_tile_layer_carries_its_required_attribution(
     manage_client: Any, fake_api: _FakeClient
 ) -> None:
