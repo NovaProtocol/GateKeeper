@@ -68,6 +68,26 @@ UNKNOWN_CC = "Unknown"
 #: still add up to the mode's own count and a shrinking map is explained.
 UNLOCATED_LABEL = "Not yet located"
 
+#: Actions that are never a served request, whatever their status says.
+#:
+#: The companion of :data:`BLOCKED_ACTIONS`, and the other half of "valid requests
+#: only": that one is "the gate turned this away", this is "this was never
+#: content" - a bounce to the login, a configured redirect, a request that matched
+#: no route, a maintenance response, a prompt for a password, a proxy that could
+#: not reach its upstream. Listed rather than inferred because several of these
+#: log no status at all, so the status check cannot see them.
+NON_CONTENT_ACTIONS = (
+    "no_cookie_redirect",
+    "access_code_login",
+    "custom_password_required",
+    "redirect",
+    "route_not_found",
+    "maintenance_mode",
+    "proxy_error",
+    "proxy_timeout",
+    "proxy_unreachable",
+)
+
 #: Marker radius bounds, in pixels, for the audit map.
 MIN_RADIUS = 4.0
 MAX_RADIUS = 26.0

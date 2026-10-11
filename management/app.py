@@ -614,23 +614,55 @@ async def _audit_log_count() -> int:
         return 0
 
 
+def _clean_date(value: Any) -> str:
+    """A ``YYYY-MM-DD`` date, or nothing at all.
+
+    The date inputs send that shape or an empty string, and the query string is
+    hand-editable, so anything else degrades to "no filter" rather than reaching
+    the API as a bound it cannot parse. A shape check on purpose - this is a
+    filter, not a calendar.
+    """
+    text = str(value or "").strip()[:10]
+    if len(text) != 10 or text[4] != "-" or text[7] != "-":
+        return ""
+    if not (text[:4] + text[5:7] + text[8:]).isdigit():
+        return ""
+    if not (1 <= int(text[5:7]) <= 12 and 1 <= int(text[8:10]) <= 31):
+        return ""
+    return text
+
+
 async def _audit_context(
-    mode: str | None = None, verdict: dict[str, Any] | None = None
+    mode: str | None = None, verdict: dict[str, Any] | None = None, *, params: Any = None
 ) -> dict[str, Any]:
     """Everything the audit page renders: the map points, the IP view, the count.
 
-    The map data and the per-IP view are separate calls because they answer
-    different questions, and the residual count is a third: it is what makes a
-    clear or a prune legible, since an empty table and a table that lost its rows
-    look identical without a number.
+    The filters ride on the same query string the mode does, so a filtered map is
+    a link someone can send. They are normalized here rather than trusted: a date
+    is clipped to its ten characters (that is all the API reads) and the checkbox
+    accepts whichever spelling a form sends, so a hand-edited URL degrades to
+    "no filter" instead of an error page.
     """
     selected = str(mode or DEFAULT_GEO_MODE).strip().lower()
     if selected not in GEO_MODES:
         selected = DEFAULT_GEO_MODE
+    query = params if params is not None else {}
+    filters = {
+        "from": _clean_date(query.get("from")),
+        "to": _clean_date(query.get("to")),
+        "host": str(query.get("host") or "").strip()[:255],
+        "only_valid": "1"
+        if str(query.get("only_valid") or "").strip().lower() in ("1", "on", "true", "yes")
+        else "",
+    }
+    call: dict[str, str] = {"mode": selected}
+    for key, value in filters.items():
+        if value:
+            call[key] = "true" if key == "only_valid" else value
     # One call now: the API returns the plotted points (the map), the country
     # rollup (the table) and the unplotted count together, because they are three
     # views of one aggregation and fetching them separately would let them drift.
-    geo = await _api_proxy_get("/api/logs/geo", {"mode": selected})
+    geo = await _api_proxy_get("/api/logs/geo", call)
     if not isinstance(geo, dict):
         geo = {}
     raw_points = geo.get("points")
@@ -643,6 +675,8 @@ async def _audit_context(
         "countries": countries,
         "mode": selected,
         "modes": GEO_MODES,
+        "filters": filters,
+        "filtered": any(filters.values()),
         "summary": geo.get("summary") or summarize_geo(countries),
         "geo_total": int(geo.get("total") or geo_totals(points)),
         "unlocated": int(geo.get("unlocated") or 0),
@@ -1970,7 +2004,11 @@ def create_app() -> FastAPI:
         if _auth is not None:
             return _auth
         return await _render_manage(
-            request, "manage/audit.html", await _audit_context(request.query_params.get("mode"))
+            request,
+            "manage/audit.html",
+            await _audit_context(
+                request.query_params.get("mode"), params=request.query_params
+            ),
         )
 
     @app.get("/manage/ips", response_class=HTMLResponse)

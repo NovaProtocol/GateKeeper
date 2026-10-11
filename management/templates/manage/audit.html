@@ -17,6 +17,12 @@
 .map-ips a:hover{text-decoration:underline}
 .map-ips .n{color:var(--text-secondary);font-size:.7rem;font-family:'JetBrains Mono',monospace;white-space:nowrap}
 .leaflet-popup-content{max-width:280px}
+.map-filters{display:flex;flex-wrap:wrap;align-items:center;gap:.5rem;margin:0 0 .75rem}
+.map-filters label{font-size:.72rem;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.05em}
+.map-filters select,.map-filters input{background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:.4rem .55rem;color:var(--text-primary);font-size:.85rem}
+.map-filters .map-check{display:inline-flex;align-items:center;gap:.35rem;text-transform:none;letter-spacing:0;font-weight:500;font-size:.8rem}
+.map-filters .map-check input{width:auto;padding:0}
+.map-filter-note{color:var(--text-secondary);font-size:.8rem;margin:0 0 .6rem}
 .set-verdict{border:1px solid var(--accent);background:var(--accent-dim);border-radius:8px;padding:.85rem 1rem;margin-bottom:1rem;font-size:.85rem}
 </style>
 {% endblock %}
@@ -51,21 +57,31 @@
       <h2><i class="fa-solid fa-earth-europe" aria-hidden="true"></i> Where visitors came from</h2>
       <div class="header-actions">
         <a class="btn btn-ghost btn-sm" href="/manage/ips" title="Every address, as its own page" aria-label="Every address, as its own page"><i class="fa-solid fa-satellite-dish" aria-hidden="true"></i> Addresses</a>
-        <form method="get" action="/manage/audit" style="display:flex;gap:.5rem;align-items:center;margin:0">
-          <label for="geo-mode" style="font-size:.72rem;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.05em">Measure</label>
-          <select id="geo-mode" name="mode" title="Which count the marker sizes show" aria-label="Aggregation mode" style="background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:.45rem .6rem;color:var(--text-primary);font-size:.85rem">
-            {% for option in modes %}
-            <option value="{{ option }}" {% if mode == option %}selected{% endif %}>{{ option }}</option>
-            {% endfor %}
-          </select>
-          <button class="btn btn-accent icon-btn" type="submit" title="Re-plot with this measure" aria-label="Apply aggregation"><i class="fa-solid fa-rotate" aria-hidden="true"></i></button>
-        </form>
         <a class="btn btn-ghost btn-sm" href="/manage/settings" title="Open the settings page to change the retention window" aria-label="Open the settings page to change the retention window"><i class="fa-solid fa-gear" aria-hidden="true"></i> Retention</a>
         <button class="btn btn-ghost icon-btn" data-modal-open="#pruneLogsModal" title="Delete audit rows older than the retention window" aria-label="Prune old audit rows"><i class="fa-solid fa-broom" aria-hidden="true"></i></button>
         <button class="btn btn-outline-danger icon-btn" data-modal-open="#clearLogsModal" title="Delete every audit row" aria-label="Clear all logs"><i class="fa-solid fa-trash" aria-hidden="true"></i></button>
       </div>
     </div>
     <div class="card-body" style="padding:1.25rem">
+      <form method="get" action="/manage/audit" class="map-filters">
+        <label for="geo-mode">Measure</label>
+        <select id="geo-mode" name="mode" title="Which count the marker sizes show" aria-label="Aggregation mode">
+          {% for option in modes %}<option value="{{ option }}" {% if mode == option %}selected{% endif %}>{{ option }}</option>{% endfor %}
+        </select>
+        <label for="geo-from">From</label>
+        <input type="date" id="geo-from" name="from" value="{{ filters.from }}" title="Only requests on or after this date" aria-label="From date">
+        <label for="geo-to">To</label>
+        <input type="date" id="geo-to" name="to" value="{{ filters.to }}" title="Only requests up to the end of this date" aria-label="To date">
+        <input name="host" value="{{ filters.host }}" placeholder="host e.g. *.example.com" title="Only this host (a * wildcard works)" aria-label="Host filter">
+        <label class="map-check" for="geo-valid"><input type="checkbox" id="geo-valid" name="only_valid" value="1" title="Only requests the origin actually served: no login redirects, route misses or errors" aria-label="Valid requests only" {% if filters.only_valid %}checked{% endif %}> valid requests only</label>
+        <button class="btn btn-accent btn-sm" type="submit" title="Re-plot with these filters" aria-label="Apply filters"><i class="fa-solid fa-filter" aria-hidden="true"></i> Apply</button>
+        {% if filtered %}<a class="btn btn-ghost btn-sm" href="/manage/audit" title="Drop every filter" aria-label="Clear filters">Clear</a>{% endif %}
+      </form>
+      {% if filtered %}
+      <p class="map-filter-note">
+        Filtered: {{ geo_total }} request{{ '' if geo_total == 1 else 's' }} match{% if filters.only_valid %}, only served responses{% endif %}{% if filters.from or filters.to %} in this date range{% endif %}{% if filters.host %} for this host{% endif %}.
+      </p>
+      {% endif %}
       <p style="color:var(--text-secondary);font-size:.85rem;margin-bottom:1rem">
         Plotted where the lookup resolved each address, not at a country's centre: a country has
         exactly one centre and nobody is standing on it. Coordinates are rounded to about a

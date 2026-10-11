@@ -426,6 +426,84 @@ def test_the_dropdown_is_a_get_form_so_the_view_is_linkable(
 
 
 # --------------------------------------------------------------------------- #
+# The map's filters
+# --------------------------------------------------------------------------- #
+
+
+def _geo_call(fake_api: _FakeClient) -> dict[str, Any]:
+    calls = [c for c in fake_api.calls if c[1].endswith("/api/logs/geo")]
+    assert calls, "the map always asks the API"
+    return calls[0][3]["params"]
+
+
+def test_the_filters_are_on_the_page(manage_client: Any, fake_api: _FakeClient) -> None:
+    """Start, end, host and the valid-only switch, all in one linkable form."""
+    html = _page(manage_client)
+
+    assert 'type="date"' in html
+    assert 'name="from"' in html
+    assert 'name="to"' in html
+    assert 'name="host"' in html
+    assert 'name="only_valid"' in html
+
+
+def test_an_unfiltered_map_asks_for_nothing_extra(
+    manage_client: Any, fake_api: _FakeClient
+) -> None:
+    """The default is all time, which is to say no bounds at all."""
+    _page(manage_client)
+
+    assert _geo_call(fake_api) == {"mode": "views"}
+
+
+def test_the_filters_reach_the_api(manage_client: Any, fake_api: _FakeClient) -> None:
+    _page(manage_client, "?from=2026-09-01&to=2026-09-30&host=app.example&only_valid=1")
+
+    assert _geo_call(fake_api) == {
+        "mode": "views",
+        "from": "2026-09-01",
+        "to": "2026-09-30",
+        "host": "app.example",
+        "only_valid": "true",
+    }
+
+
+def test_the_filters_survive_in_the_url(manage_client: Any, fake_api: _FakeClient) -> None:
+    """So the form comes back filled in, and the view is something to send on."""
+    html = _page(manage_client, "?from=2026-09-01&host=app.example&only_valid=1")
+
+    assert 'value="2026-09-01"' in html
+    assert 'value="app.example"' in html
+    assert re.search(r'name="only_valid"[^>]*checked', html)
+
+
+def test_a_filtered_map_says_so_and_offers_a_clear(
+    manage_client: Any, fake_api: _FakeClient
+) -> None:
+    html = _page(manage_client, "?from=2026-09-01")
+
+    assert "Filtered:" in html
+    assert 'href="/manage/audit"' in html
+
+
+def test_a_junk_filter_is_dropped_rather_than_failing_the_page(
+    manage_client: Any, fake_api: _FakeClient
+) -> None:
+    """The query string is hand-editable; a bad date is no filter, not a 400."""
+    _page(manage_client, "?from=not-a-date&to=2026-13-45&only_valid=maybe")
+
+    assert _geo_call(fake_api) == {"mode": "views"}
+
+
+def test_the_mode_and_the_filters_travel_together(
+    manage_client: Any, fake_api: _FakeClient
+) -> None:
+    _page(manage_client, "?mode=blocked&from=2026-09-01")
+
+    assert _geo_call(fake_api) == {"mode": "blocked", "from": "2026-09-01"}
+
+
+# --------------------------------------------------------------------------- #
 # The map, the CSP and the library
 # --------------------------------------------------------------------------- #
 

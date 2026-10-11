@@ -41,7 +41,7 @@ Every entry resolves to a page below. There is no second navigation: the dashboa
 | `POST /manage/rules/{rid}/edit` | Edit rule (`path`, `action`, `custom_password`) **and** the row's status switch (`active`), which posts to this same route |
 | `GET /manage/codes` | Codes list + create/edit, activate/deactivate, permanent delete, `?include_inactive=1` |
 | `GET /manage/logs` | Audit logs (filters host/ip/action/endpoint) |
-| `GET /manage/audit` | The viewer map: country totals and four aggregation modes, each marker clustered from the lookup's coordinates. Clicking one lists the addresses in it |
+| `GET /manage/audit` | The viewer map: four aggregation modes, a from/to date range, a host glob and a valid-requests-only switch, each marker clustered from the lookup's coordinates. Clicking one lists the addresses in it |
 | `GET /manage/ips` | Every address the audit has seen, each linking to its own page |
 | `GET /manage/audit/{address}` | Everything about one address: the lookup, Cloudflare's country beside it, the shape of its traffic, and every call it made |
 | `POST /manage/audit/{address}/refresh` | Queue a fresh lookup for one address (`csrf_token` + same origin). Nothing is fetched here - the worker spends the request |

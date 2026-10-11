@@ -33,14 +33,16 @@ from tests.conftest import TEST_INTERNAL_API_KEY
 
 INTERNAL_KEY_HEADERS = {"X-Internal-Api-Key": TEST_INTERNAL_API_KEY}
 
-#: `(country, ip, action, code_id)`, one row each. The first address appears
-#: twice so `visitors` has something to collapse.
-ROWS: list[tuple[str | None, str, str, int | None]] = [
-    ("PH", "203.0.113.10", "auth_success", 1),
-    ("PH", "203.0.113.10", "no_cookie_redirect", None),
-    ("US", "203.0.113.20", "auth_success", 1),
-    ("DE", "203.0.113.30", "deny", None),
-    (None, "203.0.113.40", "access_code_fail", None),
+#: `(country, ip, action, code_id, status)`, one row each. The first address
+#: appears twice so `visitors` has something to collapse, and the statuses are
+#: what "valid requests only" reads: two served requests, a login redirect and
+#: two refusals.
+ROWS: list[tuple[str | None, str, str, int | None, int]] = [
+    ("PH", "203.0.113.10", "auth_success", 1, 200),
+    ("PH", "203.0.113.10", "no_cookie_redirect", None, 302),
+    ("US", "203.0.113.20", "auth_success", 1, 200),
+    ("DE", "203.0.113.30", "deny", None, 403),
+    (None, "203.0.113.40", "access_code_fail", None, 403),
 ]
 
 #: What the lookup resolved for each address: `(country, latitude, longitude)`,
@@ -78,7 +80,7 @@ async def _clear() -> None:
         await s.commit()
 
 
-async def _seed(rows: list[tuple[str | None, str, str, int | None]]) -> None:
+async def _seed(rows: list[tuple[str | None, str, str, int | None, int]]) -> None:
     from shared.db import get_sessionmaker
     from shared.models import AuditLog, Code, IpGeo
 
@@ -88,7 +90,7 @@ async def _seed(rows: list[tuple[str | None, str, str, int | None]]) -> None:
             s.add(Code(id=1, code="geo-fixture-code", label="fixture"))
             await s.commit()
         now = dt.datetime.utcnow()  # the column stores naive UTC
-        for index, (country, ip, action, code_id) in enumerate(rows):
+        for index, (country, ip, action, code_id, status) in enumerate(rows):
             s.add(
                 AuditLog(
                     ts=now - dt.timedelta(seconds=index),
@@ -98,6 +100,7 @@ async def _seed(rows: list[tuple[str | None, str, str, int | None]]) -> None:
                     action=action,
                     country=country,
                     code_id=code_id,
+                    status_code=status,
                 )
             )
         for ip, resolved in GEO_ROWS.items():
@@ -303,6 +306,106 @@ def test_an_empty_table_returns_empty_shapes_not_an_error(client: Any) -> None:
 # --------------------------------------------------------------------------- #
 # Filters
 # --------------------------------------------------------------------------- #
+
+
+def test_only_valid_keeps_the_responses_the_origin_served(
+    client: Any, geo_rows: None
+) -> None:
+    """Not a refusal, not a redirect: a request that actually got a response.
+
+    The criterion is the status, so this drops `no_cookie_redirect` (302) and the
+    two refusals (403) while keeping the two served requests (200).
+    """
+    body = _geo(client, "views", only_valid="true")
+    assert body["total"] == 2
+    assert _by_code(body["countries"]) == {"PH": 1, "US": 1}
+    assert body["unlocated"] == 0
+
+
+def test_only_valid_judges_by_status_not_action(client: Any, clean_logs: None) -> None:
+    """The same action, two outcomes - which is exactly why this reads the status.
+
+    A proxied request that found its upstream is a served request; one that 404'd
+    is not. No list of actions could tell those apart.
+    """
+    for ip, status in (("203.0.113.61", 200), ("203.0.113.62", 404)):
+        assert (
+            _ingest(
+                client,
+                {
+                    "host": "proxy.test",
+                    "path": "/",
+                    "ip": ip,
+                    "action": "proxy",
+                    "status_code": status,
+                },
+            ).status_code
+            == 200
+        )
+    body = _geo(client, "views", host="proxy.test", only_valid="true")
+    assert body["total"] == 1, "the 200 was served, the 404 was not"
+
+
+def test_only_valid_drops_a_failing_status_even_with_no_action(
+    client: Any, clean_logs: None
+) -> None:
+    """The status signal stands on its own: a 500 is not a served request."""
+    _ingest(
+        client,
+        {"host": "statusonly.test", "path": "/", "ip": "203.0.113.63", "status_code": 500},
+    )
+    assert _geo(client, "views", host="statusonly.test", only_valid="true")["total"] == 0
+
+
+def test_only_valid_keeps_a_row_it_cannot_classify(client: Any, clean_logs: None) -> None:
+    """No action and no status is not evidence of failure."""
+    payload = {"host": "unknown.test", "path": "/", "ip": "203.0.113.64"}
+    assert _ingest(client, payload).status_code == 200
+    assert _geo(client, "views", host="unknown.test", only_valid="true")["total"] == 1
+
+
+def test_a_bounce_is_excluded_by_its_action_whatever_its_status(
+    client: Any, clean_logs: None
+) -> None:
+    """`no_cookie_redirect` is never content, so the action decides - not a status."""
+    _ingest(
+        client,
+        {
+            "host": "bounce.test",
+            "path": "/",
+            "ip": "203.0.113.65",
+            "action": "no_cookie_redirect",
+            "status_code": 200,
+        },
+    )
+    assert _geo(client, "views", host="bounce.test", only_valid="true")["total"] == 0
+
+
+def test_a_served_action_with_no_status_is_kept(client: Any, clean_logs: None) -> None:
+    """An accepted code logs `auth_success` and no status at all: real traffic.
+
+    This is the case that rules out judging by status alone.
+    """
+    _ingest(
+        client,
+        {"host": "served.test", "path": "/", "ip": "203.0.113.66", "action": "auth_success"},
+    )
+    assert _geo(client, "views", host="served.test", only_valid="true")["total"] == 1
+
+
+def test_a_bare_end_date_includes_the_whole_day(client: Any, geo_rows: None) -> None:
+    """`to=YYYY-MM-DD` is a day, not midnight.
+
+    A filter that says "up to today" has to include today; end-of-day resolution
+    happens in `_parse_dt`, and without it this returns nothing at all.
+    """
+    today = dt.datetime.utcnow().strftime("%Y-%m-%d")
+    assert _geo(client, "views", **{"to": today})["total"] == 5
+
+
+def test_a_bare_start_date_begins_the_day(client: Any, geo_rows: None) -> None:
+    tomorrow = (dt.datetime.utcnow() + dt.timedelta(days=1)).strftime("%Y-%m-%d")
+    assert _geo(client, "views", **{"from": tomorrow})["total"] == 0
 
 
 def test_the_host_filter_narrows_the_totals(client: Any, geo_rows: None) -> None:

@@ -15,7 +15,7 @@ from typing import Any
 
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse, StreamingResponse
-from sqlalchemy import delete, func, select, text, update
+from sqlalchemy import delete, func, or_, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -31,6 +31,7 @@ from shared.geo import (
     BLOCKED_ACTIONS,
     DEFAULT_GEO_MODE,
     GEO_MODES,
+    NON_CONTENT_ACTIONS,
     UNLOCATED_LABEL,
     attach_ips,
     build_location_points,
@@ -333,14 +334,38 @@ def _page_json(p: Any) -> dict[str, Any]:
     }
 
 
-def _parse_dt(s: str | None) -> dt.datetime | None:
+#: What "valid requests only" adds up to: a request the origin actually served.
+#:
+#: Two signals, because neither is enough on its own. Some served actions log no
+#: status at all - an accepted code is `auth_success` with none - so a status-only
+#: rule would drop real traffic; and one action covers both outcomes, since
+#: `proxy` is a 200 when the upstream answered and a 404 when it did not, so an
+#: action-only rule could never tell those apart. So: not an action that is never
+#: content, and not a status that says it failed. A row with neither is kept -
+#: unclassifiable is not evidence of failure.
+VALID_STATUS_MIN = 200
+VALID_STATUS_MAX = 299
+VALID_STATUS_EXTRA = 304
+
+
+def _parse_dt(s: str | None, *, end_of_day: bool = False) -> dt.datetime | None:
+    """A stored timestamp from a query string, or ``None``.
+
+    ``end_of_day`` is for the upper bound of a date range. A bare date is a *day*,
+    not an instant, so ``to=2026-10-10`` has to mean the end of that day -
+    otherwise a filter that says "up to today" silently excludes today, which is
+    both wrong and the kind of wrong nobody notices.
+    """
     if not s:
         return None
     for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%Y-%m-%dT%H:%M:%S%z"):
         try:
-            return dt.datetime.fromisoformat(s.replace("Z", "+00:00"))
+            parsed = dt.datetime.fromisoformat(s.replace("Z", "+00:00"))
         except Exception:
             continue
+        if end_of_day and len(s.strip()) == 10:
+            parsed = parsed.replace(hour=23, minute=59, second=59, microsecond=999999)
+        return parsed
     return None
 
 
@@ -1419,7 +1444,7 @@ def create_app() -> FastAPI:
             else:
                 filt.append(AuditLog.host.like(_glob_to_like(endpoint), escape="\\"))
         dt_from = _parse_dt(from_) if from_ else None
-        dt_to = _parse_dt(to) if to else None
+        dt_to = _parse_dt(to, end_of_day=True) if to else None
         if dt_from:
             filt.append(AuditLog.ts >= dt_from)
         if dt_to:
@@ -1468,6 +1493,7 @@ def create_app() -> FastAPI:
         host: str | None = None,
         from_: str | None = Query(default=None, alias="from"),
         to: str | None = Query(default=None, alias="to"),
+        only_valid: bool = Query(default=False),
         db=Depends(get_db),
     ):
         """Where visitors actually were, from the lookup's coordinates.
@@ -1508,13 +1534,26 @@ def create_app() -> FastAPI:
             filters.append(AuditLog.code_id.is_not(None))
         elif mode == "blocked":
             filters.append(AuditLog.action.in_(BLOCKED_ACTIONS))
+        if only_valid:
+            # A request the origin actually served - see VALID_STATUS_MIN for why
+            # this is two clauses rather than one.
+            filters.append(
+                or_(AuditLog.action.is_(None), AuditLog.action.notin_(NON_CONTENT_ACTIONS))
+            )
+            filters.append(
+                or_(
+                    AuditLog.status_code.is_(None),
+                    AuditLog.status_code.between(VALID_STATUS_MIN, VALID_STATUS_MAX),
+                    AuditLog.status_code == VALID_STATUS_EXTRA,
+                )
+            )
         if host:
             if "*" in host or "?" in host:
                 filters.append(AuditLog.host.like(_glob_to_like(host), escape="\\"))
             else:
                 filters.append(AuditLog.host == host)
         dt_from = _parse_dt(from_) if from_ else None
-        dt_to = _parse_dt(to) if to else None
+        dt_to = _parse_dt(to, end_of_day=True) if to else None
         if dt_from:
             filters.append(AuditLog.ts >= dt_from)
         if dt_to:
