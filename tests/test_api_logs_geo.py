@@ -267,6 +267,15 @@ def test_the_same_point_is_one_marker(client: Any, geo_rows: None) -> None:
     assert merged["count"] == 3  # .10 twice and .40 once
 
 
+def test_a_marker_carries_the_addresses_that_are_in_it(client: Any, geo_rows: None) -> None:
+    """What a cluster shows when it is clicked: who, and how many calls each."""
+    points = _geo(client, "views")["points"]
+    merged = next(p for p in points if p["lat"] == 14.6)
+    assert {e["ip"] for e in merged["ips"]} == {"203.0.113.10", "203.0.113.40"}
+    assert merged["ips_total"] == 2
+    assert sum(e["count"] for e in merged["ips"]) == merged["count"]
+
+
 def test_points_are_ordered_largest_first(client: Any, geo_rows: None) -> None:
     counts = [p["count"] for p in _geo(client, "views")["points"]]
     assert counts == sorted(counts, reverse=True)
@@ -360,10 +369,61 @@ def test_ingest_queues_the_address_without_looking_it_up(client: Any, clean_logs
     assert _queued("203.0.113.77") is True
 
 
+def _read_row(host: str) -> dict[str, Any]:
+    """The five request-detail columns for one stored row."""
+    from shared.db import get_sessionmaker
+    from shared.models import AuditLog
+
+    async def _read() -> dict[str, Any]:
+        async with get_sessionmaker()() as s:
+            res = await s.execute(select(AuditLog).where(AuditLog.host == host))
+            row = res.scalars().first()
+            if row is None:
+                return {}
+            return {
+                "accept_language": row.accept_language,
+                "sec_ch_ua": row.sec_ch_ua,
+                "sec_ch_ua_platform": row.sec_ch_ua_platform,
+                "cf_ray": row.cf_ray,
+                "query": row.query,
+            }
+
+    return asyncio.run(_read())
+
+
+def test_the_rest_of_the_request_is_stored(client: Any, clean_logs: None) -> None:
+    """Language, client hints, Cloudflare's ray, and what was being asked for."""
+    r = _ingest(
+        client,
+        {
+            "host": "detail.test",
+            "path": "/search",
+            "ip": "203.0.113.99",
+            "accept_language": "en-US,en;q=0.9",
+            "sec_ch_ua": '"Chromium";v="124", "Not:A-Brand";v="24"',
+            "sec_ch_ua_platform": '"Linux"',
+            "cf_ray": "8a1b2c3d4e5f6789",
+            "query": "page=2&q=test",
+        },
+    )
+    assert r.status_code == 200, r.text
+    row = _read_row("detail.test")
+    assert row["accept_language"] == "en-US,en;q=0.9"
+    assert row["sec_ch_ua"].startswith('"Chromium"')
+    assert row["sec_ch_ua_platform"] == '"Linux"'
+    assert row["cf_ray"] == "8a1b2c3d4e5f6789"
+    assert row["query"] == "page=2&q=test"
+
+
+def test_a_payload_without_them_is_stored_as_nulls(client: Any, clean_logs: None) -> None:
+    """A gateway that predates the columns sends nothing, and that is a NULL."""
+    assert _ingest(client, {"host": "nodetail.test", "path": "/"}).status_code == 200
+    assert all(v is None for v in _read_row("nodetail.test").values())
+
+
 def test_a_missing_country_key_is_stored_as_null_and_does_not_fail(
     client: Any, clean_logs: None
 ) -> None:
-    """A gateway container that predates this column sends no key at all."""
     r = _ingest(client, {"host": "nogkey.test", "path": "/", "ip": "203.0.113.2"})
     assert r.status_code == 200, r.text
     assert _stored_country("nogkey.test") is None

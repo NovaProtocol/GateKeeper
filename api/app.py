@@ -32,6 +32,7 @@ from shared.geo import (
     DEFAULT_GEO_MODE,
     GEO_MODES,
     UNLOCATED_LABEL,
+    attach_ips,
     build_location_points,
     country_rollup,
     normalize_country,
@@ -361,6 +362,8 @@ def _migrate_ip_geo(sync_conn: Any) -> None:
             sync_conn.execute(text("ALTER TABLE ip_geo ADD COLUMN latitude FLOAT"))
         if "longitude" not in cols:
             sync_conn.execute(text("ALTER TABLE ip_geo ADD COLUMN longitude FLOAT"))
+        if "refresh_at" not in cols:
+            sync_conn.execute(text("ALTER TABLE ip_geo ADD COLUMN refresh_at DATETIME"))
     except Exception:
         pass
 
@@ -391,6 +394,17 @@ def _migrate_audit(sync_conn: Any) -> None:
         # stay NULL and are reported as Unknown.
         if "country" not in cols:
             sync_conn.execute(text("ALTER TABLE audit_logs ADD COLUMN country VARCHAR(2)"))
+        # The request's own detail, added together for the per-address page.
+        if "accept_language" not in cols:
+            sync_conn.execute(text("ALTER TABLE audit_logs ADD COLUMN accept_language VARCHAR(128)"))
+        if "sec_ch_ua" not in cols:
+            sync_conn.execute(text("ALTER TABLE audit_logs ADD COLUMN sec_ch_ua VARCHAR(255)"))
+        if "sec_ch_ua_platform" not in cols:
+            sync_conn.execute(text("ALTER TABLE audit_logs ADD COLUMN sec_ch_ua_platform VARCHAR(64)"))
+        if "cf_ray" not in cols:
+            sync_conn.execute(text("ALTER TABLE audit_logs ADD COLUMN cf_ray VARCHAR(64)"))
+        if "query" not in cols:
+            sync_conn.execute(text("ALTER TABLE audit_logs ADD COLUMN query VARCHAR(1024)"))
         if "ip" in cols:
             sync_conn.execute(text("CREATE INDEX IF NOT EXISTS ix_audit_logs_ip ON audit_logs (ip)"))
         if "action" in cols:
@@ -1424,7 +1438,7 @@ def create_app() -> FastAPI:
             for c in cres.scalars().all():
                 code_map[c.id] = c
         response.headers["X-Total-Count"] = str(total)
-        return [{"id": r.id, "ts": r.ts, "ip": r.ip, "host": r.host, "path": r.path, "country": r.country, "action": r.action, "matched_action": r.matched_action, "request_id": r.request_id, "code_id": r.code_id, "code_label": (code_map[r.code_id].display_name or code_map[r.code_id].label) if r.code_id and r.code_id in code_map else None, "code_value": code_map[r.code_id].code if r.code_id and r.code_id in code_map else None, "code_active": code_map[r.code_id].active if r.code_id and r.code_id in code_map else None, "method": r.method, "status_code": r.status_code, "attempted_code": r.attempted_code, "user_agent": r.user_agent, "referer": r.referer, "latency_ms": r.latency_ms, "rule_group_id": r.rule_group_id, "rule_id": r.rule_id} for r in rows]
+        return [{"id": r.id, "ts": r.ts, "ip": r.ip, "host": r.host, "path": r.path, "country": r.country, "action": r.action, "matched_action": r.matched_action, "request_id": r.request_id, "code_id": r.code_id, "code_label": (code_map[r.code_id].display_name or code_map[r.code_id].label) if r.code_id and r.code_id in code_map else None, "code_value": code_map[r.code_id].code if r.code_id and r.code_id in code_map else None, "code_active": code_map[r.code_id].active if r.code_id and r.code_id in code_map else None, "method": r.method, "status_code": r.status_code, "attempted_code": r.attempted_code, "user_agent": r.user_agent, "referer": r.referer, "latency_ms": r.latency_ms, "rule_group_id": r.rule_group_id, "rule_id": r.rule_id, "accept_language": r.accept_language, "sec_ch_ua": r.sec_ch_ua, "sec_ch_ua_platform": r.sec_ch_ua_platform, "cf_ray": r.cf_ray, "query": r.query} for r in rows]
 
     @app.get("/api/logs/top")
     async def logs_top(  # type: ignore[no-untyped-def]
@@ -1526,6 +1540,21 @@ def create_app() -> FastAPI:
         plotted = sum(point["count"] for point in points)
         unlocated = max(0, total - plotted)
         countries = country_rollup(points, total=total)
+
+        # The addresses behind each marker, so a cluster can be opened and read.
+        # Per (point, address) rather than per point, because the popup asks who,
+        # not how many.
+        ip_rows = (
+            await db.execute(
+                select(lat, lon, IpGeo.country_code, AuditLog.ip, counter)
+                .select_from(AuditLog)
+                .join(IpGeo, AuditLog.ip == IpGeo.ip)
+                .where(IpGeo.latitude.is_not(None), IpGeo.longitude.is_not(None), *filters)
+                .group_by(lat, lon, IpGeo.country_code, AuditLog.ip)
+            )
+        ).all()
+        points = attach_ips(points, [(r[0], r[1], r[2], r[3], r[4]) for r in ip_rows])
+
         if unlocated:
             countries.append(
                 {
@@ -1851,6 +1880,127 @@ def create_app() -> FastAPI:
             out.append({"ip": ip_val, "calls": cnt, "recent": recent, "codes": codes, "country": recs[0].country if recs else None})
         return out
 
+    @app.get("/api/logs/ip/{address}")
+    async def ip_detail(address: str, db=Depends(get_db)):  # type: ignore[no-untyped-def]
+        """Everything about one address, for the page that moderates from it.
+
+        Three things the page needs, assembled together: what the lookup knows
+        (from ``ip_geo``, age included), the shape of that address's traffic
+        (totals, first and last seen, and the breakdowns an operator reads first),
+        and Cloudflare's country for it so the two can be compared. The calls
+        themselves come from ``/api/logs?ip=``, which already pages and filters -
+        this deliberately does not repeat that.
+
+        The breakdowns are capped at twenty entries each: they are a summary, and
+        a page that listed every path an address ever touched would be the
+        history table, which is a different thing.
+        """
+        ip = (address or "").strip()[:64]
+        if not ip:
+            raise HTTPException(status_code=400, detail="address required")
+
+        row = await db.get(IpGeo, ip)
+        lookup = ipapi.parse(row) if row is not None else None
+        fetched = row.fetched_at if row is not None else None
+        age = int((ipapi.utcnow() - fetched).total_seconds()) if fetched else None
+
+        totals = (
+            await db.execute(
+                select(
+                    func.count(),
+                    func.min(AuditLog.ts),
+                    func.max(AuditLog.ts),
+                    func.count(func.distinct(AuditLog.host)),
+                    func.count(func.distinct(AuditLog.path)),
+                    func.count(func.distinct(AuditLog.user_agent)),
+                ).where(AuditLog.ip == ip)
+            )
+        ).one()
+        cf_country = (
+            await db.execute(
+                select(AuditLog.country)
+                .where(AuditLog.ip == ip, AuditLog.country.is_not(None))
+                .order_by(AuditLog.ts.desc())
+                .limit(1)
+            )
+        ).scalar()
+
+        async def breakdown(column: Any) -> list[dict[str, Any]]:  # noqa: ANN401
+            q = (
+                select(column, func.count())
+                .where(AuditLog.ip == ip)
+                .group_by(column)
+                .order_by(func.count().desc())
+                .limit(20)
+            )
+            return [{"value": r[0], "count": int(r[1])} for r in (await db.execute(q)).all()]
+
+        host_rows = await breakdown(AuditLog.host)
+        path_rows = await breakdown(AuditLog.path)
+        action_rows = await breakdown(AuditLog.action)
+        agent_rows = await breakdown(AuditLog.user_agent)
+        status_rows = await breakdown(AuditLog.status_code)
+        language_rows = await breakdown(AuditLog.accept_language)
+
+        code_rows = (
+            await db.execute(
+                select(AuditLog.code_id, func.count())
+                .where(AuditLog.ip == ip, AuditLog.code_id.is_not(None))
+                .group_by(AuditLog.code_id)
+                .order_by(func.count().desc())
+                .limit(20)
+            )
+        ).all()
+        labels: dict[int, str] = {}
+        if code_rows:
+            ids = [r[0] for r in code_rows]
+            found = (await db.execute(select(Code).where(Code.id.in_(ids)))).scalars().all()
+            labels = {c.id: (c.display_name or c.label or c.code[:8]) for c in found}
+        code_summary = [{"value": labels.get(r[0], f"#{r[0]}"), "count": int(r[1])} for r in code_rows]
+
+        return {
+            "ip": ip,
+            "lookup": lookup,
+            "found": lookup is not None,
+            "queued": fetched is None,
+            "refresh_queued": bool(row is not None and row.refresh_at is not None),
+            "last_updated": (fetched.isoformat() + "Z") if fetched else None,
+            "age_seconds": age,
+            "stale": bool(age is not None and age > ipapi.RECHECK_AFTER_S),
+            "error": (row.last_error if row is not None else None),
+            "attempts": (int(row.attempts or 0) if row is not None else 0),
+            "country": ipapi.decide_country(cf_country, row.country_code if row is not None else None),
+            "summary": {
+                "calls": int(totals[0] or 0),
+                "first_seen": (totals[1].isoformat() + "Z") if totals[1] else None,
+                "last_seen": (totals[2].isoformat() + "Z") if totals[2] else None,
+                "hosts": int(totals[3] or 0),
+                "paths": int(totals[4] or 0),
+                "user_agents": int(totals[5] or 0),
+            },
+            "hosts": host_rows,
+            "paths": path_rows,
+            "actions": action_rows,
+            "agents": agent_rows,
+            "statuses": status_rows,
+            "languages": language_rows,
+            "codes": code_summary,
+        }
+
+    @app.post("/api/logs/ip/{address}/refresh", dependencies=[Depends(_require_internal)])
+    async def ip_refresh(address: str, db=Depends(get_db)):  # type: ignore[no-untyped-def]
+        """Queue one address for an immediate re-lookup.
+
+        Internal like every other write: the panel exposes it behind the manage
+        session and relays here with the internal key. Nothing is fetched on this
+        path - the worker does that at the provider's pace - so an operator
+        pressing refresh cannot spend the budget or wait on a request.
+        """
+        ip = (address or "").strip()[:64]
+        if not ip:
+            raise HTTPException(status_code=400, detail="address required")
+        return {"ok": await ipapi.request_refresh(db, ip)}
+
     @app.post("/api/logs", dependencies=[Depends(_require_internal)])
     async def ingest_log(payload: dict, db=Depends(get_db)):  # type: ignore[no-untyped-def]
         # expected payload from auth-gateway _audit_log_async
@@ -1881,6 +2031,11 @@ def create_app() -> FastAPI:
                 method=str(payload.get("method") or "")[:10] or None,
                 status_code=payload.get("status_code"),
                 attempted_code=str(payload.get("attempted_code") or "")[:64] or None,
+                accept_language=str(payload.get("accept_language") or "")[:128] or None,
+                sec_ch_ua=str(payload.get("sec_ch_ua") or "")[:255] or None,
+                sec_ch_ua_platform=str(payload.get("sec_ch_ua_platform") or "")[:64] or None,
+                cf_ray=str(payload.get("cf_ray") or "")[:64] or None,
+                query=str(payload.get("query") or "")[:1024] or None,
             )
             db.add(obj)
             await db.commit()

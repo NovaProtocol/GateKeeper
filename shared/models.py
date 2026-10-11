@@ -146,6 +146,17 @@ class AuditLog(Base):
     method: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
     status_code: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     attempted_code: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    #: The rest of what the origin can see about a request, kept because a
+    #: moderation decision is made on it: the browser's language preferences, the
+    #: client hints it volunteers, Cloudflare's own ray id for the request, and
+    #: the query string (the path alone loses what was being asked for). All
+    #: nullable - a gateway that predates them sends nothing, and that is a NULL
+    #: rather than a rejected row.
+    accept_language: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    sec_ch_ua: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    sec_ch_ua_platform: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    cf_ray: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    query: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
 
 
 class IpGeo(Base):
@@ -189,3 +200,8 @@ class IpGeo(Base):
     #: row that never resolves is legible instead of merely absent.
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default=text("0"))
     last_error: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    #: Set when an operator asks for this address to be looked up again. The row
+    #: keeps its data and its ``fetched_at`` - so the page still shows what it
+    #: knows and how old it is - while jumping the queue ahead of the staleness
+    #: floor. The worker clears it on the next successful lookup.
+    refresh_at: Mapped[Optional[dt.datetime]] = mapped_column(DateTime, nullable=True)

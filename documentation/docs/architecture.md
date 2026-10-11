@@ -21,7 +21,7 @@ project/
 │ ├── config.py # pydantic-settings: SECRET_KEY, MANAGE_PASSWORD, DATABASE_URL, INTERNAL_API_KEY, DEPLOYMENT_TYPE, BACKUP_CODE
 │ ├── jwt.py # PyJWT HS256 iss=gatekeeper aud=projectnova.download exp configurable/8h/configurable + jti
 │ ├── csp.py # the site-wide security headers (CONTENT_SECURITY_POLICY, SECURITY_HEADERS, apply_security_headers)
-│ ├── models.py # 7 config tables + settings + audit_logs (routes, rule_groups, rules, codes, custom_pages, settings, audit_logs with method/status_code/attempted_code/country, ip_geo)
+│ ├── models.py # 7 config tables + settings + audit_logs (routes, rule_groups, rules, codes, custom_pages, settings, audit_logs with method/status_code/attempted_code/country + the request's language, client hints, cf_ray and query, ip_geo with its queue, coordinates and refresh mark)
 │ ├── settings_spec.py # the settings table: accepted values, defaults, fallback direction
 │ ├── security.py # pbkdf2_hmac sha512 100k, host_matches, path_matches, mask_code, apex_domain
 │ ├── pages.py # custom-page patterns: split_pattern, glob_match, sample_from_pattern

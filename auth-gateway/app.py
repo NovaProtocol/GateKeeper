@@ -598,6 +598,7 @@ async def _queue_page_audit(
     """
     _queue_audit(
         background_tasks,
+        request=request,
         host=host,
         path=path,
         ip=ip,
@@ -632,6 +633,7 @@ async def _queue_maintenance_audit(
     """
     _queue_audit(
         background_tasks,
+        request=request,
         host=host,
         path=path,
         ip=ip,
@@ -732,6 +734,11 @@ async def _audit_log_async(
     status_code: int | None = None,
     attempted_code: str | None = None,
     country: str | None = None,
+    accept_language: str | None = None,
+    sec_ch_ua: str | None = None,
+    sec_ch_ua_platform: str | None = None,
+    cf_ray: str | None = None,
+    query: str | None = None,
 ) -> None:
     payload = {
         "ts": __import__("datetime").datetime.utcnow().isoformat(),
@@ -751,6 +758,14 @@ async def _audit_log_async(
         "method": (method or "")[:10] or None,
         "status_code": status_code,
         "attempted_code": mask_code(attempted_code) if attempted_code else None,
+        # What the request itself carried. All optional and all bounded: a
+        # gateway that cannot see a header sends nothing, which the API stores
+        # as a NULL rather than rejecting the row.
+        "accept_language": (accept_language or "")[:128] or None,
+        "sec_ch_ua": (sec_ch_ua or "")[:255] or None,
+        "sec_ch_ua_platform": (sec_ch_ua_platform or "")[:64] or None,
+        "cf_ray": (cf_ray or "")[:64] or None,
+        "query": (query or "")[:1024] or None,
     }
     try:
         cfg = get_config()
@@ -771,6 +786,21 @@ async def _audit_log_async(
 
 
 def _queue_audit(background_tasks: BackgroundTasks, **kw: Any) -> None:
+    """Queue one audit row, filling in what the request itself carried.
+
+    Every call site already passes the outcome it decided; this adds the request's
+    own detail in one place, so a header added later is one edit rather than four
+    and a new call site cannot quietly forget it. ``request`` is popped rather
+    than passed on - `_audit_log_async` takes plain values.
+    """
+    request = kw.pop("request", None)
+    if request is not None:
+        headers = request.headers
+        kw.setdefault("accept_language", headers.get("Accept-Language"))
+        kw.setdefault("sec_ch_ua", headers.get("Sec-CH-UA"))
+        kw.setdefault("sec_ch_ua_platform", headers.get("Sec-CH-UA-Platform"))
+        kw.setdefault("cf_ray", headers.get("CF-Ray"))
+        kw.setdefault("query", request.url.query or None)
     background_tasks.add_task(_audit_log_async, **kw)
 
 
@@ -1037,6 +1067,7 @@ def create_app() -> FastAPI:
             lat = int((time.monotonic() - t0) * 1000)
             _queue_audit(
                 background_tasks,
+                request=request,
                 host=host,
                 path=path,
                 ip=ip,
@@ -1193,6 +1224,7 @@ def create_app() -> FastAPI:
             lat = int((time.monotonic() - t0) * 1000)
             _queue_audit(
                 background_tasks,
+                request=request,
                 host=host,
                 path=raw_path,
                 ip=ip,

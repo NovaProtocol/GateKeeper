@@ -145,6 +145,31 @@ def country_rollup(
     return rows
 
 
+def attach_ips(
+    points: list[dict[str, Any]], ip_rows: list[tuple[Any, Any, str | None, str, int]], *, limit: int = 25
+) -> list[dict[str, Any]]:
+    """Put the addresses behind each marker on the marker, largest first.
+
+    A cluster is opened by clicking it, and what it has to show is *who* is in
+    it. Bounded on purpose: one coordinate can hold thousands of addresses and a
+    popup cannot, so each point carries at most ``limit`` and reports how many
+    were left off rather than quietly truncating.
+    """
+    grouped: dict[tuple[float, float], list[dict[str, Any]]] = {}
+    for lat, lon, cc, ip, count in ip_rows:
+        if lat is None or lon is None or not ip:
+            continue
+        grouped.setdefault((float(lat), float(lon)), []).append(
+            {"ip": ip, "count": int(count or 0), "cc": str(cc).upper() if cc else None}
+        )
+    for point in points:
+        found = grouped.get((float(point["lat"]), float(point["lon"])), [])
+        found.sort(key=lambda e: (-e["count"], e["ip"]))
+        point["ips"] = found[:limit]
+        point["ips_total"] = len(found)
+    return points
+
+
 def normalize_country(value: Any) -> str | None:
     """A header or payload value as a storable country code, or ``None``.
 

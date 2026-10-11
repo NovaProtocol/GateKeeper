@@ -33,6 +33,7 @@ from shared.geo import (
     MIN_RADIUS,
     UNKNOWN_CC,
     UNLOCATED_LABEL,
+    attach_ips,
     build_location_points,
     country_name,
     country_rollup,
@@ -282,6 +283,41 @@ def test_the_rollup_of_nothing_is_empty() -> None:
 def test_a_point_with_no_country_rolls_up_as_unknown() -> None:
     rows = country_rollup(build_location_points([(1.0, 1.0, None, 2)]))
     assert rows[0]["name"] == UNKNOWN_CC
+
+
+# --------------------------------------------------------------------------- #
+# The addresses behind a marker
+# --------------------------------------------------------------------------- #
+
+
+def test_the_addresses_behind_a_marker_ride_on_the_marker() -> None:
+    points = build_location_points([(1.0, 1.0, "PH", 5)])
+    attach_ips(points, [(1.0, 1.0, "PH", "203.0.113.1", 3), (1.0, 1.0, "PH", "203.0.113.2", 2)])
+    assert [e["ip"] for e in points[0]["ips"]] == ["203.0.113.1", "203.0.113.2"], "busiest first"
+    assert points[0]["ips_total"] == 2
+
+
+def test_the_marker_list_is_bounded_and_says_how_many_were_left_off() -> None:
+    """A cluster can hold thousands; a popup cannot, and must not pretend to."""
+    points = build_location_points([(1.0, 1.0, "PH", 9)])
+    rows = [(1.0, 1.0, "PH", f"203.0.113.{i}", 1) for i in range(9)]
+    attach_ips(points, rows, limit=3)
+    assert len(points[0]["ips"]) == 3
+    assert points[0]["ips_total"] == 9
+
+
+def test_a_marker_with_no_addresses_gets_an_empty_list() -> None:
+    points = build_location_points([(1.0, 1.0, "PH", 5)])
+    attach_ips(points, [])
+    assert points[0]["ips"] == []
+    assert points[0]["ips_total"] == 0
+
+
+def test_addresses_are_matched_to_the_marker_they_share() -> None:
+    points = build_location_points([(1.0, 1.0, "PH", 2), (2.0, 2.0, "US", 1)])
+    attach_ips(points, [(2.0, 2.0, "US", "198.51.100.7", 1)])
+    assert points[0]["ips"] == []
+    assert [e["ip"] for e in points[1]["ips"]] == ["198.51.100.7"]
 
 
 # --------------------------------------------------------------------------- #

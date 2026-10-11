@@ -637,11 +637,7 @@ async def _audit_context(
     points = raw_points if isinstance(raw_points, list) else []
     raw_countries = geo.get("countries")
     countries = raw_countries if isinstance(raw_countries, list) else []
-    items = await _api_proxy_get("/api/logs/by-ip", {"limit": "50"})
-    if not isinstance(items, list):
-        items = []
     return {
-        "items": items,
         "points": points,
         "plotted": plot_geo_points(points),
         "countries": countries,
@@ -654,6 +650,36 @@ async def _audit_context(
         "confirm_word": CLEAR_CONFIRM,
         "clear_verdict": verdict,
     }
+
+
+async def _ips_context() -> dict[str, Any]:
+    """Every address the audit has seen, most calls first.
+
+    It used to be a card under the map. It is a list an operator works *through*,
+    so it lives at its own address, and every row links to the page for that
+    address rather than sitting there as text.
+    """
+    items = await _api_proxy_get("/api/logs/by-ip", {"limit": "100"})
+    if not isinstance(items, list):
+        items = []
+    return {"items": items, "remaining": await _audit_log_count()}
+
+
+async def _ip_context(address: str) -> dict[str, Any]:
+    """One address: who it is, what it has done, and every call it made.
+
+    Two API calls because they answer different questions - "what is known about
+    this address overall" and "show me the rows" - and the rows are paged, so
+    they cannot be the same request.
+    """
+    target = quote(address, safe="")
+    detail = await _api_proxy_get(f"/api/logs/ip/{target}")
+    if not isinstance(detail, dict):
+        detail = {"ip": address, "found": False, "summary": {}}
+    calls = await _api_proxy_get("/api/logs", {"ip": address, "per_page": "25"})
+    if not isinstance(calls, list):
+        calls = []
+    return {"detail": detail, "calls": calls, "ip": detail.get("ip") or address}
 
 
 async def _backup_context(
@@ -1946,6 +1972,52 @@ def create_app() -> FastAPI:
         return await _render_manage(
             request, "manage/audit.html", await _audit_context(request.query_params.get("mode"))
         )
+
+    @app.get("/manage/ips", response_class=HTMLResponse)
+    async def manage_ips(request: Request) -> Response:
+        """The address list, as a page of its own.
+
+        It was a card under the map; a list you work through deserves a URL you
+        can link to, and the map deserves to be about the map.
+        """
+        _auth = await _require_manage_auth(request)
+        if _auth is not None:
+            return _auth
+        return await _render_manage(request, "manage/ips.html", await _ips_context())
+
+    @app.get("/manage/audit/{address}", response_class=HTMLResponse)
+    async def manage_ip_detail(request: Request, address: str) -> Response:
+        """Everything about one address, which is what moderating needs.
+
+        The lookup, how it compares to Cloudflare, the shape of the traffic, and
+        the calls themselves - reached from the map's clusters or from the address
+        list, and never a dead end: the page links back to the filtered logs.
+        """
+        _auth = await _require_manage_auth(request)
+        if _auth is not None:
+            return _auth
+        return await _render_manage(request, "manage/ip_detail.html", await _ip_context(address))
+
+    @app.post("/manage/audit/{address}/refresh", response_class=HTMLResponse)
+    async def manage_ip_refresh(request: Request, address: str) -> Response:
+        """Ask the lookup queue for a fresh answer about one address.
+
+        A POST because it writes a row, so it carries the session, the CSRF token
+        and the origin check like every other write here. Nothing is looked up on
+        this path: the row moves to the front of the queue and the worker spends
+        the request at the provider's pace, so an operator pressing refresh cannot
+        exhaust the budget or wait on freeipapi.
+        """
+        _auth = await _require_manage_auth(request)
+        if _auth is not None:
+            return _auth
+        form = await request.form()
+        if not _verify_csrf(request, str(form.get("csrf_token") or "")):
+            raise HTTPException(status_code=403, detail="Invalid CSRF")
+        if not same_origin(request):
+            raise HTTPException(status_code=403, detail="Cross-site")
+        await _api_proxy_post(f"/api/logs/ip/{quote(address, safe='')}/refresh", {})
+        return RedirectResponse(url=f"/manage/audit/{quote(address, safe='')}", status_code=302)
 
     @app.post("/manage/logs/clear", response_class=HTMLResponse)
     async def manage_logs_clear(request: Request) -> Response:

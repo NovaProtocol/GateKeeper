@@ -488,8 +488,15 @@ def test_a_top_pages_page_with_no_traffic_does_not_divide_by_zero(
 # --------------------------------------------------------------------------- #
 
 
-def test_audit_page_renders_the_per_visitor_view(manage_client, monkeypatch) -> None:
+def test_audit_page_renders_the_map_and_links_on(manage_client, monkeypatch) -> None:
+    """The map page keeps the map; the per-address list lives elsewhere now."""
     html = _get(manage_client, "/manage/audit", monkeypatch)
+    assert "Audit" in html
+    assert 'href="/manage/ips"' in html
+
+
+def test_the_address_list_has_its_own_page(manage_client, monkeypatch) -> None:
+    html = _get(manage_client, "/manage/ips", monkeypatch)
     assert "Audit" in html
     assert "203.0.113.5" in html
 

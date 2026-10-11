@@ -41,7 +41,10 @@ Every entry resolves to a page below. There is no second navigation: the dashboa
 | `POST /manage/rules/{rid}/edit` | Edit rule (`path`, `action`, `custom_password`) **and** the row's status switch (`active`), which posts to this same route |
 | `GET /manage/codes` | Codes list + create/edit, activate/deactivate, permanent delete, `?include_inactive=1` |
 | `GET /manage/logs` | Audit logs (filters host/ip/action/endpoint) |
-| `GET /manage/audit` | Viewer map (country, four aggregation modes) plus the per-visitor table: IPs, their recent pages and the code they used. Point at an address for what the lookup knows about it |
+| `GET /manage/audit` | The viewer map: country totals and four aggregation modes, each marker clustered from the lookup's coordinates. Clicking one lists the addresses in it |
+| `GET /manage/ips` | Every address the audit has seen, each linking to its own page |
+| `GET /manage/audit/{address}` | Everything about one address: the lookup, Cloudflare's country beside it, the shape of its traffic, and every call it made |
+| `POST /manage/audit/{address}/refresh` | Queue a fresh lookup for one address (`csrf_token` + same origin). Nothing is fetched here - the worker spends the request |
 | `GET /manage/ip` | JSON: what is known about one address (`?ip=`, optional `?country=` for the Cloudflare comparison). Behind the manage session, read-only, served from `ip_geo` - never a live lookup |
 | `GET /manage/monitoring` | `302` to `/manage/audit`, so an old bookmark still lands |
 | `GET /manage/top-pages` | Top paths by hits |
@@ -122,7 +125,7 @@ Both capabilities are kept, and the split is deliberate: a switch is a state ind
 
 ## Logs, Audit, and the warnings banner
 
-`GET /manage/logs` supports `?format=json&page&per_page&ip&host&endpoint&code&from&to` with `X-Total-Count`; template `logs.html` does `IntersectionObserver` infinite scroll loading next page as you scroll. `GET /manage/audit` pairs the viewer map with `GET /api/logs/by-ip?limit=50`, which lists IPs → `{calls, recent: [{host,path,ts,action,code_label,attempted_code}], codes, country}` for the per-visitor view. Addresses on both pages carry `data-ip` (and `data-country`): pointing at one, or pressing it on a phone, opens a small panel fed by `GET /manage/ip` that shows the stored freeipapi record with a live *last updated* timer, "Queued" when the address has no data yet, and - where Cloudflare and the lookup disagree on the country - both of them, with the lookup named the source of truth.
+`GET /manage/logs` supports `?format=json&page&per_page&ip&host&endpoint&code&from&to` with `X-Total-Count`; template `logs.html` does `IntersectionObserver` infinite scroll loading next page as you scroll. `GET /manage/audit` is the map alone now - `GET /api/logs/geo` gives it the points, the country rollup and the addresses inside each cluster, and clicking a marker opens that list. The address list it used to carry is `GET /manage/ips`, its own page, fed by `GET /api/logs/by-ip?limit=100`; every row there links to `GET /manage/audit/{address}`, which is `GET /api/logs/ip/{address}` (the lookup, the totals, the first and last seen, and capped breakdowns of hosts, paths, actions, codes, statuses, languages and user agents) beside `GET /api/logs?ip=` for the calls themselves. That page is read-only apart from **Refresh lookup**, a POST that queues a fresh lookup and returns: the request is spent by the worker at the provider's pace, never by the page.
 
 Warnings are no longer a page. `GET /api/warnings` reports a shadowed group or rule only when one exists, and on a healthy gateway it answers `{groups: [], rules: []}`, so `/manage/warnings` rendered two empty tables under a red header and nothing else. The page is deleted, the endpoint is not: the dashboard reads it and renders a `.warn-banner` **only when the response is non-empty**, linking to `/manage/rules` where the order can be fixed. Nothing about shadowing detection changed, only where it is shown.
 

@@ -71,6 +71,52 @@ GEO: dict[str, Any] = {
     "summary": "Philippines 6, Germany 3, and 1 more.",
 }
 
+#: What `/api/logs/ip/{address}` returns: the lookup, the shape, the breakdowns.
+IP_DETAIL: dict[str, Any] = {
+    "ip": "203.0.113.10",
+    "found": True,
+    "queued": False,
+    "refresh_queued": False,
+    "last_updated": "2026-10-10T18:00:00Z",
+    "age_seconds": 3600,
+    "stale": False,
+    "error": None,
+    "attempts": 0,
+    "lookup": {
+        "countryName": "Philippines",
+        "countryCode": "PH",
+        "cityName": "Manila",
+        "regionName": "Metro Manila",
+        "regionCode": "00",
+        "latitude": 14.5995,
+        "longitude": 120.9842,
+        "continent": "Asia",
+        "continentCode": "AS",
+        "asn": "9299",
+        "asnOrganization": "PLDT",
+        "timeZones": ["Asia/Manila"],
+        "currencies": ["PHP"],
+        "languages": ["en"],
+        "isProxy": False,
+    },
+    "country": {"truth": "PH", "source": "lookup", "cf": "PH", "lookup": "PH", "mismatch": False},
+    "summary": {
+        "calls": 6,
+        "first_seen": "2026-09-01T00:00:00Z",
+        "last_seen": "2026-10-10T18:00:00Z",
+        "hosts": 1,
+        "paths": 3,
+        "user_agents": 1,
+    },
+    "hosts": [{"value": "app.projectnova.download", "count": 6}],
+    "paths": [{"value": "/reports", "count": 4}],
+    "actions": [{"value": "auth_success", "count": 6}],
+    "agents": [{"value": "Mozilla/5.0 (Test Agent)", "count": 6}],
+    "statuses": [{"value": 200, "count": 6}],
+    "languages": [{"value": "en-US,en;q=0.9", "count": 6}],
+    "codes": [{"value": "Alice", "count": 6}],
+}
+
 BY_IP: list[dict[str, Any]] = [
     {
         "ip": "203.0.113.10",
@@ -126,6 +172,8 @@ class _FakeClient:
         self.calls.append(("GET", url, None, kwargs))
         if url.endswith("/api/logs/geo"):
             return _FakeResponse(200, GEO)
+        if "/api/logs/ip/" in url:
+            return _FakeResponse(200, IP_DETAIL)
         if url.endswith("/api/logs/by-ip"):
             return _FakeResponse(200, BY_IP)
         if url.endswith("/api/logs"):
@@ -188,14 +236,95 @@ def test_the_page_requires_a_session(manage_client: Any) -> None:
     assert r.headers["Location"].startswith("/manage/login?redirect=")
 
 
-def test_the_page_renders_the_map_container_and_the_ip_table(
+def test_the_map_page_renders_the_map_and_links_to_the_addresses(
     manage_client: Any, fake_api: _FakeClient
 ) -> None:
+    """The address list is its own page now; the map page points at it."""
     html = _page(manage_client)
 
     assert 'id="audit-map"' in html
-    assert "203.0.113.10" in html
     assert "Philippines" in html
+    assert 'href="/manage/ips"' in html
+    assert "203.0.113.10" not in html, "the address list moved off this page"
+
+
+def test_the_address_list_has_its_own_page(manage_client: Any, fake_api: _FakeClient) -> None:
+    """Every address, each linking to its own page."""
+    r = manage_client.get(
+        "/manage/ips", cookies={"manage_session": SESSION}, follow_redirects=False
+    )
+    assert r.status_code == 200, r.text
+    html = r.text
+
+    assert "IPs &amp; Pages" in html
+    assert "203.0.113.10" in html
+    assert 'href="/manage/audit/203.0.113.10"' in html
+
+
+def _ip_page(manage_client: Any, address: str = "203.0.113.10") -> str:
+    r = manage_client.get(
+        f"/manage/audit/{address}", cookies={"manage_session": SESSION}, follow_redirects=False
+    )
+    assert r.status_code == 200, r.text
+    return r.text
+
+
+def test_the_address_page_shows_everything_about_it(
+    manage_client: Any, fake_api: _FakeClient
+) -> None:
+    """The point of the page: one address, and everything known about it."""
+    html = _ip_page(manage_client)
+
+    assert "203.0.113.10" in html
+    assert "Manila" in html, "the lookup's city"
+    assert "PLDT" in html, "the network it belongs to"
+    assert "14.5995" in html, "the coordinates"
+    assert "Alice" in html, "the access code it used"
+    assert "app.projectnova.download" in html, "a host it touched"
+    assert "/reports" in html, "a path it asked for"
+    assert "Mozilla/5.0 (Test Agent)" in html, "the user agent, finally shown"
+    assert "en-US,en;q=0.9" in html, "what its browser asked for"
+    assert "6" in html
+
+
+def test_the_address_page_offers_a_refresh_as_a_post(
+    manage_client: Any, fake_api: _FakeClient
+) -> None:
+    """Queued, not run here, and a write - so a POST carrying the CSRF token."""
+    html = _ip_page(manage_client)
+
+    assert re.search(r'<form method="post" action="/manage/audit/203\.0\.113\.10/refresh"', html)
+    assert re.search(r'name="csrf_token"', html)
+
+
+def test_the_refresh_reaches_the_api_and_returns_to_the_page(
+    manage_client: Any, fake_api: _FakeClient
+) -> None:
+    r = manage_client.post(
+        "/manage/audit/203.0.113.10/refresh",
+        data={"csrf_token": CSRF},
+        cookies=_auth(),
+        headers={"Origin": ORIGIN},
+        follow_redirects=False,
+    )
+    assert r.status_code == 302
+    assert r.headers["Location"] == "/manage/audit/203.0.113.10"
+    posts = [c for c in fake_api.calls if c[0] == "POST" and "/refresh" in c[1]]
+    assert posts, "the refresh reached the API"
+
+
+def test_the_refresh_is_refused_without_the_csrf_token(
+    manage_client: Any, fake_api: _FakeClient
+) -> None:
+    r = manage_client.post(
+        "/manage/audit/203.0.113.10/refresh",
+        data={"csrf_token": "not-the-token"},
+        cookies=_auth(),
+        headers={"Origin": ORIGIN},
+        follow_redirects=False,
+    )
+    assert r.status_code == 403
+    assert [c for c in fake_api.calls if c[0] == "POST" and "/refresh" in c[1]] == []
 
 
 def test_the_map_container_carries_a_text_summary_so_the_data_is_not_map_only(

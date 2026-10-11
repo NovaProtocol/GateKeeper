@@ -11,6 +11,12 @@
 .map-legend span{display:inline-flex;align-items:center;gap:.4rem}
 .map-legend i{width:.6rem;height:.6rem;border-radius:50%;background:var(--accent);display:inline-block}
 .leaflet-container{background:var(--bg-primary);font-family:inherit}
+.map-ips{margin-top:.45rem;display:flex;flex-direction:column;gap:.15rem;max-height:220px;overflow:auto}
+.map-ips .r{display:flex;gap:.75rem;justify-content:space-between;align-items:baseline}
+.map-ips a{font-family:'JetBrains Mono',monospace;font-size:.75rem;color:var(--accent);text-decoration:none}
+.map-ips a:hover{text-decoration:underline}
+.map-ips .n{color:var(--text-secondary);font-size:.7rem;font-family:'JetBrains Mono',monospace;white-space:nowrap}
+.leaflet-popup-content{max-width:280px}
 .set-verdict{border:1px solid var(--accent);background:var(--accent-dim);border-radius:8px;padding:.85rem 1rem;margin-bottom:1rem;font-size:.85rem}
 </style>
 {% endblock %}
@@ -44,6 +50,7 @@
     <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.75rem">
       <h2><i class="fa-solid fa-earth-europe" aria-hidden="true"></i> Where visitors came from</h2>
       <div class="header-actions">
+        <a class="btn btn-ghost btn-sm" href="/manage/ips" title="Every address, as its own page" aria-label="Every address, as its own page"><i class="fa-solid fa-satellite-dish" aria-hidden="true"></i> Addresses</a>
         <form method="get" action="/manage/audit" style="display:flex;gap:.5rem;align-items:center;margin:0">
           <label for="geo-mode" style="font-size:.72rem;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.05em">Measure</label>
           <select id="geo-mode" name="mode" title="Which count the marker sizes show" aria-label="Aggregation mode" style="background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;padding:.45rem .6rem;color:var(--text-primary);font-size:.85rem">
@@ -99,34 +106,6 @@
         </table>
       </div>
       {% endif %}
-    </div>
-  </div>
-
-  <div class="card">
-    <div class="card-header"><h2><i class="fa-solid fa-satellite-dish" aria-hidden="true"></i> Audit: IPs &amp; Pages</h2><span class="header-badge">{{ items|length }} IPs</span></div>
-    <div class="card-body" style="padding:1.25rem">
-      <p style="color:var(--text-secondary);font-size:.85rem;margin-bottom:1rem">Grouped by the visitor address that <code>shared/client_ip.py</code> resolves (Cloudflare's <code>CF-Connecting-IP</code>, never the tunnel's <code>X-Forwarded-For</code>): recent pages + access code per IP. Point at an address (or press it on a phone) for what the lookup knows about it, how long ago it was fetched, and whether it disagrees with Cloudflare. Source: <code>GET /api/logs/by-ip</code>.</p>
-      <div class="table-scroll" tabindex="0" role="region" aria-label="IPs and pages">
-      <table class="codes-table" style="width:100%">
-        <thead><tr><th scope="col">IP</th><th scope="col">Calls</th><th scope="col">Recent Pages</th><th scope="col">Codes Seen</th></tr></thead>
-        <tbody>
-        {% for it in items %}
-        <tr>
-          <td style="font-family:'JetBrains Mono',monospace;font-size:.85rem" data-ip="{{ it.ip }}" data-country="{{ it.country or '' }}">{{ it.ip }}</td>
-          <td style="font-family:'JetBrains Mono',monospace">{{ it.calls }}</td>
-          <td style="font-size:.8rem;max-width:520px">
-            {% for r in it.recent %}
-              <div style="display:flex;gap:.5rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"><span style="color:var(--text-secondary)">{{ r.ts }}</span> <span style="font-family:'JetBrains Mono',monospace">{{ r.host }}{{ r.path }}</span> <span class="tag tag-active" style="font-size:.65rem">{{ r.action }}</span> {% if r.code_label %}<span style="color:var(--accent)">{{ r.code_label }}</span>{% elif r.attempted_code %}<span style="color:var(--danger)">{{ r.attempted_code }}</span>{% endif %}</div>
-            {% endfor %}
-          </td>
-          <td style="font-size:.8rem">{{ it.codes|join(', ') if it.codes else ' - ' }}</td>
-        </tr>
-        {% else %}
-        <tr><td colspan="4" style="text-align:center;color:var(--text-secondary);padding:1.5rem">No traffic recorded yet</td></tr>
-        {% endfor %}
-        </tbody>
-      </table>
-      </div>
     </div>
   </div>
 </div>
@@ -212,6 +191,11 @@
   var total = {{ geo_total }};
   var node = document.getElementById('audit-map');
   if(!node || typeof L === 'undefined' || !data.length){ return; }
+  function esc(text){
+    return String(text == null ? '' : text).replace(/[&<>"']/g, function(c){
+      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+    });
+  }
   try {
     var map = L.map(node, {worldCopyJump:false, scrollWheelZoom:false});
     /* Wheel zoom is off until the map is clicked. The same wheel scrolls the
@@ -231,12 +215,22 @@
     }).addTo(map);
     var bounds = [];
     data.forEach(function(p){
+      /* Strong fill on purpose: at 0.35 the blobs washed out against the tiles and
+         the map read as empty. A dark stroke keeps them legible where the basemap
+         is bright, and the fill opacity is high enough to see the shape of the
+         traffic without hiding the place names underneath. */
       var marker = L.circleMarker([p.lat, p.lon], {
-        radius: p.radius || 4, color: '#64ffda', weight: 1, opacity: 0.9,
-        fillColor: '#64ffda', fillOpacity: 0.35
+        radius: p.radius || 6, color: '#0d1117', weight: 2, opacity: 1,
+        fillColor: '#64ffda', fillOpacity: 0.85
       }).addTo(map);
       var share = total ? ((p.count / total) * 100).toFixed(1) : '0.0';
-      marker.bindPopup('<strong>' + p.name + '</strong><br>' + p.count + ' (' + share + '%)');
+      var popup = '<strong>' + esc(p.name) + '</strong><br>' + p.count + ' (' + share + '%)';
+      if(p.ips && p.ips.length){
+        popup += '<div class="map-ips">' + p.ips.map(function(e){
+          return '<div class="r"><a href="/manage/audit/' + encodeURIComponent(e.ip) + '" title="Everything about ' + esc(e.ip) + '">' + esc(e.ip) + '</a><span class="n">' + e.count + '</span></div>';
+        }).join('') + (p.ips_total > p.ips.length ? '<div class="n">and ' + (p.ips_total - p.ips.length) + ' more</div>' : '') + '</div>';
+      }
+      marker.bindPopup(popup);
       bounds.push([p.lat, p.lon]);
     });
     if(bounds.length > 1){ map.fitBounds(bounds, {padding: [30, 30]}); }

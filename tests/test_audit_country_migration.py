@@ -163,7 +163,14 @@ def test_the_country_column_is_added_and_nothing_else_changes() -> None:
         _migrate(path)
 
         after = _columns(path)
-        assert [c for c in after if c not in before] == ["country"]
+        assert [c for c in after if c not in before] == [
+            "country",
+            "accept_language",
+            "sec_ch_ua",
+            "sec_ch_ua_platform",
+            "cf_ray",
+            "query",
+        ]
         assert [c for c in before if c not in after] == []
         assert after[: len(before)] == before, "the new column is appended, not inserted"
     finally:

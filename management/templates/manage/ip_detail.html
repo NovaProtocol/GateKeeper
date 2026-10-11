@@ -1,0 +1,182 @@
+{% extends "base.html" %}
+{% block title %}{{ ip }} · Audit · GateKeeper{% endblock %}
+{% block head_extra %}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" crossorigin="anonymous">
+<script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js" crossorigin="anonymous"></script>
+<style>
+.ip-map{height:260px;width:100%;max-width:100%;background:var(--bg-primary);border:1px solid var(--border);border-radius:8px;z-index:0}
+.leaflet-container{background:var(--bg-primary);font-family:inherit}
+.ip-facts{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:.35rem .9rem;font-size:.85rem}
+.ip-facts div{display:flex;justify-content:space-between;gap:.6rem;border-bottom:1px dashed var(--border);padding:.2rem 0}
+.ip-facts .k{color:var(--text-secondary)}
+.ip-facts .v{font-family:'JetBrains Mono',monospace;text-align:right;overflow-wrap:anywhere}
+.ip-breaks{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:1rem}
+.ip-breaks h3{font-size:.78rem;text-transform:uppercase;letter-spacing:.05em;color:var(--text-secondary);margin:0 0 .4rem}
+.ip-breaks table{width:100%;font-size:.8rem}
+.ip-breaks td{padding:.15rem 0;vertical-align:top}
+.ip-breaks td.c{text-align:right;font-family:'JetBrains Mono',monospace;white-space:nowrap}
+.ip-call{margin:.4rem 0;padding:.45rem .6rem;border-bottom:1px solid var(--border);font-family:'JetBrains Mono',monospace;font-size:.78rem;overflow-wrap:anywhere}
+.ip-call .meta{display:flex;gap:.6rem;flex-wrap:wrap;color:var(--text-secondary)}
+.ip-raw{margin-top:.3rem;color:var(--text-secondary)}
+.ip-raw summary{cursor:pointer;color:var(--text-secondary);font-size:.75rem}
+.ip-raw div{margin-top:.2rem}
+.ipgeo-warn{background:rgba(251,191,36,.12);border:1px solid rgba(251,191,36,.35);border-radius:6px;padding:.4rem .55rem;color:#fbbf24;font-size:.78rem;margin-top:.5rem}
+.ipgeo-flag{background:rgba(248,113,113,.15);color:#f87171;border:1px solid rgba(248,113,113,.35);border-radius:999px;padding:1px 7px;font-size:.68rem}
+</style>
+{% endblock %}
+{% block content %}
+<div class="container">
+  <div class="stat-strip">
+    <div class="stat"><span class="stat-label">calls</span><span class="stat-value">{{ detail.summary.calls or 0 }}</span></div>
+    <div class="stat"><span class="stat-label">hosts</span><span class="stat-value">{{ detail.summary.hosts or 0 }}</span></div>
+    <div class="stat"><span class="stat-label">paths</span><span class="stat-value">{{ detail.summary.paths or 0 }}</span></div>
+    <div class="stat"><span class="stat-label">user agents</span><span class="stat-value">{{ detail.summary.user_agents or 0 }}</span></div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <h2 style="font-family:'JetBrains Mono',monospace;font-size:1rem">
+        <i class="fa-solid fa-crosshairs" aria-hidden="true"></i> {{ ip }}
+        {% if detail.country.truth %}<span class="tag tag-active" style="margin-left:.5rem">{{ detail.country.truth }}</span>{% endif %}
+      </h2>
+      <div class="header-actions">
+        <button type="button" class="btn btn-ghost btn-sm" id="ip-copy" title="Copy this address" aria-label="Copy this address"><i class="fa-solid fa-copy" aria-hidden="true"></i> Copy</button>
+        <a class="btn btn-ghost btn-sm" href="/manage/logs?ip={{ ip|urlencode }}" title="These calls in the log page, where they can be filtered" aria-label="These calls in the log page"><i class="fa-solid fa-list" aria-hidden="true"></i> In logs</a>
+        <a class="btn btn-ghost btn-sm" href="/manage/ips" title="Back to every address" aria-label="Back to every address"><i class="fa-solid fa-satellite-dish" aria-hidden="true"></i> Addresses</a>
+        <form method="post" action="/manage/audit/{{ ip|urlencode }}/refresh" style="display:inline;margin:0">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <button type="submit" class="btn btn-accent btn-sm" title="Queue a fresh lookup for this address" aria-label="Queue a fresh lookup for this address"><i class="fa-solid fa-rotate" aria-hidden="true"></i> Refresh lookup</button>
+        </form>
+      </div>
+    </div>
+    <div class="card-body" style="padding:1.25rem">
+      {% if detail.queued and not detail.found %}
+        <p style="color:var(--text-secondary);font-size:.85rem">Queued for lookup - it will be fetched in the background at the provider's pace.</p>
+      {% elif detail.refresh_queued %}
+        <p style="color:var(--text-secondary);font-size:.85rem">A fresh lookup is queued; the values below are the previous answer.</p>
+      {% endif %}
+      {% if detail.error %}<div class="ipgeo-warn">Last lookup attempt failed ({{ detail.attempts }}): {{ detail.error }}</div>{% endif %}
+
+      <div class="ip-facts">
+        <div><span class="k">Last updated</span><span class="v">{{ detail.last_updated or 'never' }}{% if detail.age_seconds is not none %} ({{ (detail.age_seconds // 3600) }}h ago){% endif %}</span></div>
+        <div><span class="k">First seen</span><span class="v">{{ detail.summary.first_seen or ' - ' }}</span></div>
+        <div><span class="k">Last seen</span><span class="v">{{ detail.summary.last_seen or ' - ' }}</span></div>
+        <div><span class="k">Country of origin</span><span class="v">{{ detail.country.cf or 'not reported' }}</span></div>
+        <div><span class="k">Lookup country</span><span class="v">{{ detail.country.lookup or ' - ' }}</span></div>
+        {% if detail.lookup %}
+          <div><span class="k">City</span><span class="v">{{ detail.lookup.cityName or ' - ' }}</span></div>
+          <div><span class="k">Region</span><span class="v">{{ detail.lookup.regionName or ' - ' }}{% if detail.lookup.regionCode %} ({{ detail.lookup.regionCode }}){% endif %}</span></div>
+          <div><span class="k">Coordinates</span><span class="v">{{ detail.lookup.latitude }}, {{ detail.lookup.longitude }}</span></div>
+          <div><span class="k">Continent</span><span class="v">{{ detail.lookup.continent or ' - ' }}</span></div>
+          <div><span class="k">AS</span><span class="v">AS{{ detail.lookup.asn or ' - ' }}</span></div>
+          <div><span class="k">Operator</span><span class="v">{{ detail.lookup.asnOrganization or ' - ' }}</span></div>
+          <div><span class="k">Time zone</span><span class="v">{{ detail.lookup.timeZones[0] if detail.lookup.timeZones else ' - ' }}</span></div>
+          <div><span class="k">Currencies</span><span class="v">{{ detail.lookup.currencies|join(', ') if detail.lookup.currencies else ' - ' }}</span></div>
+          <div><span class="k">Languages</span><span class="v">{{ detail.lookup.languages|join(', ') if detail.lookup.languages else ' - ' }}</span></div>
+          <div><span class="k">Proxy / VPN</span><span class="v">{% if detail.lookup.isProxy %}<span class="ipgeo-flag">Proxy / VPN</span>{% else %}none detected{% endif %}</span></div>
+        {% endif %}
+      </div>
+
+      {% if detail.country.mismatch %}
+        <div class="ipgeo-warn">Red flag: Cloudflare reported <strong>{{ detail.country.cf }}</strong> for this address, the lookup says <strong>{{ detail.country.lookup }}</strong>. The lookup is the source of truth.</div>
+      {% endif %}
+
+      {% if detail.lookup and detail.lookup.latitude is not none %}
+        <div id="ip-map" class="ip-map" role="img" aria-label="Where {{ ip }} resolves to" style="margin-top:1rem"></div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><h2><i class="fa-solid fa-chart-simple" aria-hidden="true"></i> What this address did</h2></div>
+    <div class="card-body" style="padding:1.25rem">
+      <div class="ip-breaks">
+        {% macro breakdown(title, rows) %}
+        <div>
+          <h3>{{ title }}</h3>
+          {% if rows %}
+          <table><tbody>
+          {% for r in rows %}
+            <tr><td>{{ r.value if r.value is not none else ' - ' }}</td><td class="c">{{ r.count }}</td></tr>
+          {% endfor %}
+          </tbody></table>
+          {% else %}<p style="color:var(--text-secondary);font-size:.8rem">none</p>{% endif %}
+        </div>
+        {% endmacro %}
+        {{ breakdown('Hosts', detail.hosts) }}
+        {{ breakdown('Paths', detail.paths) }}
+        {{ breakdown('Actions', detail.actions) }}
+        {{ breakdown('Access codes', detail.codes) }}
+        {{ breakdown('Status codes', detail.statuses) }}
+        {{ breakdown('Languages', detail.languages) }}
+        {{ breakdown('User agents', detail.agents) }}
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header"><h2><i class="fa-solid fa-clock-rotate-left" aria-hidden="true"></i> Calls</h2><span class="header-badge">{{ calls|length }} of {{ detail.summary.calls or 0 }}</span></div>
+    <div class="card-body" style="padding:1.25rem">
+      {% if calls %}
+      {% for c in calls %}
+      <div class="ip-call">
+        <div class="meta">
+          <span>{{ c.ts }}</span>
+          <span>{{ c.method or 'GET' }} {{ c.status_code or '' }}</span>
+          <span class="tag tag-active" style="font-size:.65rem">{{ c.action or ' - ' }}</span>
+          {% if c.matched_action %}<span>rule: {{ c.matched_action }}</span>{% endif %}
+          {% if c.code_label %}<span style="color:var(--accent)">code: {{ c.code_label }}</span>{% elif c.attempted_code %}<span style="color:var(--danger)">tried: {{ c.attempted_code }}</span>{% endif %}
+          {% if c.latency_ms is not none %}<span>{{ c.latency_ms }} ms</span>{% endif %}
+        </div>
+        <div>{{ c.host }}{{ c.path }}{% if c.query %}?{{ c.query }}{% endif %}</div>
+        <details class="ip-raw">
+          <summary>what the request carried</summary>
+          <div>user agent: {{ c.user_agent or ' - ' }}</div>
+          <div>accept-language: {{ c.accept_language or ' - ' }}</div>
+          <div>client hints: {{ c.sec_ch_ua or ' - ' }}{% if c.sec_ch_ua_platform %} / {{ c.sec_ch_ua_platform }}{% endif %}</div>
+          <div>referer: {{ c.referer or ' - ' }}</div>
+          <div>cf-ray: {{ c.cf_ray or ' - ' }}</div>
+          <div>request id: {{ c.request_id or ' - ' }}</div>
+        </details>
+      </div>
+      {% endfor %}
+      <p style="margin-top:.75rem"><a class="btn btn-ghost btn-sm" href="/manage/logs?ip={{ ip|urlencode }}" title="Every call, filterable and paged" aria-label="Every call, filterable and paged">All of this address's calls in the log page</a></p>
+      {% else %}
+      <p style="color:var(--text-secondary);font-size:.85rem">No calls recorded for this address.</p>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  var btn = document.getElementById('ip-copy');
+  if(btn){
+    btn.addEventListener('click', function(){
+      var done = function(){ btn.innerHTML = '<i class="fa-solid fa-check" aria-hidden="true"></i> Copied'; };
+      if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText({{ ip|tojson }}).then(done, done); }
+      else { done(); }
+    });
+  }
+  {% if detail.lookup and detail.lookup.latitude is not none %}
+  var node = document.getElementById('ip-map');
+  if(node && typeof L !== 'undefined'){
+    try {
+      var map = L.map(node, {worldCopyJump:false, scrollWheelZoom:false});
+      /* Same wheel discipline as the visitor map: the wheel belongs to the page
+         until the map is clicked, so it does not trap a reader scrolling past. */
+      map.on('focus', function(){ map.scrollWheelZoom.enable(); });
+      map.on('blur', function(){ map.scrollWheelZoom.disable(); });
+      map.on('click', function(){ map.getContainer().focus(); });
+      L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+      }).addTo(map);
+      var at = [{{ detail.lookup.latitude }}, {{ detail.lookup.longitude }}];
+      L.circleMarker(at, {radius: 9, color:'#64ffda', weight:2, opacity:1, fillColor:'#64ffda', fillOpacity:0.75}).addTo(map);
+      map.setView(at, 10);
+    } catch (e) { node.className = 'audit-map-fallback'; node.textContent = 'The map could not be drawn here.'; }
+  }
+  {% endif %}
+})();
+</script>
+{% endblock %}

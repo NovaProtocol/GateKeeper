@@ -262,13 +262,38 @@ def next_due(now: dt.datetime | None = None):
         select(IpGeo)
         .where(
             or_(
+                # An operator asked for this one, or it has never been looked up:
+                # both outrank anything the clock says.
+                IpGeo.refresh_at.is_not(None),
                 and_(queued, IpGeo.queued_at <= moment),
                 and_(IpGeo.fetched_at.is_not(None), IpGeo.fetched_at <= floor),
             )
         )
-        .order_by(case((queued, 0), else_=1), func.coalesce(IpGeo.fetched_at, IpGeo.queued_at))
+        .order_by(
+            case((IpGeo.refresh_at.is_not(None), 0), (queued, 1), else_=2),
+            func.coalesce(IpGeo.fetched_at, IpGeo.queued_at),
+        )
         .limit(1)
     )
+
+
+async def request_refresh(session: AsyncSession, ip: str | None) -> bool:
+    """Queue ``ip`` for an immediate re-lookup. Returns whether a row was waiting.
+
+    The data and ``fetched_at`` are left alone, so the page keeps telling the
+    truth about what it knows and how old it is while the refresh waits its turn
+    at the front of the queue.
+    """
+    address = (ip or "").strip()[:64]
+    if not address:
+        return False
+    row = await session.get(IpGeo, address)
+    if row is None:
+        return await ensure_queued(session, address)
+    if row.refresh_at is None:
+        row.refresh_at = utcnow()
+        await session.commit()
+    return True
 
 
 async def backfill_queue(
@@ -353,6 +378,7 @@ async def worker_step(
         row.fetched_at = utcnow()
         row.attempts = 0
         row.last_error = None
+        row.refresh_at = None
         await session.commit()
     log.info(
         "ipapi_lookup_stored",
