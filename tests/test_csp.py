@@ -260,6 +260,23 @@ def test_the_policy_allows_the_tile_host_that_the_map_needs() -> None:
     assert "https://cdn.jsdelivr.net" in img_src
 
 
+def test_the_policy_allows_the_webfonts_the_calculators_load() -> None:
+    """MathQuill serves Symbola and MathJax serves CHTML from jsdelivr as
+    webfonts. Without the host every calculator page logs a font violation and
+    the maths renders in a fallback face."""
+    font_src = directives(CONTENT_SECURITY_POLICY)["font-src"]
+
+    assert "https://cdn.jsdelivr.net" in font_src
+
+
+def test_the_policy_allows_the_github_api_the_docs_cards_call() -> None:
+    """MkDocs renders a source card on each documentation page that reads the
+    repository's stars, forks and latest release from api.github.com."""
+    connect_src = directives(CONTENT_SECURITY_POLICY)["connect-src"]
+
+    assert "https://api.github.com" in connect_src
+
+
 def test_the_tile_host_is_allowed_only_where_tiles_are_loaded() -> None:
     """Tiles arrive as `<img>`, so no other directive needs the host."""
     parsed = directives(CONTENT_SECURITY_POLICY)
@@ -283,7 +300,7 @@ def test_the_policy_still_carries_every_host_the_two_services_load() -> None:
         assert host in parsed["style-src"], host
     assert parsed["font-src"] == (
         "'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com "
-        "https://cdn.projectnova.download"
+        "https://cdn.jsdelivr.net https://cdn.projectnova.download"
     )
     assert parsed["frame-src"] == (
         "'self' https://*.projectnova.download https://portfolio.projectnova.download"

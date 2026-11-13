@@ -17,11 +17,21 @@ from __future__ import annotations
 
 from typing import Any
 
-#: Everything both services load: Bootstrap and Font Awesome as scripts and
+#: Everything the gated sites load: Bootstrap and Font Awesome as scripts and
 #: styles, Inter and JetBrains Mono from Google Fonts, the Cloudflare Web
 #: Analytics beacon as a script, and OpenStreetMap raster tiles as images for
-#: the audit map's Leaflet layer (jsdelivr is in `img-src` because Leaflet
-#: resolves its own default marker images relative to the script URL).
+#: the audit map's Leaflet layer.
+#:
+#: jsdelivr appears in four directives because four different things arrive from
+#: it: Leaflet resolves its marker images relative to the script URL (`img-src`),
+#: MathQuill serves Symbola as a webfont and MathJax serves its CHTML fonts the
+#: same way (`font-src`), and the kits are loaded as scripts and styles. It is
+#: listed per directive on purpose, so removing one shows up as its own diff.
+#:
+#: `connect-src` names api.github.com because MkDocs renders a source card on
+#: every documentation page that fetches the repository's stars, forks and latest
+#: release from it. Without the host the card stays blank and each page logs a
+#: CSP violation, which is how this was noticed.
 CONTENT_SECURITY_POLICY = (
     "default-src 'self'; "
     "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net "
@@ -31,11 +41,12 @@ CONTENT_SECURITY_POLICY = (
     "https://stackpath.bootstrapcdn.com https://fonts.googleapis.com "
     "https://cdnjs.cloudflare.com https://cdn.projectnova.download; "
     "font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com "
-    "https://cdn.projectnova.download; "
+    "https://cdn.jsdelivr.net https://cdn.projectnova.download; "
     "img-src 'self' data: https://cdn.jsdelivr.net "
+    "https://fastapi.tiangolo.com "
     "https://cdn.projectnova.download "
     "https://tile.openstreetmap.org https://*.tile.openstreetmap.org; "
-    "connect-src 'self'; "
+    "connect-src 'self' https://api.github.com; "
     "frame-src 'self' https://*.projectnova.download "
     "https://portfolio.projectnova.download; "
     "frame-ancestors 'self' https://portfolio.projectnova.download "
