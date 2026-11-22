@@ -311,6 +311,20 @@ def test_the_policy_still_carries_every_host_the_two_services_load() -> None:
     )
 
 
+def test_the_policy_allows_webassembly_without_allowing_eval() -> None:
+    """WASM pages need the narrow token, not the JavaScript-eval escape hatch.
+
+    The snake arena compiles an ONNX graph and the marimo editor loads its own
+    wasm runtime; both fail with a CompileError when `script-src` omits
+    `'wasm-unsafe-eval'`. `'unsafe-eval'` would also work and would allow every
+    string-to-code call on every gated page, so it must stay out.
+    """
+    script_src = directives(CONTENT_SECURITY_POLICY)["script-src"]
+
+    assert "'wasm-unsafe-eval'" in script_src
+    assert "'unsafe-eval'" not in script_src
+
+
 def test_the_two_other_headers_travel_with_the_policy() -> None:
     assert SECURITY_HEADERS["X-Content-Type-Options"] == "nosniff"
     assert SECURITY_HEADERS["Referrer-Policy"] == "strict-origin-when-cross-origin"

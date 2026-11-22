@@ -32,9 +32,15 @@ from typing import Any
 #: every documentation page that fetches the repository's stars, forks and latest
 #: release from it. Without the host the card stays blank and each page logs a
 #: CSP violation, which is how this was noticed.
+#:
+#: `'wasm-unsafe-eval'` is the narrow WebAssembly permission, not `'unsafe-eval'`:
+#: it lets a page compile and instantiate a .wasm module while still refusing
+#: string-to-code evaluation. The snake arena runs ONNX Runtime Web and the
+#: marimo editor runs their own wasm runtime, and both fail with a CompileError
+#: under a policy that omits it.
 CONTENT_SECURITY_POLICY = (
     "default-src 'self'; "
-    "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net "
+    "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://cdn.jsdelivr.net "
     "https://stackpath.bootstrapcdn.com https://cdnjs.cloudflare.com "
     "https://cdn.projectnova.download https://static.cloudflareinsights.com; "
     "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net "

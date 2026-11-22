@@ -212,7 +212,7 @@ it shows up as a diff in one file. Directive by directive:
 | Directive | Hosts | Why |
 |-----------|-------|-----|
 | `default-src` | `'self'` | the floor for anything not named below |
-| `script-src` | `'self'`, `cdn.jsdelivr.net`, `stackpath.bootstrapcdn.com`, `cdnjs.cloudflare.com`, `static.cloudflareinsights.com` | Bootstrap and Font Awesome, Leaflet, the Cloudflare Web Analytics beacon. `'unsafe-inline'` is required by the inline bootstrap script and the inline styles in the base template |
+| `script-src` | `'self'`, `cdn.jsdelivr.net`, `stackpath.bootstrapcdn.com`, `cdnjs.cloudflare.com`, `static.cloudflareinsights.com` | Bootstrap and Font Awesome, Leaflet, the Cloudflare Web Analytics beacon. `'unsafe-inline'` is required by the inline bootstrap script and the inline styles in the base template, and `'wasm-unsafe-eval'` lets a page compile a WebAssembly module without permitting JavaScript eval — the snake arena's ONNX runtime and the marimo editor both need it |
 | `style-src` | the same, plus `fonts.googleapis.com` | Bootstrap and Font Awesome stylesheets, the Google Fonts stylesheet |
 | `font-src` | `'self'`, `fonts.gstatic.com`, `cdnjs.cloudflare.com` | Inter and JetBrains Mono, Font Awesome's webfonts |
 | `img-src` | `'self'`, `data:`, `cdn.jsdelivr.net`, `tile.openstreetmap.org`, `*.tile.openstreetmap.org` | the audit map's raster tiles. jsdelivr is here because Leaflet resolves its own default marker images relative to the script URL, and `data:` because several templates embed small inline images |
